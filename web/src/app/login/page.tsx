@@ -1,10 +1,9 @@
 "use client";
 
+import { createBrowserClient } from "@supabase/ssr";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-
-import { createClient } from "@/lib/supabase/client";
 
 function readParam(value: string | null) {
   return value?.trim() ? value : undefined;
@@ -13,7 +12,12 @@ function readParam(value: string | null) {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const [supabase] = useState(() =>
+    createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    ),
+  );
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
