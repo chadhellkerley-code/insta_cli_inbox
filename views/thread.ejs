@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config">Configuración</a>
+      <a href="/inbox" class="active">Inbox</a>
+      <a href="/metrics">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container chat-container">
+    <h1>Chat <%= threadId %></h1>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+    <div class="messages">
+      <% if (chats && chats.length > 0) { %>
+        <% chats.forEach(function(chat) { %>
+          <div class="message <%= chat.direction === 'out' ? 'message-out' : 'message-in' %>">
+            <div class="meta">
+              <span class="user"><%= chat.username %></span>
+              <span class="time"><%= new Date(chat.timestamp).toLocaleString() %></span>
+            </div>
+            <div class="text"><%= chat.message %></div>
+            <% if (chat.tags) { %>
+              <div class="tags"><%= chat.tags %></div>
+            <% } %>
+          </div>
+        <% }); %>
+      <% } else { %>
+        <p>No hay mensajes almacenados.</p>
+      <% } %>
+    </div>
+    <% if (accountId) { %>
+      <form action="/inbox/thread/<%= threadId %>/send" method="post" class="form chat-form">
+        <input type="hidden" name="threadId" value="<%= threadId %>" />
+        <input type="hidden" name="accountId" value="<%= accountId %>" />
+        <textarea name="message" rows="2" placeholder="Escribe un mensaje..." required></textarea>
+        <button type="submit">Enviar</button>
+      </form>
+    <% } else { %>
+      <p>No se ha determinado la cuenta asociada a este chat.</p>
+    <% } %>
+  </main>
+</body>
+</html>

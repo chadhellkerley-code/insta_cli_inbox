@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configuración – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config" class="active">Configuración</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/metrics">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container">
+    <h1>Configuración de etapas y IA</h1>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+    <section class="stages-list">
+      <h2>Etapas creadas</h2>
+      <% if (stages && stages.length > 0) { %>
+        <table>
+          <tr><th>Nombre</th><th>Mensajes</th><th>Delay (seg)</th><th>FollowUps</th><th>AI Prompt</th><th>Horas followUp</th></tr>
+          <% stages.forEach(function(stage) { %>
+            <tr>
+              <td><%= stage.name %></td>
+              <td>
+                <% (Array.isArray(stage.messages) ? stage.messages : JSON.parse(stage.messages || '[]')).forEach(function(m) { %>
+                  <div><%= m %></div>
+                <% }); %>
+              </td>
+              <td><%= stage.delay %></td>
+              <td>
+                <% (Array.isArray(stage.follow_ups) ? stage.follow_ups : JSON.parse(stage.follow_ups || '[]')).forEach(function(f) { %>
+                  <div><%= f %></div>
+                <% }); %>
+              </td>
+              <td><%= stage.ai_prompt || '—' %></td>
+              <td>
+                <% (Array.isArray(stage.followup_hours) ? stage.followup_hours : JSON.parse(stage.followup_hours || '[]')).forEach(function(h) { %>
+                  <div><%= h %>h</div>
+                <% }); %>
+              </td>
+            </tr>
+          <% }); %>
+        </table>
+      <% } else { %>
+        <p>No se han configurado etapas.</p>
+      <% } %>
+    </section>
+    <section class="stage-form">
+      <h2>Crear/Editar etapa</h2>
+      <form action="/config/stage" method="post" class="form">
+        <label for="name">Nombre de la etapa</label>
+        <input type="text" id="name" name="name" required />
+        <label for="messages">Mensajes (uno por línea)</label>
+        <textarea id="messages" name="messages" rows="4"></textarea>
+        <label for="delay">Delay entre mensajes (segundos)</label>
+        <input type="number" id="delay" name="delay" min="0" value="0" />
+        <label for="followUps">FollowUps (uno por línea)</label>
+        <textarea id="followUps" name="followUps" rows="3"></textarea>
+        <label for="aiPrompt">Prompt de IA (opcional)</label>
+        <textarea id="aiPrompt" name="aiPrompt" rows="3"></textarea>
+        <label for="followupHours">Horas para followUp (separadas por coma)</label>
+        <input type="text" id="followupHours" name="followupHours" placeholder="24,48,72" />
+        <button type="submit">Guardar etapa</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

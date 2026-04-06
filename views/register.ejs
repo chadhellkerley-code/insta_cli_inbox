@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agregar usuario – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config">Configuración</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/metrics">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container">
+    <h1>Agregar nuevo usuario</h1>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+    <form action="/register" method="post" class="form">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required />
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" name="password" required />
+      <label for="expiresAt">Expira el (ISO 8601, opcional)</label>
+      <input type="datetime-local" id="expiresAt" name="expiresAt" />
+      <button type="submit">Crear usuario</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -1,0 +1,14 @@
+node_modules/
+tmp/
+db/*.sqlite
+.env
+.env.local
+.env.*.local
+
+web/node_modules/
+web/.next/
+web/.env.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

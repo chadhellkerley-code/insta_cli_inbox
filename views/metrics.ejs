@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Métricas – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config">Configuración</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/metrics" class="active">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container">
+    <h1>Métricas y estadísticas</h1>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+    <% if (metrics) { %>
+      <h2>Resumen de mensajes</h2>
+      <table>
+        <tr><th>Periodo</th><th>Entrantes</th><th>Salientes</th><th>Total</th></tr>
+        <tr><td>Hoy</td><td><%= metrics.today.inbound %></td><td><%= metrics.today.outbound %></td><td><%= metrics.today.total %></td></tr>
+        <tr><td>Última semana</td><td><%= metrics.lastWeek.inbound %></td><td><%= metrics.lastWeek.outbound %></td><td><%= metrics.lastWeek.total %></td></tr>
+        <tr><td>Último mes</td><td><%= metrics.lastMonth.inbound %></td><td><%= metrics.lastMonth.outbound %></td><td><%= metrics.lastMonth.total %></td></tr>
+      </table>
+    <% } else { %>
+      <p>No hay métricas disponibles.</p>
+    <% } %>
+  </main>
+</body>
+</html>

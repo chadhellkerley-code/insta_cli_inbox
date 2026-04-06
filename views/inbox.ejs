@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inbox – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config">Configuración</a>
+      <a href="/inbox" class="active">Inbox</a>
+      <a href="/metrics">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container">
+    <h1>Inbox</h1>
+    <form action="/inbox" method="get" class="form-inline">
+      <input type="text" name="search" placeholder="Buscar..." value="<%= search %>" />
+      <select name="filter">
+        <option value="all" <%= filter === 'all' ? 'selected' : '' %>>Todos</option>
+        <option value="qualified" <%= filter === 'qualified' ? 'selected' : '' %>>Calificadas</option>
+        <option value="lost" <%= filter === 'lost' ? 'selected' : '' %>>Perdidas</option>
+      </select>
+      <button type="submit">Filtrar</button>
+    </form>
+    <section class="thread-list">
+      <% if (threads && threads.length > 0) { %>
+        <table>
+          <tr><th>Username</th><th>Cuenta</th><th>Última actividad</th><th></th></tr>
+          <% threads.forEach(function(thread) { %>
+            <tr>
+              <td><%= thread.username %></td>
+              <td><%= accounts[thread.account_id] || thread.account_id %></td>
+              <td><%= new Date(thread.last_timestamp).toLocaleString() %></td>
+              <td><a href="/inbox/thread/<%= thread.thread_id %>" class="btn">Abrir</a></td>
+            </tr>
+          <% }); %>
+        </table>
+      <% } else { %>
+        <p>No se encontraron chats.</p>
+      <% } %>
+    </section>
+  </main>
+</body>
+</html>

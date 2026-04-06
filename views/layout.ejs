@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title><%= typeof title !== 'undefined' ? title + ' – ' : '' %>Insta Cli Inbox</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="navbar">
+      <div class="logo">Insta Cli Inbox</div>
+      <% if (user) { %>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/accounts">Cuentas</a>
+        <a href="/config">Configuración</a>
+        <a href="/inbox">Inbox</a>
+        <a href="/metrics">Métricas</a>
+        <a href="/logout">Salir</a>
+      </nav>
+      <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+      <% } %>
+    </header>
+    <main class="container">
+      <% if (typeof error !== 'undefined' && error) { %>
+        <div class="alert alert-error"><%= error %></div>
+      <% } %>
+      <%- body %>
+    </main>
+  </body>
+</html>

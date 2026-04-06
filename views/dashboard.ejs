@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard – Insta Cli Inbox</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="navbar">
+    <div class="logo">Insta Cli Inbox</div>
+    <nav>
+      <a href="/dashboard" class="active">Dashboard</a>
+      <a href="/accounts">Cuentas</a>
+      <a href="/config">Configuración</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/metrics">Métricas</a>
+      <a href="/logout">Salir</a>
+    </nav>
+    <div class="user-info"><%= user.email %> (<%= user.role %>)</div>
+  </header>
+  <main class="container">
+    <h1>Dashboard</h1>
+    <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+    <% } %>
+    <% if (metrics) { %>
+      <div class="metrics">
+        <h2>Métricas</h2>
+        <table>
+          <tr>
+            <th>Periodo</th>
+            <th>Entrantes</th>
+            <th>Salientes</th>
+            <th>Total</th>
+          </tr>
+          <tr>
+            <td>Hoy</td>
+            <td><%= metrics.today.inbound %></td>
+            <td><%= metrics.today.outbound %></td>
+            <td><%= metrics.today.total %></td>
+          </tr>
+          <tr>
+            <td>Última semana</td>
+            <td><%= metrics.lastWeek.inbound %></td>
+            <td><%= metrics.lastWeek.outbound %></td>
+            <td><%= metrics.lastWeek.total %></td>
+          </tr>
+          <tr>
+            <td>Último mes</td>
+            <td><%= metrics.lastMonth.inbound %></td>
+            <td><%= metrics.lastMonth.outbound %></td>
+            <td><%= metrics.lastMonth.total %></td>
+          </tr>
+        </table>
+      </div>
+    <% } %>
+    <div class="accounts">
+      <h2>Cuentas conectadas</h2>
+      <% if (accounts && accounts.length > 0) { %>
+        <table>
+          <tr><th>ID</th><th>Usuario IG</th><th>Acciones</th></tr>
+          <% accounts.forEach(function(account) { %>
+            <tr>
+              <td><%= account.id %></td>
+              <td><%= account.username %></td>
+              <td><a href="/accounts/login/<%= account.id %>" class="btn">Iniciar sesión en IG</a></td>
+            </tr>
+          <% }); %>
+        </table>
+      <% } else { %>
+        <p>No hay cuentas guardadas.</p>
+      <% } %>
+    </div>
+  </main>
+</body>
+</html>
