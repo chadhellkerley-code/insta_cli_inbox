@@ -1,56 +1,85 @@
+"use client";
+
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useEffect, useState } from "react";
 
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/client";
 
-type SearchParams = {
-  error?: string | string[];
-  success?: string | string[];
-};
-
-function readParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
+function readParam(value: string | null) {
+  return value?.trim() ? value : undefined;
 }
 
-async function loginAction(formData: FormData) {
-  "use server";
-
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
-
-  if (!email || !password) {
-    redirect("/login?error=Complet%C3%A1 email y contrase%C3%B1a.");
-  }
-
+export default function LoginPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
 
-  if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(
+    readParam(searchParams.get("error")),
+  );
+  const [successMessage, setSuccessMessage] = useState<string | undefined>(
+    readParam(searchParams.get("success")),
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setErrorMessage(readParam(searchParams.get("error")));
+    setSuccessMessage(readParam(searchParams.get("success")));
+  }, [searchParams]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSession() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (isMounted && user) {
+        router.replace("/dashboard");
+      }
+    }
+
+    void loadSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router, supabase]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail || !password) {
+      setSuccessMessage(undefined);
+      setErrorMessage("Completá email y contraseña.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSuccessMessage(undefined);
+    setErrorMessage(undefined);
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: trimmedEmail,
+      password,
+    });
+
+    setIsSubmitting(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    router.push("/dashboard");
+    router.refresh();
   }
-
-  redirect("/dashboard");
-}
-
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams?: SearchParams;
-}) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (user) {
-    redirect("/dashboard");
-  }
-
-  const error = readParam(searchParams?.error);
-  const success = readParam(searchParams?.success);
 
   return (
     <main className="auth-shell">
@@ -62,10 +91,10 @@ export default async function LoginPage({
           inbox, cuentas y automatizaciones desde un solo lugar.
         </p>
 
-        {error ? <div className="feedback error">{error}</div> : null}
-        {success ? <div className="feedback success">{success}</div> : null}
+        {errorMessage ? <div className="feedback error">{errorMessage}</div> : null}
+        {successMessage ? <div className="feedback success">{successMessage}</div> : null}
 
-        <form action={loginAction} className="form-stack">
+        <form onSubmit={handleSubmit} className="form-stack">
           <div className="field">
             <label className="field-label" htmlFor="email">
               Email
@@ -76,6 +105,8 @@ export default async function LoginPage({
               type="email"
               className="text-input"
               placeholder="owner@instacli.com"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
               required
             />
           </div>
@@ -90,12 +121,14 @@ export default async function LoginPage({
               type="password"
               className="text-input"
               placeholder="********"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
               required
             />
           </div>
 
-          <button type="submit" className="button button-primary">
-            Ingresar
+          <button type="submit" className="button button-primary" disabled={isSubmitting}>
+            {isSubmitting ? "Ingresando..." : "Ingresar"}
           </button>
         </form>
 
