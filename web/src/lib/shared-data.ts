@@ -8,6 +8,7 @@ export type UserProfile = {
 
 export type AccountRecord = {
   id: number;
+  agent_id: string | null;
   username: string;
   status: string | null;
   created_at: string | null;
@@ -55,6 +56,20 @@ export type DashboardMetrics = {
   staleThreads: number;
   activeAccounts: number;
   replyRatio: number;
+};
+
+export type AgentPresence = {
+  agent_id: string;
+  machine_name: string | null;
+  status: string | null;
+  last_seen_at: string | null;
+};
+
+export type OwnerAgentRecord = {
+  owner_id: string;
+  agent_id: string;
+  label: string | null;
+  created_at: string | null;
 };
 
 export function buildThreadKey(accountId: number, threadId: string) {

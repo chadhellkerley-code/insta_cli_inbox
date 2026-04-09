@@ -4,8 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 export type {
   AccountRecord,
+  AgentPresence,
   ChatRecord,
   DashboardMetrics,
+  OwnerAgentRecord,
   ThreadSummary,
   UserProfile,
 } from "@/lib/shared-data";
@@ -19,7 +21,13 @@ export {
   formatRelativeTime,
   getDisplayName,
 } from "@/lib/shared-data";
-import type { AccountRecord, ChatRecord, UserProfile } from "@/lib/shared-data";
+import type {
+  AccountRecord,
+  AgentPresence,
+  ChatRecord,
+  OwnerAgentRecord,
+  UserProfile,
+} from "@/lib/shared-data";
 
 export async function requireUserContext() {
   const supabase = createClient();
@@ -72,6 +80,57 @@ export async function loadOwnedAccounts(
   }
 
   return data as AccountRecord[];
+}
+
+export async function loadOwnerAgents(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<OwnerAgentRecord[]> {
+  const { data, error } = await supabase
+    .from("owner_agents")
+    .select("owner_id, agent_id, label, created_at")
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return [];
+  }
+
+  return (data as OwnerAgentRecord[]) ?? [];
+}
+
+export async function loadAgentPresenceForAgents(
+  supabase: SupabaseClient,
+  agentIds: string[],
+): Promise<AgentPresence[]> {
+  if (agentIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("agent_presence")
+    .select("agent_id, machine_name, status, last_seen_at")
+    .in("agent_id", agentIds)
+    .order("last_seen_at", { ascending: false });
+
+  if (error) {
+    return [];
+  }
+
+  return (data as AgentPresence[]) ?? [];
+}
+
+export async function loadLatestAgentPresence(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<AgentPresence | null> {
+  const ownerAgents = await loadOwnerAgents(supabase, userId);
+  const presences = await loadAgentPresenceForAgents(
+    supabase,
+    ownerAgents.map((agent) => agent.agent_id),
+  );
+
+  return presences[0] ?? null;
 }
 
 export async function loadStages(

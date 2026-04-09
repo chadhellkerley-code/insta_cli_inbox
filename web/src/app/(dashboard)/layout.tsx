@@ -2,7 +2,12 @@ import { redirect } from "next/navigation";
 
 import { RealtimeStatus } from "@/components/realtime-status";
 import { SidebarNav } from "@/components/sidebar-nav";
-import { getDisplayName, requireUserContext } from "@/lib/app-data";
+import {
+  getDisplayName,
+  loadOwnerAgents,
+  loadLatestAgentPresence,
+  requireUserContext,
+} from "@/lib/app-data";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -10,7 +15,9 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, profile } = await requireUserContext();
+  const { supabase, user, profile } = await requireUserContext();
+  const ownerAgents = await loadOwnerAgents(supabase, user.id);
+  const initialPresence = await loadLatestAgentPresence(supabase, user.id);
 
   async function logoutAction() {
     "use server";
@@ -29,7 +36,10 @@ export default async function DashboardLayout({
           <p>Negro, gris y violeta para operar conversaciones en vivo.</p>
         </div>
 
-        <RealtimeStatus />
+        <RealtimeStatus
+          agentIds={ownerAgents.map((agent) => agent.agent_id)}
+          initialPresence={initialPresence}
+        />
         <SidebarNav />
 
         <div className="sidebar-user">

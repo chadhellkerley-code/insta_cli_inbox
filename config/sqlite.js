@@ -91,6 +91,9 @@ db.serialize(() => {
   );
 
   [
+    ['agent_id', 'TEXT'],
+    ['owner_id', 'TEXT'],
+    ['remote_id', 'INTEGER'],
     ['password', 'TEXT'],
     ['twofactor', 'TEXT'],
     ['proxy_host', 'TEXT'],

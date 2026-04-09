@@ -24,16 +24,23 @@ function allAsync(db, sql, params = []) {
  * Tags can be provided as a comma‑separated string. The timestamp should
  * represent the message time in milliseconds since epoch.
  */
-async function saveChat(db, supabase, { accountId, threadId, username, message, direction, timestamp, tags }) {
+async function saveChat(
+  db,
+  supabase,
+  { accountId, localAccountId, remoteAccountId, threadId, username, message, direction, timestamp, tags },
+) {
+  const sqliteAccountId = localAccountId ?? accountId;
+  const supabaseAccountId = remoteAccountId ?? accountId;
+
   await runAsync(
     db,
     `INSERT INTO chats (account_id, thread_id, username, message, direction, timestamp, tags) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [accountId, threadId, username, message, direction, timestamp, tags || null],
+    [sqliteAccountId, threadId, username, message, direction, timestamp, tags || null],
   );
   // Insert into Supabase `chats` table if it exists
   try {
     await supabase.from('chats').insert({
-      account_id: accountId,
+      account_id: supabaseAccountId,
       thread_id: threadId,
       username,
       message,

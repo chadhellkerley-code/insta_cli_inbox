@@ -107,6 +107,9 @@ export function InboxRealtimeShell({
   const [loadingThread, setLoadingThread] = useState(false);
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [composerText, setComposerText] = useState("");
+  const [composerFeedback, setComposerFeedback] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
 
   if (!clientRef.current) {
     clientRef.current = createClient();
@@ -280,6 +283,44 @@ export function InboxRealtimeShell({
     return matchesSearch && matchesTag;
   });
 
+  async function queueMessage() {
+    if (!selectedThread || !composerText.trim()) {
+      return;
+    }
+
+    setIsSending(true);
+    setComposerFeedback(null);
+
+    try {
+      const response = await fetch("/api/agent-jobs", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "send_message",
+          accountId: selectedThread.accountId,
+          threadId: selectedThread.threadId,
+          message: composerText.trim(),
+        }),
+      });
+
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "No se pudo crear el job.");
+      }
+
+      setComposerText("");
+      setComposerFeedback("Mensaje encolado para el agente local.");
+    } catch (error) {
+      setComposerFeedback(
+        error instanceof Error ? error.message : "No se pudo enviar el mensaje.",
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <div className="page-stack">
       <section className="page-header">
@@ -433,12 +474,24 @@ export function InboxRealtimeShell({
           <div className="composer">
             <textarea
               className="text-area"
-              placeholder="Composer visual listo. El envío lo conectamos al backend cuando quieras."
-              disabled
+              placeholder={
+                selectedThread
+                  ? "Escribe el mensaje. El agente local lo va a enviar desde Instagram."
+                  : "Selecciona un hilo para enviar mensajes."
+              }
+              value={composerText}
+              onChange={(event) => setComposerText(event.target.value)}
+              disabled={!selectedThread || isSending}
             />
-            <button type="button" className="button button-primary" disabled>
-              Enviar pronto
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={!selectedThread || !composerText.trim() || isSending}
+              onClick={() => void queueMessage()}
+            >
+              {isSending ? "Encolando..." : "Enviar con agente"}
             </button>
+            {composerFeedback ? <span className="status-copy">{composerFeedback}</span> : null}
           </div>
         </section>
 
