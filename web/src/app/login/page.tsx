@@ -1,9 +1,10 @@
 "use client";
 
-import { createBrowserClient } from "@supabase/ssr";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
+
+import { createClient } from "@/lib/supabase/client";
 
 function readParam(value: string | null) {
   return value?.trim() ? value : undefined;
@@ -11,28 +12,20 @@ function readParam(value: string | null) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [supabase] = useState(() =>
-    createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    ),
-  );
+  const supabase = createClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | undefined>(
-    readParam(searchParams.get("error")),
-  );
-  const [successMessage, setSuccessMessage] = useState<string | undefined>(
-    readParam(searchParams.get("success")),
-  );
+  const [errorMessage, setErrorMessage] = useState<string | undefined>();
+  const [successMessage, setSuccessMessage] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    setErrorMessage(readParam(searchParams.get("error")));
-    setSuccessMessage(readParam(searchParams.get("success")));
-  }, [searchParams]);
+    const params = new URLSearchParams(window.location.search);
+
+    setErrorMessage(readParam(params.get("error")));
+    setSuccessMessage(readParam(params.get("success")));
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
