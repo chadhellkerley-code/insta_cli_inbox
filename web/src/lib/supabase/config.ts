@@ -1,31 +1,25 @@
-const envAliases = {
-  NEXT_PUBLIC_SUPABASE_URL: [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "SUPABASE_URL",
-  ] as const,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: [
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "SUPABASE_ANON_KEY",
-  ] as const,
-};
+function readEnv(
+  value: string | undefined,
+  missingMessage: string,
+) {
+  const trimmed = value?.trim();
 
-function readEnv(name: keyof typeof envAliases) {
-  const value = envAliases[name]
-    .map((envName) => process.env[envName]?.trim())
-    .find(Boolean);
-
-  if (!value) {
-    throw new Error(
-      `Missing required Supabase env: ${envAliases[name].join(" or ")}.`,
-    );
+  if (!trimmed) {
+    throw new Error(missingMessage);
   }
 
-  return value;
+  return trimmed;
 }
 
 export function getSupabasePublicEnv() {
-  const supabaseUrl = readEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const supabaseAnonKey = readEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  const supabaseUrl = readEnv(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    "Missing required Supabase env: NEXT_PUBLIC_SUPABASE_URL.",
+  );
+  const supabaseAnonKey = readEnv(
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    "Missing required Supabase env: NEXT_PUBLIC_SUPABASE_ANON_KEY.",
+  );
 
   try {
     new URL(supabaseUrl);
