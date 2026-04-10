@@ -129,9 +129,13 @@ export async function fetchInstagramProfile(accessToken: string) {
   const url = new URL(`https://graph.instagram.com/${META_API_VERSION}/me`);
   url.searchParams.set(
     "fields",
-    "id,user_id,username,name,account_type,profile_picture_url",
+    "id,username,account_type,name,profile_picture_url",
   );
   url.searchParams.set("access_token", accessToken);
+
+  console.log("Profile fetch request:", {
+    url: url.toString(),
+  });
 
   const response = await fetch(url, {
     method: "GET",
@@ -148,7 +152,7 @@ export async function fetchInstagramProfile(accessToken: string) {
 
   return {
     appScopedUserId: profile.id ?? null,
-    instagramAccountId: profile.user_id ?? null,
+    instagramAccountId: profile.id ?? profile.user_id ?? null,
     username: profile.username ?? null,
     name: profile.name ?? null,
     accountType: profile.account_type ?? null,
