@@ -16,12 +16,20 @@ type MetaConnectButtonProps = {
   buttonLabel?: string;
 };
 
+type OauthDebugResponse = {
+  url?: string;
+  clientId?: string;
+  redirectUri?: string;
+  error?: string;
+};
+
 export function MetaConnectButton({
   buttonLabel = "Conectar cuenta de Instagram",
 }: MetaConnectButtonProps) {
   const router = useRouter();
   const [isOpening, setIsOpening] = useState(false);
   const [feedback, setFeedback] = useState<PopupPayload | null>(null);
+  const [oauthDebugUrl, setOauthDebugUrl] = useState<string | null>(null);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent<PopupPayload>) {
@@ -42,35 +50,65 @@ export function MetaConnectButton({
     return () => window.removeEventListener("message", handleMessage);
   }, [router]);
 
-  function openPopup() {
+  async function openPopup() {
     setFeedback(null);
+    setOauthDebugUrl(null);
     setIsOpening(true);
 
-    const url = "/api/meta/oauth/start";
-    const popup = window.open(
-      url,
-      "_blank",
-      "width=600,height=700,popup=true",
-    );
+    try {
+      const response = await fetch("/api/meta/oauth/start?debug=1", {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | OauthDebugResponse
+        | null;
 
-    if (!popup) {
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.error || "No pudimos construir la URL de Meta.");
+      }
+
+      setOauthDebugUrl(payload.url);
+      console.log("Meta Instagram OAuth URL:", payload.url);
+      console.log("Meta Instagram OAuth client_id:", payload.clientId);
+      console.log("Meta Instagram OAuth redirect_uri:", payload.redirectUri);
+
+      const popup = window.open(
+        payload.url,
+        "_blank",
+        "width=600,height=700,popup=true",
+      );
+
+      if (!popup) {
+        setIsOpening(false);
+        setFeedback({
+          type: "meta-instagram-oauth",
+          status: "error",
+          message:
+            "Tu navegador bloqueo el popup de Meta. Habilitalo e intenta otra vez.",
+        });
+        return;
+      }
+
+      const timer = window.setInterval(() => {
+        if (!popup.closed) {
+          return;
+        }
+
+        window.clearInterval(timer);
+        setIsOpening(false);
+      }, 500);
+    } catch (error) {
       setIsOpening(false);
       setFeedback({
         type: "meta-instagram-oauth",
         status: "error",
-        message: "Tu navegador bloqueo el popup de Meta. Habilitalo e intenta otra vez.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "No pudimos abrir el OAuth de Meta.",
       });
-      return;
     }
-
-    const timer = window.setInterval(() => {
-      if (!popup.closed) {
-        return;
-      }
-
-      window.clearInterval(timer);
-      setIsOpening(false);
-    }, 500);
   }
 
   return (
@@ -83,6 +121,13 @@ export function MetaConnectButton({
       >
         {isOpening ? "Abriendo Meta..." : buttonLabel}
       </button>
+
+      {oauthDebugUrl ? (
+        <div className="oauth-debug">
+          <span className="field-label">URL OAuth enviada a Meta</span>
+          <code>{oauthDebugUrl}</code>
+        </div>
+      ) : null}
 
       {feedback ? (
         <div className={feedback.status === "success" ? "feedback success" : "feedback error"}>
