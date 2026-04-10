@@ -6,44 +6,69 @@ export type UserProfile = {
   expires_at: string | null;
 };
 
-export type AccountRecord = {
-  id: number;
-  agent_id: string | null;
+export type InstagramAccountRecord = {
+  id: string;
+  owner_id: string;
+  instagram_account_id: string;
+  instagram_app_user_id: string | null;
   username: string;
+  name: string | null;
+  account_type: string | null;
+  profile_picture_url: string | null;
   status: string | null;
+  token_expires_at: string | null;
+  connected_at: string | null;
+  last_webhook_at?: string | null;
   created_at: string | null;
-  proxy_host: string | null;
-  proxy_port: number | null;
-  proxy_username: string | null;
-  proxy_password: string | null;
-  owner_id: string | null;
-  twofactor: string | null;
+  updated_at: string | null;
 };
 
-export type ChatRecord = {
-  id: number;
-  account_id: number;
-  thread_id: string;
-  username: string;
-  message: string;
+export type ConversationRecord = {
+  id: string;
+  owner_id: string;
+  account_id: string;
+  contact_igsid: string;
+  contact_username: string | null;
+  contact_name: string | null;
+  labels: string[] | null;
+  notes: string | null;
+  last_message_text: string | null;
+  last_message_type: string | null;
+  last_message_at: string | null;
+  unread_count: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  account_username?: string;
+};
+
+export type MessageRecord = {
+  id: string;
+  owner_id: string;
+  account_id: string;
+  conversation_id: string;
+  meta_message_id: string | null;
   direction: "in" | "out" | string;
-  timestamp: number;
-  tags: string | null;
+  message_type: "text" | "audio" | "image" | "video" | "file" | string;
+  text_content: string | null;
+  media_url: string | null;
+  mime_type: string | null;
+  sender_igsid: string | null;
+  recipient_igsid: string | null;
+  raw_payload: Record<string, unknown> | null;
+  sent_at: string | null;
   created_at: string | null;
 };
 
-export type ThreadSummary = {
-  threadKey: string;
-  threadId: string;
-  accountId: number;
-  accountUsername: string;
-  username: string;
-  lastMessage: string;
-  lastTimestamp: number;
-  messageCount: number;
-  inboundCount: number;
-  outboundCount: number;
-  tags: string[];
+export type ReminderRecord = {
+  id: string;
+  owner_id: string;
+  conversation_id: string;
+  title: string;
+  note: string | null;
+  remind_at: string;
+  status: "pending" | "dismissed" | string;
+  dismissed_at: string | null;
+  created_at: string | null;
 };
 
 export type DashboardMetrics = {
@@ -51,130 +76,140 @@ export type DashboardMetrics = {
   todayOutbound: number;
   weekTotal: number;
   monthTotal: number;
-  activeThreads: number;
-  qualifiedThreads: number;
-  staleThreads: number;
+  activeConversations: number;
+  qualifiedConversations: number;
+  staleConversations: number;
   activeAccounts: number;
+  overdueReminders: number;
   replyRatio: number;
 };
 
-export type AgentPresence = {
-  agent_id: string;
-  machine_name: string | null;
-  status: string | null;
-  last_seen_at: string | null;
-};
-
-export type OwnerAgentRecord = {
-  owner_id: string;
-  agent_id: string;
-  label: string | null;
-  created_at: string | null;
-};
-
-export function buildThreadKey(accountId: number, threadId: string) {
-  return `${accountId}::${threadId}`;
+export function getConversationLabels(labels: string[] | null | undefined) {
+  return (labels ?? []).filter(Boolean);
 }
 
-export function extractTags(rawTags: string | null | undefined) {
-  if (!rawTags) {
-    return [];
-  }
+export function enrichConversationsWithAccounts(
+  conversations: ConversationRecord[],
+  accounts: InstagramAccountRecord[],
+) {
+  const accountMap = new Map(accounts.map((account) => [account.id, account.username]));
 
-  return rawTags
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+  return conversations.map((conversation) => ({
+    ...conversation,
+    account_username:
+      accountMap.get(conversation.account_id) ??
+      conversation.account_username ??
+      "cuenta",
+  }));
 }
 
-export function buildThreadSummaries(
-  chats: ChatRecord[],
-  accounts: AccountRecord[],
-): ThreadSummary[] {
-  const accountMap = new Map(accounts.map((account) => [account.id, account]));
-  const grouped = new Map<string, ThreadSummary>();
-
-  for (const chat of chats) {
-    const threadKey = buildThreadKey(chat.account_id, chat.thread_id);
-    const account = accountMap.get(chat.account_id);
-    const existing = grouped.get(threadKey);
-
-    if (!existing) {
-      grouped.set(threadKey, {
-        threadKey,
-        threadId: chat.thread_id,
-        accountId: chat.account_id,
-        accountUsername: account?.username ?? `Cuenta ${chat.account_id}`,
-        username: chat.username || "Sin nombre",
-        lastMessage: chat.message || "Sin contenido",
-        lastTimestamp: chat.timestamp ?? 0,
-        messageCount: 1,
-        inboundCount: chat.direction === "in" ? 1 : 0,
-        outboundCount: chat.direction === "out" ? 1 : 0,
-        tags: extractTags(chat.tags),
-      });
-      continue;
-    }
-
-    existing.messageCount += 1;
-    if (chat.direction === "in") {
-      existing.inboundCount += 1;
-    }
-    if (chat.direction === "out") {
-      existing.outboundCount += 1;
-    }
-
-    for (const tag of extractTags(chat.tags)) {
-      if (!existing.tags.includes(tag)) {
-        existing.tags.push(tag);
-      }
-    }
-
-    if ((chat.timestamp ?? 0) > existing.lastTimestamp) {
-      existing.lastTimestamp = chat.timestamp ?? 0;
-      existing.lastMessage = chat.message || "Sin contenido";
-      existing.username = chat.username || existing.username;
-    }
-  }
-
-  return Array.from(grouped.values()).sort(
-    (left, right) => right.lastTimestamp - left.lastTimestamp,
+export function getConversationDisplayName(conversation: ConversationRecord) {
+  return (
+    conversation.contact_username ||
+    conversation.contact_name ||
+    `Usuario ${conversation.contact_igsid.slice(-6)}`
   );
 }
 
+export function getMessagePreview(message: MessageRecord) {
+  if (message.text_content?.trim()) {
+    return message.text_content;
+  }
+
+  switch (message.message_type) {
+    case "audio":
+      return "Mensaje de audio";
+    case "image":
+      return "Imagen";
+    case "video":
+      return "Video";
+    case "file":
+      return "Archivo";
+    default:
+      return "Mensaje";
+  }
+}
+
+export function getConversationPreview(conversation: ConversationRecord) {
+  if (conversation.last_message_text?.trim()) {
+    return conversation.last_message_text;
+  }
+
+  switch (conversation.last_message_type) {
+    case "audio":
+      return "Mensaje de audio";
+    case "image":
+      return "Imagen";
+    case "video":
+      return "Video";
+    case "file":
+      return "Archivo";
+    default:
+      return "Sin mensajes";
+  }
+}
+
 export function computeDashboardMetrics(
-  chats: ChatRecord[],
-  threads: ThreadSummary[],
-  accounts: AccountRecord[],
+  messages: MessageRecord[],
+  conversations: ConversationRecord[],
+  accounts: InstagramAccountRecord[],
+  reminders: ReminderRecord[],
 ): DashboardMetrics {
   const now = Date.now();
   const dayAgo = now - 24 * 60 * 60 * 1000;
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
   const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
-  const todayChats = chats.filter((chat) => chat.timestamp >= dayAgo);
-  const weekChats = chats.filter((chat) => chat.timestamp >= weekAgo);
-  const monthChats = chats.filter((chat) => chat.timestamp >= monthAgo);
-  const inboundToday = todayChats.filter((chat) => chat.direction === "in").length;
-  const outboundToday = todayChats.filter((chat) => chat.direction === "out").length;
-  const qualifiedThreads = threads.filter((thread) =>
-    thread.tags.some((tag) => tag.toLowerCase() === "qualified"),
+  const todayMessages = messages.filter((message) => {
+    if (!message.created_at && !message.sent_at) {
+      return false;
+    }
+
+    return new Date(message.sent_at ?? message.created_at ?? 0).getTime() >= dayAgo;
+  });
+  const weekMessages = messages.filter((message) => {
+    if (!message.created_at && !message.sent_at) {
+      return false;
+    }
+
+    return new Date(message.sent_at ?? message.created_at ?? 0).getTime() >= weekAgo;
+  });
+  const monthMessages = messages.filter((message) => {
+    if (!message.created_at && !message.sent_at) {
+      return false;
+    }
+
+    return new Date(message.sent_at ?? message.created_at ?? 0).getTime() >= monthAgo;
+  });
+  const inboundToday = todayMessages.filter((message) => message.direction === "in").length;
+  const outboundToday = todayMessages.filter((message) => message.direction === "out").length;
+  const qualifiedConversations = conversations.filter((conversation) =>
+    getConversationLabels(conversation.labels).some(
+      (label) => label.toLowerCase() === "qualified",
+    ),
   ).length;
-  const staleThreads = threads.filter(
-    (thread) => thread.lastTimestamp < now - 14 * 24 * 60 * 60 * 1000,
-  ).length;
-  const activeAccounts = accounts.filter(
-    (account) => !account.status || account.status === "active",
+  const staleConversations = conversations.filter((conversation) => {
+    if (!conversation.last_message_at) {
+      return true;
+    }
+
+    return new Date(conversation.last_message_at).getTime() < now - 14 * 24 * 60 * 60 * 1000;
+  }).length;
+  const overdueReminders = reminders.filter(
+    (reminder) =>
+      reminder.status === "pending" &&
+      new Date(reminder.remind_at).getTime() <= now,
   ).length;
 
   return {
     todayInbound: inboundToday,
     todayOutbound: outboundToday,
-    weekTotal: weekChats.length,
-    monthTotal: monthChats.length,
-    activeThreads: threads.length,
-    qualifiedThreads,
-    staleThreads,
-    activeAccounts,
+    weekTotal: weekMessages.length,
+    monthTotal: monthMessages.length,
+    activeConversations: conversations.length,
+    qualifiedConversations,
+    staleConversations,
+    activeAccounts: accounts.length,
+    overdueReminders,
     replyRatio:
       inboundToday === 0 ? 100 : Math.min(999, (outboundToday / inboundToday) * 100),
   };

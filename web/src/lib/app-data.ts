@@ -3,31 +3,40 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 export type {
-  AccountRecord,
-  AgentPresence,
-  ChatRecord,
+  ConversationRecord,
   DashboardMetrics,
-  OwnerAgentRecord,
-  ThreadSummary,
+  InstagramAccountRecord,
+  MessageRecord,
+  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
 export {
-  buildThreadKey,
-  buildThreadSummaries,
   computeDashboardMetrics,
-  extractTags,
+  enrichConversationsWithAccounts,
   formatCompactNumber,
   formatDateTime,
   formatRelativeTime,
+  getConversationDisplayName,
+  getConversationLabels,
+  getConversationPreview,
   getDisplayName,
+  getMessagePreview,
 } from "@/lib/shared-data";
 import type {
-  AccountRecord,
-  AgentPresence,
-  ChatRecord,
-  OwnerAgentRecord,
+  ConversationRecord,
+  InstagramAccountRecord,
+  MessageRecord,
+  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
+
+function castRow<T>(value: unknown) {
+  return value as T;
+}
+
+function castRows<T>(value: unknown) {
+  return value as T[];
+}
 
 export async function requireUserContext() {
   const supabase = createClient();
@@ -62,134 +71,136 @@ export async function loadUserProfile(
     return null;
   }
 
-  return data;
+  return castRow<UserProfile | null>(data);
 }
 
 export async function loadOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
-): Promise<AccountRecord[]> {
+): Promise<InstagramAccountRecord[]> {
   const { data, error } = await supabase
-    .from("accounts")
-    .select("*")
+    .from("instagram_accounts")
+    .select(
+      [
+        "id",
+        "owner_id",
+        "instagram_account_id",
+        "instagram_app_user_id",
+        "username",
+        "name",
+        "account_type",
+        "profile_picture_url",
+        "status",
+        "token_expires_at",
+        "connected_at",
+        "last_webhook_at",
+        "created_at",
+        "updated_at",
+      ].join(","),
+    )
     .eq("owner_id", userId)
-    .order("created_at", { ascending: false });
+    .order("connected_at", { ascending: false });
 
   if (error || !data) {
     return [];
   }
 
-  return data as AccountRecord[];
+  return castRows<InstagramAccountRecord>(data);
 }
 
-export async function loadOwnerAgents(
+export async function loadConversations(
   supabase: SupabaseClient,
   userId: string,
-): Promise<OwnerAgentRecord[]> {
+  limit = 200,
+): Promise<ConversationRecord[]> {
   const { data, error } = await supabase
-    .from("owner_agents")
-    .select("owner_id, agent_id, label, created_at")
+    .from("instagram_conversations")
+    .select("*")
     .eq("owner_id", userId)
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    return [];
-  }
-
-  return (data as OwnerAgentRecord[]) ?? [];
-}
-
-export async function loadAgentPresenceForAgents(
-  supabase: SupabaseClient,
-  agentIds: string[],
-): Promise<AgentPresence[]> {
-  if (agentIds.length === 0) {
-    return [];
-  }
-
-  const { data, error } = await supabase
-    .from("agent_presence")
-    .select("agent_id, machine_name, status, last_seen_at")
-    .in("agent_id", agentIds)
-    .order("last_seen_at", { ascending: false });
-
-  if (error) {
-    return [];
-  }
-
-  return (data as AgentPresence[]) ?? [];
-}
-
-export async function loadLatestAgentPresence(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<AgentPresence | null> {
-  const ownerAgents = await loadOwnerAgents(supabase, userId);
-  const presences = await loadAgentPresenceForAgents(
-    supabase,
-    ownerAgents.map((agent) => agent.agent_id),
-  );
-
-  return presences[0] ?? null;
-}
-
-export async function loadStages(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<Record<string, unknown>[]> {
-  const { data, error } = await supabase
-    .from("stages")
-    .select("*")
-    .eq("user_id", userId)
-    .limit(8);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return data as Record<string, unknown>[];
-}
-
-export async function loadRecentChatsForAccounts(
-  supabase: SupabaseClient,
-  accountIds: number[],
-  limit = 1200,
-): Promise<ChatRecord[]> {
-  if (accountIds.length === 0) {
-    return [];
-  }
-
-  const { data, error } = await supabase
-    .from("chats")
-    .select("*")
-    .in("account_id", accountIds)
-    .order("timestamp", { ascending: false })
+    .order("last_message_at", { ascending: false, nullsFirst: false })
     .limit(limit);
 
   if (error || !data) {
     return [];
   }
 
-  return data as ChatRecord[];
+  return castRows<ConversationRecord>(data);
 }
 
-export async function loadThreadMessages(
+export async function loadConversationMessages(
   supabase: SupabaseClient,
-  accountId: number,
-  threadId: string,
+  conversationId: string,
   limit = 300,
-): Promise<ChatRecord[]> {
+): Promise<MessageRecord[]> {
   const { data, error } = await supabase
-    .from("chats")
+    .from("instagram_messages")
     .select("*")
-    .eq("account_id", accountId)
-    .eq("thread_id", threadId)
-    .order("timestamp", { ascending: true })
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
     .limit(limit);
 
   if (error || !data) {
     return [];
   }
 
-  return data as ChatRecord[];
+  return castRows<MessageRecord>(data);
+}
+
+export async function loadRecentMessagesForOwner(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 1200,
+): Promise<MessageRecord[]> {
+  const { data, error } = await supabase
+    .from("instagram_messages")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return castRows<MessageRecord>(data);
+}
+
+export async function loadReminders(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 200,
+): Promise<ReminderRecord[]> {
+  const { data, error } = await supabase
+    .from("instagram_reminders")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("remind_at", { ascending: true })
+    .limit(limit);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return castRows<ReminderRecord>(data);
+}
+
+export async function loadDueReminders(
+  supabase: SupabaseClient,
+  userId: string,
+  limit = 6,
+): Promise<ReminderRecord[]> {
+  const { data, error } = await supabase
+    .from("instagram_reminders")
+    .select("*")
+    .eq("owner_id", userId)
+    .eq("status", "pending")
+    .lte("remind_at", new Date().toISOString())
+    .order("remind_at", { ascending: true })
+    .limit(limit);
+
+  if (error || !data) {
+    return [];
+  }
+
+  return castRows<ReminderRecord>(data);
 }

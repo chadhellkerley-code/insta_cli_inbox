@@ -1,78 +1,69 @@
-import { loadStages, requireUserContext } from "@/lib/app-data";
-
-function getStageLabel(stage: Record<string, unknown>, index: number) {
-  const value = stage.name ?? stage.stage ?? stage.title;
-  return typeof value === "string" && value.trim() ? value : `Etapa ${index + 1}`;
-}
-
-function getStageDescription(stage: Record<string, unknown>) {
-  const candidates = [stage.prompt, stage.description, stage.notes];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate;
-    }
-  }
-
-  return "Sin descripción cargada todavía.";
-}
+import {
+  formatCompactNumber,
+  loadConversations,
+  loadDueReminders,
+  loadOwnedAccounts,
+  requireUserContext,
+} from "@/lib/app-data";
 
 export default async function AutomatizacionesPage() {
   const { supabase, user } = await requireUserContext();
-  const stages = await loadStages(supabase, user.id);
+  const [accounts, conversations, dueReminders] = await Promise.all([
+    loadOwnedAccounts(supabase, user.id),
+    loadConversations(supabase, user.id),
+    loadDueReminders(supabase, user.id),
+  ]);
 
   return (
     <div className="page-stack">
       <section className="page-header">
         <div>
           <span className="eyebrow">Automatizaciones</span>
-          <h1>Estructura base para etapas y follow-ups</h1>
+          <h1>Base lista para reglas y seguimiento</h1>
           <p className="page-copy">
-            Dejé el esqueleto visual para enchufar reglas, prompts, ventanas
-            horarias y secuencias por etapa sin rehacer la navegación.
+            La operacion ya corre sobre Instagram Graph API. Esta vista queda
+            preparada para sumar reglas de negocio sin volver al flujo anterior.
           </p>
         </div>
       </section>
 
+      <section className="card-grid">
+        <article className="metric-card">
+          <span>Cuentas disponibles</span>
+          <strong>{formatCompactNumber(accounts.length)}</strong>
+          <p>Perfiles listos para disparar automatizaciones futuras.</p>
+        </article>
+        <article className="metric-card">
+          <span>Conversaciones base</span>
+          <strong>{formatCompactNumber(conversations.length)}</strong>
+          <p>Hilos sobre los que se pueden aplicar reglas y etiquetas.</p>
+        </article>
+        <article className="metric-card">
+          <span>Alertas activas</span>
+          <strong>{formatCompactNumber(dueReminders.length)}</strong>
+          <p>Recordatorios vencidos que hoy funcionan como notificaciones in-app.</p>
+        </article>
+      </section>
+
       <section className="split-grid">
         <article className="feature-card">
-          <span className="eyebrow">Cobertura</span>
-          <h2>Qué entra acá</h2>
+          <span className="eyebrow">Siguiente fase</span>
+          <h2>Que encaja bien aca</h2>
           <ul>
-            <li>Stages con múltiples mensajes y delays</li>
-            <li>Prompt de IA por cuenta o por pipeline</li>
-            <li>Follow-ups con ventana horaria y reglas de stop</li>
+            <li>Auto etiquetado por palabras clave o cuenta</li>
+            <li>Reglas de asignacion y SLA sobre recordatorios</li>
+            <li>Secuencias de respuesta guiadas por estado del lead</li>
           </ul>
         </article>
 
         <article className="feature-card">
-          <span className="eyebrow">Estado</span>
-          <h2>Lectura desde Supabase</h2>
+          <span className="eyebrow">Estado actual</span>
+          <h2>Infraestructura lista</h2>
           <p>
-            Si ya existe la tabla <code>stages</code> con registros del usuario,
-            los muestro abajo. Si no, la UI queda lista como placeholder funcional.
+            Ya tenemos cuentas conectadas por OAuth, conversaciones persistidas,
+            mensajes en tiempo real y panel de detalles para notas, labels y recordatorios.
           </p>
         </article>
-      </section>
-
-      <section className="card-grid">
-        {stages.length === 0 ? (
-          <article className="empty-state">
-            <strong>Sin etapas cargadas</strong>
-            <p>
-              La vista base quedó lista para conectar creación, edición y métricas
-              de avance por etapa.
-            </p>
-          </article>
-        ) : (
-          stages.map((stage, index) => (
-            <article key={`${getStageLabel(stage, index)}-${index}`} className="feature-card">
-              <span className="eyebrow">Stage</span>
-              <h2>{getStageLabel(stage, index)}</h2>
-              <p>{getStageDescription(stage)}</p>
-            </article>
-          ))
-        )}
       </section>
     </div>
   );

@@ -1,14 +1,11 @@
 {
   "name": "insta-cli-inbox",
   "version": "0.1.0",
-  "description": "Insta Cli Inbox – unified Instagram CRM and inbox with metrics",
-  "main": "index.js",
+  "description": "Insta CLI Inbox - Next.js CRM with Instagram Graph API and Supabase",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "web:dev": "npm --prefix web run dev",
-    "web:build": "npm --prefix web run build",
-    "web:start": "npm --prefix web run start"
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",
@@ -23,7 +20,6 @@
     "instagram-private-api": "^1.46.1",
     "multer": "^1.4.5-lts.2",
     "openai": "^4.0.0",
-    "playwright": "^1.44.0",
     "sqlite3": "^5.1.4",
     "totp-generator": "^1.1.0"
   },

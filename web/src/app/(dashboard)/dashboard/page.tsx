@@ -1,32 +1,44 @@
 import {
-  buildThreadSummaries,
   computeDashboardMetrics,
+  enrichConversationsWithAccounts,
   formatCompactNumber,
+  formatDateTime,
   formatRelativeTime,
+  getConversationDisplayName,
+  getConversationPreview,
+  loadConversations,
+  loadDueReminders,
   loadOwnedAccounts,
-  loadRecentChatsForAccounts,
+  loadRecentMessagesForOwner,
   requireUserContext,
 } from "@/lib/app-data";
 
 export default async function DashboardPage() {
   const { supabase, user } = await requireUserContext();
-  const accounts = await loadOwnedAccounts(supabase, user.id);
-  const chats = await loadRecentChatsForAccounts(
-    supabase,
-    accounts.map((account) => account.id),
+  const [accounts, conversations, messages, dueReminders] = await Promise.all([
+    loadOwnedAccounts(supabase, user.id),
+    loadConversations(supabase, user.id),
+    loadRecentMessagesForOwner(supabase, user.id),
+    loadDueReminders(supabase, user.id),
+  ]);
+
+  const enrichedConversations = enrichConversationsWithAccounts(conversations, accounts);
+  const metrics = computeDashboardMetrics(
+    messages,
+    enrichedConversations,
+    accounts,
+    dueReminders,
   );
-  const threads = buildThreadSummaries(chats, accounts);
-  const metrics = computeDashboardMetrics(chats, threads, accounts);
 
   return (
     <div className="page-stack">
       <section className="page-header">
         <div>
           <span className="eyebrow">Dashboard</span>
-          <h1>Vista general del pipeline</h1>
+          <h1>Operacion del inbox de Instagram</h1>
           <p className="page-copy">
-            Un resumen rápido de actividad, cuentas y conversaciones para abrir
-            la jornada con contexto real del inbox.
+            Resumen de actividad, conversaciones, cuentas conectadas y recordatorios
+            pendientes sobre la integracion oficial con Meta.
           </p>
         </div>
       </section>
@@ -35,55 +47,55 @@ export default async function DashboardPage() {
         <article className="metric-card">
           <span>Entrantes hoy</span>
           <strong>{formatCompactNumber(metrics.todayInbound)}</strong>
-          <p>Mensajes recibidos en las últimas 24 horas.</p>
+          <p>Mensajes recibidos en las ultimas 24 horas.</p>
         </article>
         <article className="metric-card">
-          <span>Salientes hoy</span>
-          <strong>{formatCompactNumber(metrics.todayOutbound)}</strong>
-          <p>Respuestas persistidas durante el mismo período.</p>
+          <span>Conversaciones activas</span>
+          <strong>{formatCompactNumber(metrics.activeConversations)}</strong>
+          <p>Hilos persistidos en Supabase.</p>
         </article>
         <article className="metric-card">
-          <span>Hilos activos</span>
-          <strong>{formatCompactNumber(metrics.activeThreads)}</strong>
-          <p>Conversaciones únicas visibles para el owner actual.</p>
+          <span>Cuentas conectadas</span>
+          <strong>{formatCompactNumber(metrics.activeAccounts)}</strong>
+          <p>Perfiles Professional listos para operar.</p>
         </article>
         <article className="metric-card">
-          <span>Reply ratio</span>
-          <strong>{metrics.replyRatio.toFixed(0)}%</strong>
-          <p>Relación salientes / entrantes de hoy, orientativa.</p>
+          <span>Recordatorios vencidos</span>
+          <strong>{formatCompactNumber(metrics.overdueReminders)}</strong>
+          <p>Notificaciones pendientes dentro de la app.</p>
         </article>
       </section>
 
       <section className="split-grid">
         <article className="list-card">
-          <span className="eyebrow">Actividad</span>
-          <h2>Volumen y calidad</h2>
+          <span className="eyebrow">Salud</span>
+          <h2>Indicadores clave</h2>
           <div className="stack-list">
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(metrics.weekTotal)}</strong>
-                <p>mensajes en 7 días</p>
+                <strong>{formatCompactNumber(metrics.todayOutbound)}</strong>
+                <p>mensajes salientes hoy</p>
               </div>
-              <span className="pill">Semana</span>
+              <span className="pill">Hoy</span>
             </div>
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(metrics.monthTotal)}</strong>
-                <p>mensajes en 30 días</p>
+                <strong>{metrics.replyRatio.toFixed(0)}%</strong>
+                <p>ratio de respuesta sobre mensajes de hoy</p>
               </div>
-              <span className="pill">Mes</span>
+              <span className="pill">Reply</span>
             </div>
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(metrics.qualifiedThreads)}</strong>
-                <p>hilos con etiqueta qualified</p>
+                <strong>{formatCompactNumber(metrics.qualifiedConversations)}</strong>
+                <p>conversaciones con etiqueta qualified</p>
               </div>
-              <span className="pill">Qualify</span>
+              <span className="pill">Labels</span>
             </div>
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(metrics.staleThreads)}</strong>
-                <p>hilos sin actividad en 14 días</p>
+                <strong>{formatCompactNumber(metrics.staleConversations)}</strong>
+                <p>hilos sin actividad reciente</p>
               </div>
               <span className="pill">Stale</span>
             </div>
@@ -91,35 +103,29 @@ export default async function DashboardPage() {
         </article>
 
         <article className="list-card">
-          <span className="eyebrow">Cuentas</span>
-          <h2>Estado operativo</h2>
+          <span className="eyebrow">Actividad</span>
+          <h2>Volumen reciente</h2>
           <div className="stack-list">
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(accounts.length)}</strong>
-                <p>cuentas totales</p>
+                <strong>{formatCompactNumber(metrics.weekTotal)}</strong>
+                <p>mensajes en 7 dias</p>
               </div>
-              <span className="pill">Total</span>
+              <span className="pill">Semana</span>
             </div>
             <div className="list-row">
               <div>
-                <strong>{formatCompactNumber(metrics.activeAccounts)}</strong>
-                <p>cuentas marcadas activas</p>
+                <strong>{formatCompactNumber(metrics.monthTotal)}</strong>
+                <p>mensajes en 30 dias</p>
               </div>
-              <span className="pill">Active</span>
+              <span className="pill">Mes</span>
             </div>
             <div className="list-row">
               <div>
-                <strong>
-                  {
-                    accounts.filter(
-                      (account) => account.proxy_host || account.proxy_port,
-                    ).length
-                  }
-                </strong>
-                <p>cuentas con proxy configurado</p>
+                <strong>{accounts.filter((account) => account.last_webhook_at).length}</strong>
+                <p>cuentas con webhook ya activo</p>
               </div>
-              <span className="pill">Proxy</span>
+              <span className="pill">Webhook</span>
             </div>
           </div>
         </article>
@@ -128,42 +134,50 @@ export default async function DashboardPage() {
       <section className="split-grid">
         <article className="list-card">
           <span className="eyebrow">Conversaciones</span>
-          <h2>Últimos hilos</h2>
-          {threads.length === 0 ? (
+          <h2>Ultima actividad</h2>
+          {enrichedConversations.length === 0 ? (
             <div className="empty-state compact">
-              <strong>No hay conversaciones aún</strong>
-              <p>Cuando entren mensajes en `chats`, el dashboard se va a poblar solo.</p>
+              <strong>No hay conversaciones aun</strong>
+              <p>Cuando Meta entregue mensajes por webhook, el dashboard se llena solo.</p>
             </div>
           ) : (
             <div className="stack-list">
-              {threads.slice(0, 6).map((thread) => (
-                <div key={thread.threadKey} className="list-row">
+              {enrichedConversations.slice(0, 6).map((conversation) => (
+                <div key={conversation.id} className="list-row">
                   <div>
-                    <strong>{thread.username}</strong>
+                    <strong>{getConversationDisplayName(conversation)}</strong>
                     <p>
-                      @{thread.accountUsername} · {thread.messageCount} mensajes
+                      @{conversation.account_username} - {getConversationPreview(conversation)}
                     </p>
                   </div>
-                  <span className="muted">{formatRelativeTime(thread.lastTimestamp)}</span>
+                  <span className="muted">{formatRelativeTime(conversation.last_message_at)}</span>
                 </div>
               ))}
             </div>
           )}
         </article>
 
-        <article className="feature-card">
-          <span className="eyebrow">Siguiente paso</span>
-          <h2>Base lista para crecer</h2>
-          <p>
-            El shell ya quedó preparado para sumar envío de mensajes, filtros
-            persistidos, métricas avanzadas y automatizaciones reales sobre la misma
-            sesión de Supabase.
-          </p>
-          <ul>
-            <li>Inbox de 3 columnas con Realtime</li>
-            <li>Rutas protegidas y auth SSR</li>
-            <li>Registro administrativo para owners</li>
-          </ul>
+        <article className="list-card">
+          <span className="eyebrow">Recordatorios</span>
+          <h2>Seguimientos vencidos</h2>
+          {dueReminders.length === 0 ? (
+            <div className="empty-state compact">
+              <strong>Sin alertas vencidas</strong>
+              <p>Los recordatorios creados desde el inbox van a aparecer aca cuando venzan.</p>
+            </div>
+          ) : (
+            <div className="stack-list">
+              {dueReminders.slice(0, 6).map((reminder) => (
+                <div key={reminder.id} className="list-row">
+                  <div>
+                    <strong>{reminder.title}</strong>
+                    <p>{reminder.note || "Sin nota adicional"}</p>
+                  </div>
+                  <span className="muted">{formatDateTime(reminder.remind_at)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </article>
       </section>
     </div>

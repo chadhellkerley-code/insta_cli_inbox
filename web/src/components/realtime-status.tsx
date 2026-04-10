@@ -2,71 +2,64 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { AgentPresence } from "@/lib/shared-data";
 import { formatRelativeTime } from "@/lib/shared-data";
 import { createClient } from "@/lib/supabase/client";
 
 type StatusTone = "online" | "pending" | "offline";
 
 type RealtimeStatusProps = {
-  agentIds: string[];
-  initialPresence: AgentPresence | null;
+  userId: string;
+  initialConnectedAccounts: number;
+  initialDueReminders: number;
+  initialRecentWebhookAt: string | null;
 };
 
-function mapPresenceToUi(
-  presence: AgentPresence | null,
-  hasPairedAgents: boolean,
+function mapStatus(
+  connectedAccounts: number,
+  dueReminders: number,
+  recentWebhookAt: string | null,
 ) {
-  if (!hasPairedAgents) {
+  if (connectedAccounts === 0) {
     return {
-      label: "Sin agente vinculado",
+      label: "Sin cuentas conectadas",
       tone: "offline" as StatusTone,
-      lastHeartbeat: "Vincula un agent_id para operar desde tu PC",
+      detail: "Conecta una cuenta Professional para activar el inbox.",
     };
   }
 
-  if (!presence?.last_seen_at) {
-    return {
-      label: "Agente offline",
-      tone: "offline" as StatusTone,
-      lastHeartbeat: "Sin heartbeats todavia",
-    };
-  }
+  if (recentWebhookAt) {
+    const lastWebhookMs = new Date(recentWebhookAt).getTime();
+    const ageMs = Date.now() - lastWebhookMs;
 
-  const ageMs = Date.now() - new Date(presence.last_seen_at).getTime();
-  if (ageMs < 30_000) {
-    return {
-      label: `Agente ${presence.agent_id} online`,
-      tone: "online" as StatusTone,
-      lastHeartbeat: `Heartbeat ${formatRelativeTime(presence.last_seen_at)}`,
-    };
-  }
-
-  if (ageMs < 120_000) {
-    return {
-      label: `Agente ${presence.agent_id} demorando`,
-      tone: "pending" as StatusTone,
-      lastHeartbeat: `Ultimo heartbeat ${formatRelativeTime(presence.last_seen_at)}`,
-    };
+    if (ageMs < 15 * 60 * 1000) {
+      return {
+        label: dueReminders > 0 ? "Webhook activo con alertas" : "Webhook activo",
+        tone: dueReminders > 0 ? ("pending" as StatusTone) : ("online" as StatusTone),
+        detail: `${connectedAccounts} cuenta(s) conectada(s) · ultimo evento ${formatRelativeTime(recentWebhookAt)}`,
+      };
+    }
   }
 
   return {
-    label: `Agente ${presence.agent_id} offline`,
-    tone: "offline" as StatusTone,
-    lastHeartbeat: `Ultimo heartbeat ${formatRelativeTime(presence.last_seen_at)}`,
+    label: dueReminders > 0 ? "Seguimientos pendientes" : "Cuentas conectadas",
+    tone: dueReminders > 0 ? ("pending" as StatusTone) : ("online" as StatusTone),
+    detail:
+      dueReminders > 0
+        ? `${dueReminders} recordatorio(s) vencido(s) dentro de la app.`
+        : `${connectedAccounts} cuenta(s) listas. Esperando nuevos mensajes de Meta.`,
   };
 }
 
 export function RealtimeStatus({
-  agentIds,
-  initialPresence,
+  userId,
+  initialConnectedAccounts,
+  initialDueReminders,
+  initialRecentWebhookAt,
 }: RealtimeStatusProps) {
   const clientRef = useRef<ReturnType<typeof createClient>>();
-  const hasPairedAgents = agentIds.length > 0;
-  const initialUi = mapPresenceToUi(initialPresence, hasPairedAgents);
-  const [label, setLabel] = useState(initialUi.label);
-  const [tone, setTone] = useState<StatusTone>(initialUi.tone);
-  const [lastHeartbeat, setLastHeartbeat] = useState(initialUi.lastHeartbeat);
+  const [connectedAccounts, setConnectedAccounts] = useState(initialConnectedAccounts);
+  const [dueReminders, setDueReminders] = useState(initialDueReminders);
+  const [recentWebhookAt, setRecentWebhookAt] = useState(initialRecentWebhookAt);
 
   if (!clientRef.current) {
     clientRef.current = createClient();
@@ -75,81 +68,94 @@ export function RealtimeStatus({
   useEffect(() => {
     const supabase = clientRef.current!;
 
-    if (agentIds.length === 0) {
-      const nextUi = mapPresenceToUi(null, false);
-      setLabel(nextUi.label);
-      setTone(nextUi.tone);
-      setLastHeartbeat(nextUi.lastHeartbeat);
-      return;
-    }
+    async function refreshStatus() {
+      const [accountsResult, remindersResult] = await Promise.all([
+        supabase
+          .from("instagram_accounts")
+          .select("id, last_webhook_at")
+          .eq("owner_id", userId),
+        supabase
+          .from("instagram_reminders")
+          .select("id, remind_at, status")
+          .eq("owner_id", userId)
+          .eq("status", "pending"),
+      ]);
 
-    async function refreshPresence() {
-      const { data, error } = await supabase
-        .from("agent_presence")
-        .select("agent_id, machine_name, status, last_seen_at")
-        .in("agent_id", agentIds)
-        .order("last_seen_at", { ascending: false })
-        .limit(1);
+      if (!accountsResult.error && accountsResult.data) {
+        setConnectedAccounts(accountsResult.data.length);
 
-      if (error) {
-        return;
+        const latestWebhook = accountsResult.data
+          .map((account) => account.last_webhook_at)
+          .filter(Boolean)
+          .sort((left, right) => {
+            return new Date(right as string).getTime() - new Date(left as string).getTime();
+          })[0];
+
+        setRecentWebhookAt((latestWebhook as string | undefined) ?? null);
       }
 
-      const nextPresence = ((data as AgentPresence[] | null) ?? [])[0] ?? null;
-      const nextUi = mapPresenceToUi(nextPresence, true);
-      setLabel(nextUi.label);
-      setTone(nextUi.tone);
-      setLastHeartbeat(nextUi.lastHeartbeat);
+      if (!remindersResult.error && remindersResult.data) {
+        const now = Date.now();
+        const totalDue = remindersResult.data.filter((reminder) => {
+          return new Date(reminder.remind_at).getTime() <= now;
+        }).length;
+
+        setDueReminders(totalDue);
+      }
     }
 
-    const channel = supabase
-      .channel(`agent-presence-${agentIds.join(",")}`)
+    const accountsChannel = supabase
+      .channel(`sidebar-accounts-${userId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
-          table: "agent_presence",
+          table: "instagram_accounts",
+          filter: `owner_id=eq.${userId}`,
         },
         () => {
-          void refreshPresence();
+          void refreshStatus();
         },
       )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          void refreshPresence();
-          return;
-        }
+      .subscribe();
 
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          setLabel("Reconectando agente");
-          setTone("pending");
-          setLastHeartbeat("Se perdio la conexion realtime");
-          return;
-        }
-
-        setLabel("Agente offline");
-        setTone("offline");
-        setLastHeartbeat("Canal realtime cerrado");
-      });
+    const remindersChannel = supabase
+      .channel(`sidebar-reminders-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "instagram_reminders",
+          filter: `owner_id=eq.${userId}`,
+        },
+        () => {
+          void refreshStatus();
+        },
+      )
+      .subscribe();
 
     const interval = window.setInterval(() => {
-      void refreshPresence();
-    }, 15_000);
+      void refreshStatus();
+    }, 20_000);
 
     return () => {
       window.clearInterval(interval);
-      void supabase.removeChannel(channel);
+      void supabase.removeChannel(accountsChannel);
+      void supabase.removeChannel(remindersChannel);
     };
-  }, [agentIds]);
+  }, [userId]);
+
+  const status = mapStatus(connectedAccounts, dueReminders, recentWebhookAt);
 
   return (
     <div className="status-card">
       <div className="status-row">
-        <span className={`status-dot ${tone}`} aria-hidden="true" />
-        <strong>{label}</strong>
+        <span className={`status-dot ${status.tone}`} aria-hidden="true" />
+        <strong>{status.label}</strong>
       </div>
-      <span className="status-copy">{lastHeartbeat}</span>
+      <span className="status-copy">{status.detail}</span>
     </div>
   );
 }

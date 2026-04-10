@@ -4,8 +4,8 @@ import { RealtimeStatus } from "@/components/realtime-status";
 import { SidebarNav } from "@/components/sidebar-nav";
 import {
   getDisplayName,
-  loadOwnerAgents,
-  loadLatestAgentPresence,
+  loadDueReminders,
+  loadOwnedAccounts,
   requireUserContext,
 } from "@/lib/app-data";
 import { createClient } from "@/lib/supabase/server";
@@ -15,9 +15,19 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { supabase, user, profile } = await requireUserContext();
-  const ownerAgents = await loadOwnerAgents(supabase, user.id);
-  const initialPresence = await loadLatestAgentPresence(supabase, user.id);
+  const { user, profile, supabase } = await requireUserContext();
+  const [accounts, dueReminders] = await Promise.all([
+    loadOwnedAccounts(supabase, user.id),
+    loadDueReminders(supabase, user.id),
+  ]);
+
+  const recentWebhookAt =
+    accounts
+      .map((account) => account.last_webhook_at)
+      .filter(Boolean)
+      .sort((left, right) => {
+        return new Date(right as string).getTime() - new Date(left as string).getTime();
+      })[0] ?? null;
 
   async function logoutAction() {
     "use server";
@@ -32,13 +42,15 @@ export default async function DashboardLayout({
       <aside className="dashboard-sidebar">
         <div className="sidebar-brand">
           <span>Insta CLI Inbox</span>
-          <strong>CRM dark mode</strong>
-          <p>Negro, gris y violeta para operar conversaciones en vivo.</p>
+          <strong>Instagram Graph CRM</strong>
+          <p>Inbox unificado en tiempo real con Meta y Supabase.</p>
         </div>
 
         <RealtimeStatus
-          agentIds={ownerAgents.map((agent) => agent.agent_id)}
-          initialPresence={initialPresence}
+          userId={user.id}
+          initialConnectedAccounts={accounts.length}
+          initialDueReminders={dueReminders.length}
+          initialRecentWebhookAt={recentWebhookAt}
         />
         <SidebarNav />
 
@@ -49,7 +61,7 @@ export default async function DashboardLayout({
 
           <form action={logoutAction} className="form-stack">
             <button type="submit" className="button button-secondary">
-              Cerrar sesión
+              Cerrar sesion
             </button>
           </form>
         </div>
