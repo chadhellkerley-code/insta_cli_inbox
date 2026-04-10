@@ -79,6 +79,14 @@ export async function exchangeCodeForShortLivedToken(code: string) {
   formData.set("redirect_uri", redirectUri);
   formData.set("code", code);
 
+  console.log("Token exchange request:", {
+    endpoint: "https://api.instagram.com/oauth/access_token",
+    appId: process.env.META_APP_ID,
+    hasSecret: !!process.env.META_APP_SECRET,
+    redirectUri: redirectUri,
+    codeLength: code.length,
+  });
+
   const response = await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST",
     headers: {
@@ -86,6 +94,11 @@ export async function exchangeCodeForShortLivedToken(code: string) {
     },
     body: formData.toString(),
     cache: "no-store",
+  });
+
+  console.log("Token exchange response:", {
+    status: response.status,
+    body: await response.clone().text(),
   });
 
   return readMetaResponse<ShortLivedTokenResponse>(response);
