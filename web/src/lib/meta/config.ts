@@ -1,5 +1,5 @@
 export const META_API_VERSION = "v25.0";
-export const EXPECTED_META_APP_ID = "2396536740854643";
+export const EXPECTED_META_APP_ID = "951837267330748";
 export const META_OAUTH_REDIRECT_URI =
   "https://insta-cli-inbox.vercel.app/auth/callback";
 export const META_OAUTH_STATE_COOKIE = "meta_instagram_oauth_state";
