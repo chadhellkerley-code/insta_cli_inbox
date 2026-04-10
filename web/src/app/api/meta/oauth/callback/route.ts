@@ -144,6 +144,8 @@ export async function GET(request: Request) {
     );
     return response;
   } catch (error) {
+    console.error("Callback error:", error instanceof Error ? error.message : error);
+
     return NextResponse.redirect(
       buildCompletionUrl(origin, {
         status: "error",

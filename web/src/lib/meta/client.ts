@@ -116,6 +116,11 @@ export async function exchangeForLongLivedToken(shortLivedToken: string) {
     cache: "no-store",
   });
 
+  console.log("Long lived token response:", {
+    status: response.status,
+    body: await response.clone().text(),
+  });
+
   return readMetaResponse<LongLivedTokenResponse>(response);
 }
 
@@ -131,6 +136,12 @@ export async function fetchInstagramProfile(accessToken: string) {
     method: "GET",
     cache: "no-store",
   });
+
+  console.log("Profile fetch response:", {
+    status: response.status,
+    body: await response.clone().text(),
+  });
+
   const payload = await readMetaResponse<MetaProfileResponse>(response);
   const profile = Array.isArray(payload.data) ? payload.data[0] : payload;
 
