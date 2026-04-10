@@ -47,6 +47,19 @@ export async function GET(request: Request) {
   const state = requestUrl.searchParams.get("state");
   const expectedState = cookies().get(META_OAUTH_STATE_COOKIE)?.value ?? null;
 
+  console.log("OAuth callback received:", {
+    url: request.url,
+    code,
+    state,
+    error: requestUrl.searchParams.get("error"),
+    errorDescription: requestUrl.searchParams.get("error_description"),
+  });
+  console.log("OAuth callback state cookie:", {
+    cookieName: META_OAUTH_STATE_COOKIE,
+    hasExpectedState: Boolean(expectedState),
+    expectedState,
+  });
+
   if (!code || !state || !expectedState || state !== expectedState) {
     const response = NextResponse.redirect(
       buildCompletionUrl(origin, {
