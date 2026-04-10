@@ -17,6 +17,7 @@ type ShortLivedTokenResponse = {
   access_token: string;
   user_id?: string;
   permissions?: string[];
+  expires_in?: number;
 };
 
 type LongLivedTokenResponse = {
