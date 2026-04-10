@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 import {
@@ -9,11 +8,10 @@ import {
 import {
   isProfessionalAccountType,
   META_LOGIN_SCOPES,
-  META_OAUTH_STATE_COOKIE,
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
+import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 
 type ExistingAccountLookup = {
   id: string;
@@ -30,64 +28,43 @@ function buildCompletionUrl(origin: string, params: Record<string, string>) {
   return url;
 }
 
-function clearOauthCookie(response: NextResponse) {
-  response.cookies.set(META_OAUTH_STATE_COOKIE, "", {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
-}
-
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const origin = requestUrl.origin;
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
-  const expectedState = cookies().get(META_OAUTH_STATE_COOKIE)?.value ?? null;
+  const oauthState = verifyMetaOauthState(state);
 
   console.log("OAuth callback received:", {
-    url: request.url,
-    code,
-    state,
+    hasCode: Boolean(code),
+    hasState: Boolean(state),
+    hasValidState: Boolean(oauthState),
     error: requestUrl.searchParams.get("error"),
     errorDescription: requestUrl.searchParams.get("error_description"),
   });
-  console.log("OAuth callback state cookie:", {
-    cookieName: META_OAUTH_STATE_COOKIE,
-    hasExpectedState: Boolean(expectedState),
-    expectedState,
-  });
 
-  if (!code || !state || !expectedState || state !== expectedState) {
-    const response = NextResponse.redirect(
+  if (!code || !oauthState) {
+    return NextResponse.redirect(
       buildCompletionUrl(origin, {
         status: "error",
         message: "No pudimos validar la autorizacion de Meta.",
       }),
     );
-    clearOauthCookie(response);
-    return response;
-  }
-
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    const response = NextResponse.redirect(
-      buildCompletionUrl(origin, {
-        status: "error",
-        message: "Tu sesion expiro antes de terminar la conexion.",
-      }),
-    );
-    clearOauthCookie(response);
-    return response;
   }
 
   try {
+    const admin = createAdminClient();
+    const userResult = await admin.auth.admin.getUserById(oauthState.userId);
+
+    if (userResult.error || !userResult.data.user) {
+      return NextResponse.redirect(
+        buildCompletionUrl(origin, {
+          status: "error",
+          message: "No pudimos validar el usuario para completar la conexion.",
+        }),
+      );
+    }
+
     const shortLivedToken = await exchangeCodeForShortLivedToken(code);
     const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
     const profile = await fetchInstagramProfile(longLivedToken.access_token);
@@ -97,7 +74,7 @@ export async function GET(request: Request) {
       !profile.username ||
       !isProfessionalAccountType(profile.accountType)
     ) {
-      const response = NextResponse.redirect(
+      return NextResponse.redirect(
         buildCompletionUrl(origin, {
           status: "error",
           message:
@@ -105,11 +82,8 @@ export async function GET(request: Request) {
           helpUrl: PROFESSIONAL_ACCOUNT_HELP_URL,
         }),
       );
-      clearOauthCookie(response);
-      return response;
     }
 
-    const admin = createAdminClient();
     const existingResult = await admin
       .from("instagram_accounts")
       .select("id, owner_id")
@@ -121,7 +95,7 @@ export async function GET(request: Request) {
       throw new Error(existingResult.error.message);
     }
 
-    if (existing && existing.owner_id !== user.id) {
+    if (existing && existing.owner_id !== oauthState.userId) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
@@ -131,7 +105,7 @@ export async function GET(request: Request) {
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
-        owner_id: user.id,
+        owner_id: oauthState.userId,
         instagram_account_id: profile.instagramAccountId,
         instagram_app_user_id: profile.appScopedUserId,
         username: profile.username,
@@ -161,10 +135,9 @@ export async function GET(request: Request) {
         username: profile.username,
       }),
     );
-    clearOauthCookie(response);
     return response;
   } catch (error) {
-    const response = NextResponse.redirect(
+    return NextResponse.redirect(
       buildCompletionUrl(origin, {
         status: "error",
         message:
@@ -173,7 +146,5 @@ export async function GET(request: Request) {
             : "No pudimos completar la conexion con Meta.",
       }),
     );
-    clearOauthCookie(response);
-    return response;
   }
 }

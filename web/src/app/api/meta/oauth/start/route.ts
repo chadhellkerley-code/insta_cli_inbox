@@ -4,8 +4,8 @@ import { buildMetaOauthUrl } from "@/lib/meta/client";
 import {
   EXPECTED_META_APP_ID,
   META_OAUTH_REDIRECT_URI,
-  META_OAUTH_STATE_COOKIE,
 } from "@/lib/meta/config";
+import { createMetaOauthState } from "@/lib/meta/oauth-state";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const state = crypto.randomUUID();
+  const state = createMetaOauthState(user.id);
   const oauthUrl = buildMetaOauthUrl(state);
   const response = debug
     ? NextResponse.json({
@@ -33,14 +33,6 @@ export async function GET(request: Request) {
         redirectUri: META_OAUTH_REDIRECT_URI,
       })
     : NextResponse.redirect(oauthUrl);
-
-  response.cookies.set(META_OAUTH_STATE_COOKIE, state, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 10 * 60,
-  });
 
   return response;
 }

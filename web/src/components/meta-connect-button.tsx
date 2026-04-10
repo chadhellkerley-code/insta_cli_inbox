@@ -29,7 +29,6 @@ export function MetaConnectButton({
   const router = useRouter();
   const [isOpening, setIsOpening] = useState(false);
   const [feedback, setFeedback] = useState<PopupPayload | null>(null);
-  const [oauthDebugUrl, setOauthDebugUrl] = useState<string | null>(null);
 
   useEffect(() => {
     function handleMessage(event: MessageEvent<PopupPayload>) {
@@ -52,7 +51,6 @@ export function MetaConnectButton({
 
   async function openPopup() {
     setFeedback(null);
-    setOauthDebugUrl(null);
     setIsOpening(true);
 
     try {
@@ -67,11 +65,6 @@ export function MetaConnectButton({
       if (!response.ok || !payload?.url) {
         throw new Error(payload?.error || "No pudimos construir la URL de Meta.");
       }
-
-      setOauthDebugUrl(payload.url);
-      console.log("Meta Instagram OAuth URL:", payload.url);
-      console.log("Meta Instagram OAuth client_id:", payload.clientId);
-      console.log("Meta Instagram OAuth redirect_uri:", payload.redirectUri);
 
       const popup = window.open(
         payload.url,
@@ -121,13 +114,6 @@ export function MetaConnectButton({
       >
         {isOpening ? "Abriendo Meta..." : buttonLabel}
       </button>
-
-      {oauthDebugUrl ? (
-        <div className="oauth-debug">
-          <span className="field-label">URL OAuth enviada a Meta</span>
-          <code>{oauthDebugUrl}</code>
-        </div>
-      ) : null}
 
       {feedback ? (
         <div className={feedback.status === "success" ? "feedback success" : "feedback error"}>
