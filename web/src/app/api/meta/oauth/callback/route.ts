@@ -35,6 +35,13 @@ export async function GET(request: Request) {
   const state = requestUrl.searchParams.get("state");
   const oauthState = verifyMetaOauthState(state);
 
+  console.log("ENV CHECK:", {
+    hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length ?? 0,
+    hasUrl: !!process.env.SUPABASE_URL,
+    nodeEnv: process.env.NODE_ENV,
+  });
+
   console.log("OAuth callback received:", {
     hasCode: Boolean(code),
     hasState: Boolean(state),
