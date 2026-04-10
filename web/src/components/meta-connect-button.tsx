@@ -23,23 +23,6 @@ export function MetaConnectButton({
   const [isOpening, setIsOpening] = useState(false);
   const [feedback, setFeedback] = useState<PopupPayload | null>(null);
 
-  function buildPopupFeatures() {
-    const width = 640;
-    const height = 760;
-    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
-    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
-
-    return [
-      `width=${Math.round(width)}`,
-      `height=${Math.round(height)}`,
-      `left=${Math.round(left)}`,
-      `top=${Math.round(top)}`,
-      "popup=yes",
-      "resizable=yes",
-      "scrollbars=yes",
-    ].join(",");
-  }
-
   useEffect(() => {
     function handleMessage(event: MessageEvent<PopupPayload>) {
       if (event.origin !== window.location.origin) {
@@ -63,10 +46,11 @@ export function MetaConnectButton({
     setFeedback(null);
     setIsOpening(true);
 
+    const url = "/api/meta/oauth/start";
     const popup = window.open(
-      "/api/meta/oauth/start",
-      "meta-instagram-oauth",
-      buildPopupFeatures(),
+      url,
+      "_blank",
+      "width=600,height=700,popup=true",
     );
 
     if (!popup) {

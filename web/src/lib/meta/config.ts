@@ -1,4 +1,7 @@
 export const META_API_VERSION = "v25.0";
+export const EXPECTED_META_APP_ID = "2396536740854643";
+export const META_OAUTH_REDIRECT_URI =
+  "https://insta-cli-inbox.vercel.app/auth/callback";
 export const META_OAUTH_STATE_COOKIE = "meta_instagram_oauth_state";
 export const META_MEDIA_BUCKET = "instagram-media";
 export const PROFESSIONAL_ACCOUNT_HELP_URL =
@@ -15,8 +18,25 @@ function readEnv(value: string | undefined, missingMessage: string) {
 }
 
 export function getMetaServerEnv() {
+  const appId = readEnv(process.env.META_APP_ID, "Missing required env: META_APP_ID.");
+  const redirectUri =
+    process.env.META_OAUTH_REDIRECT_URI?.trim() || META_OAUTH_REDIRECT_URI;
+
+  if (appId !== EXPECTED_META_APP_ID) {
+    throw new Error(
+      `Invalid META_APP_ID. Expected ${EXPECTED_META_APP_ID} for Meta OAuth.`,
+    );
+  }
+
+  if (redirectUri !== META_OAUTH_REDIRECT_URI) {
+    throw new Error(
+      `Invalid META_OAUTH_REDIRECT_URI. Expected ${META_OAUTH_REDIRECT_URI} for Meta OAuth.`,
+    );
+  }
+
   return {
-    appId: readEnv(process.env.META_APP_ID, "Missing required env: META_APP_ID."),
+    appId,
+    redirectUri,
     appSecret: readEnv(
       process.env.META_APP_SECRET,
       "Missing required env: META_APP_SECRET.",
@@ -29,11 +49,19 @@ export function getMetaServerEnv() {
 }
 
 export function getMetaPublicEnv() {
+  const appId = readEnv(
+    process.env.NEXT_PUBLIC_META_APP_ID,
+    "Missing required env: NEXT_PUBLIC_META_APP_ID.",
+  );
+
+  if (appId !== EXPECTED_META_APP_ID) {
+    throw new Error(
+      `Invalid NEXT_PUBLIC_META_APP_ID. Expected ${EXPECTED_META_APP_ID} for Meta OAuth.`,
+    );
+  }
+
   return {
-    appId: readEnv(
-      process.env.NEXT_PUBLIC_META_APP_ID,
-      "Missing required env: NEXT_PUBLIC_META_APP_ID.",
-    ),
+    appId,
   };
 }
 

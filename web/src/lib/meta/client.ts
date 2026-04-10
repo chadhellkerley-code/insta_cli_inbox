@@ -42,11 +42,11 @@ type MetaProfileResponse = {
   }>;
 };
 
-export function buildMetaOauthUrl(origin: string, state: string) {
-  const { appId } = getMetaServerEnv();
+export function buildMetaOauthUrl(state: string) {
+  const { appId, redirectUri } = getMetaServerEnv();
   const url = new URL("https://www.instagram.com/oauth/authorize");
   url.searchParams.set("client_id", appId);
-  url.searchParams.set("redirect_uri", `${origin}/api/meta/oauth/callback`);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", META_LOGIN_SCOPES.join(","));
   url.searchParams.set("state", state);
@@ -70,13 +70,13 @@ async function readMetaResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function exchangeCodeForShortLivedToken(origin: string, code: string) {
-  const { appId, appSecret } = getMetaServerEnv();
+export async function exchangeCodeForShortLivedToken(code: string) {
+  const { appId, appSecret, redirectUri } = getMetaServerEnv();
   const formData = new URLSearchParams();
   formData.set("client_id", appId);
   formData.set("client_secret", appSecret);
   formData.set("grant_type", "authorization_code");
-  formData.set("redirect_uri", `${origin}/api/meta/oauth/callback`);
+  formData.set("redirect_uri", redirectUri);
   formData.set("code", code);
 
   const response = await fetch("https://api.instagram.com/oauth/access_token", {

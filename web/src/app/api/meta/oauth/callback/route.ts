@@ -75,7 +75,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const shortLivedToken = await exchangeCodeForShortLivedToken(origin, code);
+    const shortLivedToken = await exchangeCodeForShortLivedToken(code);
     const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
     const profile = await fetchInstagramProfile(longLivedToken.access_token);
 

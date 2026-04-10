@@ -14,9 +14,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const origin = new URL(request.url).origin;
   const state = crypto.randomUUID();
-  const response = NextResponse.redirect(buildMetaOauthUrl(origin, state));
+  const response = NextResponse.redirect(buildMetaOauthUrl(state));
 
   response.cookies.set(META_OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
