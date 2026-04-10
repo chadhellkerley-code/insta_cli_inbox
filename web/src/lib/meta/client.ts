@@ -13,6 +13,17 @@ type MetaErrorPayload = {
   };
 };
 
+type ShortLivedTokenPayload = {
+  access_token?: string;
+  user_id?: string;
+  permissions?: string | string[];
+  expires_in?: number;
+};
+
+type RawShortLivedTokenResponse = ShortLivedTokenPayload & {
+  data?: ShortLivedTokenPayload[];
+};
+
 type ShortLivedTokenResponse = {
   access_token: string;
   user_id?: string;
@@ -43,10 +54,26 @@ type MetaProfileResponse = {
   }>;
 };
 
+function normalizePermissions(permissions?: string | string[] | null) {
+  if (Array.isArray(permissions)) {
+    return permissions.map((permission) => permission.trim()).filter(Boolean);
+  }
+
+  if (typeof permissions === "string") {
+    return permissions
+      .split(",")
+      .map((permission) => permission.trim())
+      .filter(Boolean);
+  }
+
+  return undefined;
+}
+
 export function buildMetaOauthUrl(state: string) {
   const { appId, redirectUri } = getMetaServerEnv();
   const url = new URL("https://www.instagram.com/oauth/authorize");
   url.searchParams.set("client_id", appId);
+  url.searchParams.set("enable_fb_login", "false");
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", META_LOGIN_SCOPES.join(","));
@@ -71,7 +98,9 @@ async function readMetaResponse<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
-export async function exchangeCodeForShortLivedToken(code: string) {
+export async function exchangeCodeForShortLivedToken(
+  code: string,
+): Promise<ShortLivedTokenResponse> {
   const { appId, appSecret, redirectUri } = getMetaServerEnv();
   const formData = new URLSearchParams();
   formData.set("client_id", appId);
@@ -102,7 +131,19 @@ export async function exchangeCodeForShortLivedToken(code: string) {
     body: await response.clone().text(),
   });
 
-  return readMetaResponse<ShortLivedTokenResponse>(response);
+  const payload = await readMetaResponse<RawShortLivedTokenResponse>(response);
+  const tokenPayload = Array.isArray(payload.data) ? payload.data[0] : payload;
+
+  if (!tokenPayload?.access_token) {
+    throw new Error("Meta did not return an access token.");
+  }
+
+  return {
+    access_token: tokenPayload.access_token,
+    user_id: tokenPayload.user_id,
+    permissions: normalizePermissions(tokenPayload.permissions),
+    expires_in: tokenPayload.expires_in,
+  };
 }
 
 export async function exchangeForLongLivedToken(shortLivedToken: string) {
@@ -129,7 +170,7 @@ export async function fetchInstagramProfile(accessToken: string) {
   const url = new URL(`https://graph.instagram.com/${META_API_VERSION}/me`);
   url.searchParams.set(
     "fields",
-    "id,username,account_type,name,profile_picture_url",
+    "id,user_id,username,account_type,name,profile_picture_url",
   );
   url.searchParams.set("access_token", accessToken);
 
@@ -152,7 +193,7 @@ export async function fetchInstagramProfile(accessToken: string) {
 
   return {
     appScopedUserId: profile.id ?? null,
-    instagramAccountId: profile.id ?? profile.user_id ?? null,
+    instagramAccountId: profile.user_id ?? profile.id ?? null,
     username: profile.username ?? null,
     name: profile.name ?? null,
     accountType: profile.account_type ?? null,
@@ -174,14 +215,25 @@ export async function sendInstagramMessage(options: {
 
   const message =
     options.messageType && options.mediaUrl
-      ? {
-          attachment: {
-            type: options.messageType,
-            payload: {
-              url: options.mediaUrl,
+      ? options.messageType === "image"
+        ? {
+            attachments: [
+              {
+                type: options.messageType,
+                payload: {
+                  url: options.mediaUrl,
+                },
+              },
+            ],
+          }
+        : {
+            attachment: {
+              type: options.messageType,
+              payload: {
+                url: options.mediaUrl,
+              },
             },
-          },
-        }
+          }
       : {
           text: options.text,
         };

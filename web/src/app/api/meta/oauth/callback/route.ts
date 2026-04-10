@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   exchangeCodeForShortLivedToken,
+  exchangeForLongLivedToken,
   fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
@@ -72,7 +73,8 @@ export async function GET(request: Request) {
     }
 
     const shortLivedToken = await exchangeCodeForShortLivedToken(code);
-    const profile = await fetchInstagramProfile(shortLivedToken.access_token);
+    const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
+    const profile = await fetchInstagramProfile(longLivedToken.access_token);
 
     if (
       !profile.instagramAccountId ||
@@ -105,7 +107,7 @@ export async function GET(request: Request) {
     }
 
     const expiresAt = new Date(
-      Date.now() + (shortLivedToken.expires_in ?? 60 * 24 * 60 * 60) * 1000,
+      Date.now() + (longLivedToken.expires_in ?? 60 * 24 * 60 * 60) * 1000,
     ).toISOString();
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
@@ -117,7 +119,7 @@ export async function GET(request: Request) {
         name: profile.name,
         account_type: profile.accountType,
         profile_picture_url: profile.profilePictureUrl,
-        access_token: shortLivedToken.access_token,
+        access_token: longLivedToken.access_token,
         token_expires_at: expiresAt,
         status: "connected",
         connected_at: new Date().toISOString(),
