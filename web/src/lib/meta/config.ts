@@ -68,7 +68,7 @@ export function getMetaPublicEnv() {
 export const META_LOGIN_SCOPES = [
   "instagram_business_basic",
   "instagram_business_manage_messages",
-  "instagram_manage_comments",
+  "instagram_business_manage_comments",
 ] as const;
 
 export function normalizeAccountType(accountType: string | null | undefined) {
