@@ -10,8 +10,12 @@ export function createAdminClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY;
 
   if (!serviceRoleKey) {
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY === undefined) {
+      console.error("SUPABASE_SERVICE_ROLE_KEY runtime value:", process.env.SUPABASE_SERVICE_ROLE_KEY);
+    }
+
     throw new Error(
-      "Falta SUPABASE_SERVICE_ROLE_KEY o SUPABASE_SERVICE_KEY para crear usuarios desde /registro.",
+      "Supabase admin client no disponible.",
     );
   }
 
