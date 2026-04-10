@@ -18,8 +18,11 @@ function readEnv(value: string | undefined, missingMessage: string) {
 
 export function getMetaServerEnv() {
   const appId = readEnv(process.env.META_APP_ID, "Missing required env: META_APP_ID.");
-  const redirectUri =
-    process.env.META_OAUTH_REDIRECT_URI?.trim() || META_OAUTH_REDIRECT_URI;
+  const redirectUri = process.env.META_OAUTH_REDIRECT_URI;
+
+  if (!redirectUri) {
+    throw new Error("Missing required env: META_OAUTH_REDIRECT_URI.");
+  }
 
   if (appId !== EXPECTED_META_APP_ID) {
     throw new Error(

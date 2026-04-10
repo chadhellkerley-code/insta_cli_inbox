@@ -2,6 +2,7 @@ import {
   getMetaServerEnv,
   META_API_VERSION,
   META_LOGIN_SCOPES,
+  META_OAUTH_REDIRECT_URI,
 } from "@/lib/meta/config";
 
 type MetaErrorPayload = {
@@ -109,11 +110,18 @@ export async function exchangeCodeForShortLivedToken(
   formData.set("redirect_uri", redirectUri);
   formData.set("code", code);
 
+  console.log("OAuth redirect URI check:", {
+    configuredRedirectUri: META_OAUTH_REDIRECT_URI,
+    requestRedirectUri: redirectUri,
+    matchesExactly: META_OAUTH_REDIRECT_URI === redirectUri,
+  });
+
   console.log("Token exchange request:", {
     endpoint: "https://api.instagram.com/oauth/access_token",
     appId: process.env.META_APP_ID,
     hasSecret: !!process.env.META_APP_SECRET,
     redirectUri: redirectUri,
+    bodyRedirectUri: formData.get("redirect_uri"),
     codeLength: code.length,
   });
 
