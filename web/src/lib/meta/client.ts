@@ -192,19 +192,24 @@ export async function exchangeCodeForShortLivedToken(
 export async function exchangeForLongLivedToken(shortLivedToken: string) {
   const oauthConfig = getMetaOauthConfig();
   const { appSecret } = getMetaServerEnv();
-  const url = new URL(oauthConfig.longLivedTokenUrl);
-  url.searchParams.set("grant_type", "ig_exchange_token");
-  url.searchParams.set("client_secret", appSecret);
-  url.searchParams.set("access_token", shortLivedToken);
+  const body = new URLSearchParams();
+  body.set("grant_type", "ig_exchange_token");
+  body.set("client_secret", appSecret);
+  body.set("access_token", shortLivedToken);
 
   console.info("[meta-oauth] long-lived token exchange request", {
     flow: oauthConfig.flow,
     endpoint: oauthConfig.longLivedTokenUrl,
     grantType: "ig_exchange_token",
+    requestFormat: "application/x-www-form-urlencoded",
   });
 
-  const response = await fetch(url, {
-    method: "GET",
+  const response = await fetch(oauthConfig.longLivedTokenUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body,
     cache: "no-store",
   });
   const payload = await readMetaJson(response);
