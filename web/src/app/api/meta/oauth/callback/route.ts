@@ -6,6 +6,7 @@ import {
   fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
+  getMetaOauthConfig,
   isProfessionalAccountType,
   META_LOGIN_SCOPES,
   PROFESSIONAL_ACCOUNT_HELP_URL,
@@ -33,22 +34,33 @@ export async function GET(request: Request) {
   const origin = requestUrl.origin;
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
+  const error = requestUrl.searchParams.get("error");
+  const errorReason = requestUrl.searchParams.get("error_reason");
+  const errorDescription = requestUrl.searchParams.get("error_description");
   const oauthState = verifyMetaOauthState(state);
+  const oauthConfig = getMetaOauthConfig();
 
-  console.log("ENV CHECK:", {
-    hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-    keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length ?? 0,
-    hasUrl: !!process.env.SUPABASE_URL,
-    nodeEnv: process.env.NODE_ENV,
-  });
-
-  console.log("OAuth callback received:", {
+  console.info("[meta-oauth] callback received", {
+    flow: oauthConfig.flow,
+    route: requestUrl.pathname,
     hasCode: Boolean(code),
+    codeLength: code?.length ?? 0,
     hasState: Boolean(state),
-    hasValidState: Boolean(oauthState),
-    error: requestUrl.searchParams.get("error"),
-    errorDescription: requestUrl.searchParams.get("error_description"),
+    stateLength: state?.length ?? 0,
+    stateValid: Boolean(oauthState),
+    error,
+    errorReason,
+    errorDescription,
   });
+
+  if (error) {
+    return NextResponse.redirect(
+      buildCompletionUrl(origin, {
+        status: "error",
+        message: errorDescription || "Meta cancelo o rechazo la autorizacion.",
+      }),
+    );
+  }
 
   if (!code || !oauthState) {
     return NextResponse.redirect(
@@ -75,6 +87,14 @@ export async function GET(request: Request) {
     const shortLivedToken = await exchangeCodeForShortLivedToken(code);
     const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
     const profile = await fetchInstagramProfile(longLivedToken.access_token);
+
+    console.info("[meta-oauth] profile resolved", {
+      flow: oauthConfig.flow,
+      appScopedUserId: profile.appScopedUserId,
+      instagramAccountId: profile.instagramAccountId,
+      username: profile.username,
+      accountType: profile.accountType,
+    });
 
     if (
       !profile.instagramAccountId ||
@@ -144,7 +164,10 @@ export async function GET(request: Request) {
     );
     return response;
   } catch (error) {
-    console.error("Callback error:", error instanceof Error ? error.message : error);
+    console.error("[meta-oauth] callback failed", {
+      flow: oauthConfig.flow,
+      message: error instanceof Error ? error.message : String(error),
+    });
 
     return NextResponse.redirect(
       buildCompletionUrl(origin, {

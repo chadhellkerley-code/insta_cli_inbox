@@ -1,8 +1,6 @@
 import {
+  getMetaOauthConfig,
   getMetaServerEnv,
-  META_API_VERSION,
-  META_LOGIN_SCOPES,
-  META_OAUTH_REDIRECT_URI,
 } from "@/lib/meta/config";
 
 type MetaErrorPayload = {
@@ -12,6 +10,12 @@ type MetaErrorPayload = {
     code?: number;
     error_subcode?: number;
   };
+  error_type?: string;
+  error_message?: string;
+  code?: number;
+  error_code?: number;
+  error_subcode?: number;
+  fbtrace_id?: string;
 };
 
 type ShortLivedTokenPayload = {
@@ -70,77 +74,96 @@ function normalizePermissions(permissions?: string | string[] | null) {
   return undefined;
 }
 
+function summarizeMetaError(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const errorPayload = payload as MetaErrorPayload;
+
+  return {
+    message: errorPayload.error?.message ?? errorPayload.error_message ?? null,
+    type: errorPayload.error?.type ?? errorPayload.error_type ?? null,
+    code:
+      errorPayload.error?.code ?? errorPayload.code ?? errorPayload.error_code ?? null,
+    subcode: errorPayload.error?.error_subcode ?? errorPayload.error_subcode ?? null,
+    fbtraceId: errorPayload.fbtrace_id ?? null,
+  };
+}
+
+function getMetaErrorMessage(payload: unknown) {
+  return summarizeMetaError(payload)?.message ?? "Meta rejected the request.";
+}
+
+async function readMetaJson(response: Response) {
+  return (await response.json().catch(() => null)) as unknown;
+}
+
+function assertMetaResponseOk(response: Response, payload: unknown, context: string) {
+  if (response.ok) {
+    return;
+  }
+
+  const message = getMetaErrorMessage(payload);
+  throw new Error(`${context}: ${message}`);
+}
+
 export function buildMetaOauthUrl(state: string) {
-  const { appId, redirectUri } = getMetaServerEnv();
-  const url = new URL("https://www.instagram.com/oauth/authorize");
+  const { appId } = getMetaServerEnv();
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(oauthConfig.authorizeUrl);
   url.searchParams.set("client_id", appId);
   url.searchParams.set("enable_fb_login", "false");
-  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("redirect_uri", oauthConfig.redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", META_LOGIN_SCOPES.join(","));
+  url.searchParams.set("scope", oauthConfig.scopes.join(","));
   url.searchParams.set("state", state);
 
   return url.toString();
-}
-
-async function readMetaResponse<T>(response: Response): Promise<T> {
-  const payload = (await response.json().catch(() => null)) as
-    | T
-    | MetaErrorPayload
-    | null;
-
-  if (!response.ok) {
-    const message =
-      (payload as MetaErrorPayload | null)?.error?.message ??
-      "Meta rejected the request.";
-    throw new Error(message);
-  }
-
-  return payload as T;
 }
 
 export async function exchangeCodeForShortLivedToken(
   code: string,
 ): Promise<ShortLivedTokenResponse> {
   const { appId, appSecret, redirectUri } = getMetaServerEnv();
-  const formData = new URLSearchParams();
+  const oauthConfig = getMetaOauthConfig();
+  const formData = new FormData();
   formData.set("client_id", appId);
   formData.set("client_secret", appSecret);
   formData.set("grant_type", "authorization_code");
   formData.set("redirect_uri", redirectUri);
   formData.set("code", code);
 
-  console.log("OAuth redirect URI check:", {
-    configuredRedirectUri: META_OAUTH_REDIRECT_URI,
-    requestRedirectUri: redirectUri,
-    matchesExactly: META_OAUTH_REDIRECT_URI === redirectUri,
-  });
-
-  console.log("Token exchange request:", {
-    endpoint: "https://api.instagram.com/oauth/access_token",
-    appId: process.env.META_APP_ID,
-    hasSecret: !!process.env.META_APP_SECRET,
-    redirectUri: redirectUri,
+  console.info("[meta-oauth] short-lived token exchange request", {
+    flow: oauthConfig.flow,
+    endpoint: oauthConfig.shortLivedTokenUrl,
+    appId,
+    redirectUri,
     bodyRedirectUri: formData.get("redirect_uri"),
+    requestFormat: "multipart/form-data",
     codeLength: code.length,
   });
 
-  const response = await fetch("https://api.instagram.com/oauth/access_token", {
+  const response = await fetch(oauthConfig.shortLivedTokenUrl, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: formData.toString(),
+    body: formData,
     cache: "no-store",
   });
+  const payload = await readMetaJson(response);
 
-  console.log("Token exchange response:", {
+  console.info("[meta-oauth] short-lived token exchange response", {
+    endpoint: oauthConfig.shortLivedTokenUrl,
     status: response.status,
-    body: await response.clone().text(),
+    ok: response.ok,
+    error: summarizeMetaError(payload),
   });
 
-  const payload = await readMetaResponse<RawShortLivedTokenResponse>(response);
-  const tokenPayload = Array.isArray(payload.data) ? payload.data[0] : payload;
+  assertMetaResponseOk(response, payload, "Short-lived token exchange failed");
+
+  const typedPayload = payload as RawShortLivedTokenResponse;
+  const tokenPayload = Array.isArray(typedPayload.data)
+    ? typedPayload.data[0]
+    : typedPayload;
 
   if (!tokenPayload?.access_token) {
     throw new Error("Meta did not return an access token.");
@@ -155,49 +178,73 @@ export async function exchangeCodeForShortLivedToken(
 }
 
 export async function exchangeForLongLivedToken(shortLivedToken: string) {
+  const oauthConfig = getMetaOauthConfig();
   const { appSecret } = getMetaServerEnv();
-  const url = new URL("https://graph.instagram.com/access_token");
+  const url = new URL(oauthConfig.longLivedTokenUrl);
   url.searchParams.set("grant_type", "ig_exchange_token");
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("access_token", shortLivedToken);
+
+  console.info("[meta-oauth] long-lived token exchange request", {
+    flow: oauthConfig.flow,
+    endpoint: oauthConfig.longLivedTokenUrl,
+    grantType: "ig_exchange_token",
+  });
 
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
   });
+  const payload = await readMetaJson(response);
 
-  console.log("Long lived token response:", {
+  console.info("[meta-oauth] long-lived token exchange response", {
+    endpoint: oauthConfig.longLivedTokenUrl,
     status: response.status,
-    body: await response.clone().text(),
+    ok: response.ok,
+    expiresIn:
+      payload && typeof payload === "object" && "expires_in" in payload
+        ? (payload as LongLivedTokenResponse).expires_in ?? null
+        : null,
+    error: summarizeMetaError(payload),
   });
 
-  return readMetaResponse<LongLivedTokenResponse>(response);
+  assertMetaResponseOk(response, payload, "Long-lived token exchange failed");
+
+  return payload as LongLivedTokenResponse;
 }
 
 export async function fetchInstagramProfile(accessToken: string) {
-  const url = new URL(`https://graph.instagram.com/${META_API_VERSION}/me`);
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
   url.searchParams.set(
     "fields",
     "id,user_id,username,account_type,name,profile_picture_url",
   );
   url.searchParams.set("access_token", accessToken);
 
-  console.log("Profile fetch request:", {
-    url: url.toString(),
+  console.info("[meta-oauth] profile fetch request", {
+    flow: oauthConfig.flow,
+    endpoint: `${oauthConfig.graphBaseUrl}/me`,
+    fields: url.searchParams.get("fields"),
   });
 
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
   });
+  const payload = await readMetaJson(response);
 
-  console.log("Profile fetch response:", {
+  console.info("[meta-oauth] profile fetch response", {
+    endpoint: `${oauthConfig.graphBaseUrl}/me`,
     status: response.status,
-    body: await response.clone().text(),
+    ok: response.ok,
+    error: summarizeMetaError(payload),
   });
 
-  const payload = await readMetaResponse<MetaProfileResponse>(response);
-  const profile = Array.isArray(payload.data) ? payload.data[0] : payload;
+  assertMetaResponseOk(response, payload, "Profile fetch failed");
+
+  const typedPayload = payload as MetaProfileResponse;
+  const profile = Array.isArray(typedPayload.data) ? typedPayload.data[0] : typedPayload;
 
   return {
     appScopedUserId: profile.id ?? null,
@@ -217,9 +264,8 @@ export async function sendInstagramMessage(options: {
   messageType?: "audio" | "image" | "video" | "file";
   mediaUrl?: string;
 }) {
-  const url = new URL(
-    `https://graph.instagram.com/${META_API_VERSION}/${options.instagramAccountId}/messages`,
-  );
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramAccountId}/messages`);
 
   const message =
     options.messageType && options.mediaUrl
@@ -261,8 +307,11 @@ export async function sendInstagramMessage(options: {
     cache: "no-store",
   });
 
-  return readMetaResponse<{
+  const responsePayload = await readMetaJson(response);
+  assertMetaResponseOk(response, responsePayload, "Send message failed");
+
+  return responsePayload as {
     recipient_id?: string;
     message_id?: string;
-  }>(response);
+  };
 }

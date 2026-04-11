@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { buildMetaOauthUrl } from "@/lib/meta/client";
 import {
   EXPECTED_META_APP_ID,
+  getMetaOauthConfig,
   META_OAUTH_REDIRECT_URI,
 } from "@/lib/meta/config";
 import { createMetaOauthState } from "@/lib/meta/oauth-state";
@@ -26,6 +27,19 @@ export async function GET(request: Request) {
 
   const state = createMetaOauthState(user.id);
   const oauthUrl = buildMetaOauthUrl(state);
+  const oauthConfig = getMetaOauthConfig();
+
+  console.info("[meta-oauth] authorize URL created", {
+    flow: oauthConfig.flow,
+    authorizeEndpoint: oauthConfig.authorizeUrl,
+    clientId: EXPECTED_META_APP_ID,
+    redirectUri: META_OAUTH_REDIRECT_URI,
+    scopes: oauthConfig.scopes,
+    hasState: true,
+    stateLength: state.length,
+    debug,
+  });
+
   const response = debug
     ? NextResponse.json({
         url: oauthUrl,

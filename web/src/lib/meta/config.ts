@@ -1,10 +1,19 @@
 export const META_API_VERSION = "v25.0";
+export const META_OAUTH_FLOW = "instagram_api_with_instagram_login";
 export const EXPECTED_META_APP_ID = "951837267330748";
 export const META_OAUTH_REDIRECT_URI =
   "https://insta-cli-inbox.vercel.app/auth/callback";
 export const META_MEDIA_BUCKET = "instagram-media";
 export const PROFESSIONAL_ACCOUNT_HELP_URL =
   "https://help.instagram.com/502981923235522";
+export const META_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
+export const META_SHORT_LIVED_TOKEN_URL =
+  "https://api.instagram.com/oauth/access_token";
+export const META_LONG_LIVED_TOKEN_URL =
+  "https://graph.instagram.com/access_token";
+export const META_REFRESH_TOKEN_URL =
+  "https://graph.instagram.com/refresh_access_token";
+export const META_GRAPH_BASE_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
 function readEnv(value: string | undefined, missingMessage: string) {
   const trimmed = value?.trim();
@@ -72,6 +81,19 @@ export const META_LOGIN_SCOPES = [
   "instagram_business_manage_messages",
   "instagram_business_manage_comments",
 ] as const;
+
+export function getMetaOauthConfig() {
+  return {
+    flow: META_OAUTH_FLOW,
+    authorizeUrl: META_AUTHORIZE_URL,
+    shortLivedTokenUrl: META_SHORT_LIVED_TOKEN_URL,
+    longLivedTokenUrl: META_LONG_LIVED_TOKEN_URL,
+    refreshTokenUrl: META_REFRESH_TOKEN_URL,
+    graphBaseUrl: META_GRAPH_BASE_URL,
+    redirectUri: META_OAUTH_REDIRECT_URI,
+    scopes: Array.from(META_LOGIN_SCOPES),
+  };
+}
 
 export function normalizeAccountType(accountType: string | null | undefined) {
   return (accountType ?? "").trim().toUpperCase();
