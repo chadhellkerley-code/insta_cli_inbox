@@ -21,7 +21,7 @@ type MetaErrorPayload = {
 
 type ShortLivedTokenPayload = {
   access_token?: string;
-  user_id?: string;
+  user_id?: string | number;
   permissions?: string | string[];
   expires_in?: number;
 };
@@ -44,21 +44,34 @@ type LongLivedTokenResponse = {
 };
 
 type MetaProfileResponse = {
-  id?: string;
-  user_id?: string;
+  id?: string | number;
+  user_id?: string | number;
   username?: string;
   name?: string;
   account_type?: string;
   profile_picture_url?: string;
   data?: Array<{
-    id?: string;
-    user_id?: string;
+    id?: string | number;
+    user_id?: string | number;
     username?: string;
     name?: string;
     account_type?: string;
     profile_picture_url?: string;
   }>;
 };
+
+function normalizeMetaIdentifier(value: unknown) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return null;
+}
 
 function normalizePermissions(permissions?: string | string[] | null) {
   if (Array.isArray(permissions)) {
@@ -183,7 +196,7 @@ export async function exchangeCodeForShortLivedToken(
 
   return {
     access_token: tokenPayload.access_token,
-    user_id: tokenPayload.user_id,
+    user_id: normalizeMetaIdentifier(tokenPayload.user_id) ?? undefined,
     permissions: normalizePermissions(tokenPayload.permissions),
     expires_in: tokenPayload.expires_in,
   };
@@ -238,8 +251,9 @@ export async function fetchInstagramProfile(
 ) {
   const oauthConfig = getMetaOauthConfig();
   const fields = "id,user_id,username,account_type,name,profile_picture_url";
+  const normalizedInstagramUserId = normalizeMetaIdentifier(options?.instagramUserId);
   const endpointCandidates = [
-    options?.instagramUserId?.trim() || null,
+    normalizedInstagramUserId,
     "me",
   ].filter((candidate, index, values): candidate is string => Boolean(candidate) && values.indexOf(candidate) === index);
 
@@ -289,11 +303,13 @@ export async function fetchInstagramProfile(
 
   const typedPayload = payload as MetaProfileResponse;
   const profile = Array.isArray(typedPayload.data) ? typedPayload.data[0] : typedPayload;
-  const normalizedInstagramUserId = options?.instagramUserId?.trim() || null;
+  const normalizedAppScopedUserId = normalizeMetaIdentifier(profile.id);
+  const normalizedInstagramAccountId = normalizeMetaIdentifier(profile.user_id);
 
   return {
-    appScopedUserId: profile.id ?? normalizedInstagramUserId,
-    instagramAccountId: profile.user_id ?? normalizedInstagramUserId ?? profile.id ?? null,
+    appScopedUserId: normalizedAppScopedUserId ?? normalizedInstagramUserId,
+    instagramAccountId:
+      normalizedInstagramAccountId ?? normalizedInstagramUserId ?? normalizedAppScopedUserId,
     username: profile.username ?? null,
     name: profile.name ?? null,
     accountType: profile.account_type ?? null,
