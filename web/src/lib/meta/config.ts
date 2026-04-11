@@ -1,8 +1,7 @@
 export const META_API_VERSION = "v25.0";
 export const META_OAUTH_FLOW = "instagram_api_with_instagram_login";
 export const EXPECTED_META_APP_ID = "951837267330748";
-export const META_OAUTH_REDIRECT_URI =
-  "https://insta-cli-inbox.vercel.app/auth/callback";
+export const META_OAUTH_CALLBACK_PATH = "/auth/callback";
 export const META_MEDIA_BUCKET = "instagram-media";
 export const PROFESSIONAL_ACCOUNT_HELP_URL =
   "https://help.instagram.com/502981923235522";
@@ -25,23 +24,44 @@ function readEnv(value: string | undefined, missingMessage: string) {
   return trimmed;
 }
 
+export function getMetaCanonicalRedirectUri() {
+  const rawRedirectUri = readEnv(
+    process.env.META_OAUTH_REDIRECT_URI,
+    "Missing required env: META_OAUTH_REDIRECT_URI.",
+  );
+
+  let redirectUri: URL;
+
+  try {
+    redirectUri = new URL(rawRedirectUri);
+  } catch {
+    throw new Error(
+      "Invalid META_OAUTH_REDIRECT_URI. Expected an absolute URL for Meta OAuth.",
+    );
+  }
+
+  if (redirectUri.pathname !== META_OAUTH_CALLBACK_PATH) {
+    throw new Error(
+      `Invalid META_OAUTH_REDIRECT_URI. Expected callback path ${META_OAUTH_CALLBACK_PATH}.`,
+    );
+  }
+
+  if (redirectUri.search || redirectUri.hash) {
+    throw new Error(
+      "Invalid META_OAUTH_REDIRECT_URI. Query params and hashes are not allowed.",
+    );
+  }
+
+  return redirectUri.toString();
+}
+
 export function getMetaServerEnv() {
   const appId = readEnv(process.env.META_APP_ID, "Missing required env: META_APP_ID.");
-  const redirectUri = process.env.META_OAUTH_REDIRECT_URI;
-
-  if (!redirectUri) {
-    throw new Error("Missing required env: META_OAUTH_REDIRECT_URI.");
-  }
+  const redirectUri = getMetaCanonicalRedirectUri();
 
   if (appId !== EXPECTED_META_APP_ID) {
     throw new Error(
       `Invalid META_APP_ID. Expected ${EXPECTED_META_APP_ID} for Meta OAuth.`,
-    );
-  }
-
-  if (redirectUri !== META_OAUTH_REDIRECT_URI) {
-    throw new Error(
-      `Invalid META_OAUTH_REDIRECT_URI. Expected ${META_OAUTH_REDIRECT_URI} for Meta OAuth.`,
     );
   }
 
@@ -90,7 +110,7 @@ export function getMetaOauthConfig() {
     longLivedTokenUrl: META_LONG_LIVED_TOKEN_URL,
     refreshTokenUrl: META_REFRESH_TOKEN_URL,
     graphBaseUrl: META_GRAPH_BASE_URL,
-    redirectUri: META_OAUTH_REDIRECT_URI,
+    redirectUri: getMetaCanonicalRedirectUri(),
     scopes: Array.from(META_LOGIN_SCOPES),
   };
 }

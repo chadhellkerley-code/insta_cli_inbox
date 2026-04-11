@@ -4,7 +4,6 @@ import { buildMetaOauthUrl } from "@/lib/meta/client";
 import {
   EXPECTED_META_APP_ID,
   getMetaOauthConfig,
-  META_OAUTH_REDIRECT_URI,
 } from "@/lib/meta/config";
 import { createMetaOauthState } from "@/lib/meta/oauth-state";
 import { createClient } from "@/lib/supabase/server";
@@ -31,9 +30,11 @@ export async function GET(request: Request) {
 
   console.info("[meta-oauth] authorize URL created", {
     flow: oauthConfig.flow,
+    authorizeUrl: oauthUrl,
     authorizeEndpoint: oauthConfig.authorizeUrl,
     clientId: EXPECTED_META_APP_ID,
-    redirectUri: META_OAUTH_REDIRECT_URI,
+    redirectUri: oauthConfig.redirectUri,
+    callbackPath: new URL(oauthConfig.redirectUri).pathname,
     scopes: oauthConfig.scopes,
     hasState: true,
     stateLength: state.length,
@@ -44,7 +45,7 @@ export async function GET(request: Request) {
     ? NextResponse.json({
         url: oauthUrl,
         clientId: EXPECTED_META_APP_ID,
-        redirectUri: META_OAUTH_REDIRECT_URI,
+        redirectUri: oauthConfig.redirectUri,
       })
     : NextResponse.redirect(oauthUrl);
 

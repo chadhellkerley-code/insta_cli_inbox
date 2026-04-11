@@ -127,26 +127,29 @@ export async function exchangeCodeForShortLivedToken(
 ): Promise<ShortLivedTokenResponse> {
   const { appId, appSecret, redirectUri } = getMetaServerEnv();
   const oauthConfig = getMetaOauthConfig();
-  const formData = new FormData();
-  formData.set("client_id", appId);
-  formData.set("client_secret", appSecret);
-  formData.set("grant_type", "authorization_code");
-  formData.set("redirect_uri", redirectUri);
-  formData.set("code", code);
+  const body = new URLSearchParams();
+  body.set("client_id", appId);
+  body.set("client_secret", appSecret);
+  body.set("grant_type", "authorization_code");
+  body.set("redirect_uri", redirectUri);
+  body.set("code", code);
 
   console.info("[meta-oauth] short-lived token exchange request", {
     flow: oauthConfig.flow,
     endpoint: oauthConfig.shortLivedTokenUrl,
     appId,
     redirectUri,
-    bodyRedirectUri: formData.get("redirect_uri"),
-    requestFormat: "multipart/form-data",
+    bodyRedirectUri: body.get("redirect_uri"),
+    requestFormat: "application/x-www-form-urlencoded",
     codeLength: code.length,
   });
 
   const response = await fetch(oauthConfig.shortLivedTokenUrl, {
     method: "POST",
-    body: formData,
+    headers: {
+      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body,
     cache: "no-store",
   });
   const payload = await readMetaJson(response);
