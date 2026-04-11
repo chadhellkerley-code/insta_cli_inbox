@@ -91,7 +91,8 @@ export async function POST(request: Request) {
       throw new Error(accountResult.error?.message ?? "Cuenta no encontrada.");
     }
 
-    const accessToken = await ensureInstagramAccessToken({
+    const nowIso = new Date().toISOString();
+    const managedToken = await ensureInstagramAccessToken({
       accessToken: account.access_token,
       expiresAt: account.token_expires_at,
       persistToken: async (token) => {
@@ -100,7 +101,9 @@ export async function POST(request: Request) {
           .update({
             access_token: token.accessToken,
             token_expires_at: token.expiresAt,
-            updated_at: new Date().toISOString(),
+            token_lifecycle: token.lifecycle,
+            last_token_refresh_at: nowIso,
+            updated_at: nowIso,
           } as never)
           .eq("id", account.id);
 
@@ -111,14 +114,14 @@ export async function POST(request: Request) {
     });
 
     const metaResponse = await sendInstagramMessage({
-      accessToken,
+      accessToken: managedToken.accessToken,
       instagramAccountId: account.instagram_account_id,
       recipientId: conversation.contact_igsid,
       text,
       messageType: messageType === "audio" ? "audio" : undefined,
       mediaUrl,
     });
-    const createdAt = new Date().toISOString();
+    const createdAt = nowIso;
     const preview = text || (messageType === "audio" ? "Mensaje de audio" : "Mensaje");
 
     const messageInsert = await admin.from("instagram_messages").insert({

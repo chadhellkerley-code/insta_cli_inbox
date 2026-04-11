@@ -14,10 +14,6 @@ import {
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
 import {
-  INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_PENDING,
-  resolveInstagramAccountStatus,
-} from "@/lib/meta/account-status";
-import {
   attachStoredMetaOauthResult,
   readStoredMetaOauthResult,
   type MetaOauthCompletionPayload,
@@ -33,7 +29,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
-  status: string | null;
 };
 
 function buildFallbackInstagramUsername(instagramAccountId: string) {
@@ -187,6 +182,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
   try {
     const admin = createAdminClient();
+    const nowIso = new Date().toISOString();
     const userResult = await admin.auth.admin.getUserById(oauthState.userId);
 
     if (userResult.error || !userResult.data.user) {
@@ -258,7 +254,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
     const existingResult = await admin
       .from("instagram_accounts")
-      .select("id, owner_id, status")
+      .select("id, owner_id")
       .eq("instagram_account_id", resolvedInstagramAccountId)
       .maybeSingle();
     const existing = existingResult.data as ExistingAccountLookup | null;
@@ -271,29 +267,10 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
-    let webhookSubscriptionActive = false;
-
-    try {
-      await subscribeInstagramAppUserToWebhooks({
-        accessToken: managedToken.accessToken,
-        instagramUserId: resolvedInstagramAccountId,
-        subscribedFields: META_WEBHOOK_FIELDS,
-      });
-      webhookSubscriptionActive = true;
-    } catch (subscriptionError) {
-      console.warn("[meta-oauth] webhook subscription deferred", {
-        flow: oauthConfig.flow,
-        instagramAccountId: resolvedInstagramAccountId,
-        webhookSubscriptionError:
-          subscriptionError instanceof Error
-            ? subscriptionError.message
-            : String(subscriptionError),
-      });
-    }
-
-    const accountStatus = resolveInstagramAccountStatus({
-      currentStatus: existing?.status ?? null,
-      webhookSubscriptionActive,
+    await subscribeInstagramAppUserToWebhooks({
+      accessToken: managedToken.accessToken,
+      instagramUserId: resolvedInstagramAccountId,
+      subscribedFields: META_WEBHOOK_FIELDS,
     });
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
@@ -307,10 +284,15 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         profile_picture_url: profile?.profilePictureUrl ?? null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
-        status: accountStatus,
-        connected_at: new Date().toISOString(),
+        token_lifecycle: managedToken.lifecycle,
+        last_token_refresh_at: nowIso,
+        status: "connected",
+        connected_at: nowIso,
+        last_oauth_at: nowIso,
+        webhook_subscribed_at: nowIso,
+        webhook_subscription_error: null,
         scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       } as never,
       {
         onConflict: "instagram_account_id",
@@ -325,14 +307,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message:
-          accountStatus === INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_PENDING
-            ? profile?.username
-              ? `Conectamos @${profile.username}. El webhook quedo pendiente, asi que el inbox se activara cuando Meta acepte la suscripcion. Esta pantalla lo va a reintentar automaticamente.`
-              : "Conectamos la cuenta de Instagram. El webhook quedo pendiente y esta pantalla lo va a reintentar automaticamente."
-            : profile?.username
-              ? `Conectamos @${profile.username} correctamente.`
-              : "Conectamos la cuenta de Instagram correctamente.",
+        message: profile?.username
+          ? `Conectamos @${profile.username} correctamente y el webhook de mensajes quedo activo.`
+          : "Conectamos la cuenta de Instagram correctamente y el webhook de mensajes quedo activo.",
         username: profile?.username ?? undefined,
       },
       { code },

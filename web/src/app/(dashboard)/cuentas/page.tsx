@@ -1,5 +1,5 @@
 import { DeleteInstagramAccountButton } from "@/components/delete-instagram-account-button";
-import { InstagramWebhookSubscriptionSync } from "@/components/instagram-webhook-subscription-sync";
+import { InstagramAccountResyncButton } from "@/components/instagram-account-resync-button";
 import Link from "next/link";
 
 import { MetaConnectButton } from "@/components/meta-connect-button";
@@ -40,16 +40,13 @@ export default async function CuentasPage({
 
   return (
     <div className="page-stack">
-      <InstagramWebhookSubscriptionSync
-        accounts={accounts.map((account) => ({ id: account.id }))}
-      />
       <section className="page-header">
         <div>
           <span className="eyebrow">Cuentas</span>
-          <h1>Conecta Instagram con Meta OAuth</h1>
+          <h1>Conecta Instagram con Instagram Login oficial</h1>
           <p className="page-copy">
-            Cada cuenta se conecta con OAuth oficial de Meta y queda lista para
-            recibir mensajes por webhook en el inbox unificado.
+            Cada cuenta se conecta con el consentimiento oficial en instagram.com y
+            solo queda guardada cuando OAuth, token, perfil y webhook terminan bien.
           </p>
         </div>
         <MetaConnectButton />
@@ -93,20 +90,20 @@ export default async function CuentasPage({
           <div className="stack-list">
             <div className="list-row">
               <div>
-                <strong>1. Abrir popup OAuth</strong>
-                <p>Meta autoriza la cuenta y devuelve el codigo al callback del CRM.</p>
+                <strong>1. Redireccion a Instagram</strong>
+                <p>Instagram muestra el consentimiento oficial y devuelve el codigo al callback del CRM.</p>
               </div>
             </div>
             <div className="list-row">
               <div>
-                <strong>2. Guardar token y perfil</strong>
-                <p>Supabase persiste access token, account id, username y avatar.</p>
+                <strong>2. Validacion completa</strong>
+                <p>El backend intercambia el code, valida el perfil professional y activa el webhook antes de guardar la cuenta.</p>
               </div>
             </div>
             <div className="list-row">
               <div>
-                <strong>3. Escuchar webhook</strong>
-                <p>Los mensajes entran por <code>/api/webhook/instagram</code> y se guardan para historial.</p>
+                <strong>3. Inbox persistente</strong>
+                <p>Los mensajes entran por <code>/api/webhook/instagram</code>, se validan con firma SHA256 y se guardan para historial.</p>
               </div>
             </div>
           </div>
@@ -116,11 +113,11 @@ export default async function CuentasPage({
           <span className="eyebrow">Requisito</span>
           <h2>Cuenta Professional</h2>
           <p className="page-copy">
-            Si la cuenta conectada no es Business o Creator, el popup mostrara el error
+            Si la cuenta conectada no es Business o Creator, el flujo mostrara el error
             y un enlace directo con las instrucciones oficiales para cambiar el tipo de cuenta.
           </p>
           <p className="page-copy">
-            Una vez convertida, basta con repetir la conexion desde este panel.
+            Una vez convertida, basta con repetir la conexion desde este panel para agregarla o reconectarla.
           </p>
         </article>
       </section>
@@ -161,17 +158,27 @@ export default async function CuentasPage({
                       ? formatRelativeTime(account.token_expires_at)
                       : "sin dato"}
                   </p>
+                  <p>
+                    Token: <code>{account.token_lifecycle || "sin dato"}</code> - ultimo OAuth{" "}
+                    {account.last_oauth_at ? formatRelativeTime(account.last_oauth_at) : "sin dato"}
+                  </p>
                 </div>
 
                 <div className="account-meta">
                   <span className="pill">{getInstagramAccountStatusLabel(account.status)}</span>
                   <span className="status-copy">
                     {getInstagramAccountStatusCopy({
-                      status: account.status,
                       lastWebhookAt: account.last_webhook_at,
+                      webhookSubscribedAt: account.webhook_subscribed_at,
                       formatRelativeTime,
                     })}
                   </span>
+                  {account.webhook_subscription_error ? (
+                    <span className="status-copy">
+                      Ultimo error de webhook: {account.webhook_subscription_error}
+                    </span>
+                  ) : null}
+                  <InstagramAccountResyncButton accountId={account.id} />
                   <DeleteInstagramAccountButton
                     accountId={account.id}
                     username={account.username}

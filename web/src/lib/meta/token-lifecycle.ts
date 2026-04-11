@@ -79,7 +79,11 @@ export async function ensureInstagramAccessToken(options: {
   const timeRemainingMs = getTokenTimeRemaining(options.expiresAt);
 
   if (timeRemainingMs === null || timeRemainingMs > LONG_LIVED_REFRESH_THRESHOLD_MS) {
-    return options.accessToken;
+    return {
+      accessToken: options.accessToken,
+      expiresAt: options.expiresAt ?? buildExpiresAt(LONG_LIVED_FALLBACK_MS / 1000),
+      lifecycle: "long-lived",
+    } satisfies ManagedInstagramToken;
   }
 
   const shouldAttemptLongLivedExchange = timeRemainingMs <= SHORT_LIVED_THRESHOLD_MS;
@@ -98,7 +102,7 @@ export async function ensureInstagramAccessToken(options: {
         await options.persistToken(upgradedToken);
       }
 
-      return upgradedToken.accessToken;
+      return upgradedToken;
     }
 
     const refreshedToken = await refreshLongLivedInstagramToken(options.accessToken);
@@ -109,10 +113,14 @@ export async function ensureInstagramAccessToken(options: {
     };
 
     await options.persistToken(managedToken);
-    return managedToken.accessToken;
+    return managedToken;
   } catch (error) {
     if (timeRemainingMs > 0) {
-      return options.accessToken;
+      return {
+        accessToken: options.accessToken,
+        expiresAt: options.expiresAt ?? buildExpiresAt(LONG_LIVED_FALLBACK_MS / 1000),
+        lifecycle: "long-lived",
+      } satisfies ManagedInstagramToken;
     }
 
     if (isUnsupportedLongLivedLifecycleError(error)) {

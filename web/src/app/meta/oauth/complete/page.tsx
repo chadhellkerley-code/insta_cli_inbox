@@ -5,7 +5,6 @@ import { MetaOauthCompleteClient } from "@/components/meta-oauth-complete-client
 type SearchParams = {
   status?: string;
   message?: string;
-  username?: string;
   helpUrl?: string;
 };
 
@@ -23,7 +22,6 @@ function MetaOauthCompleteContent({
     <MetaOauthCompleteClient
       status={status}
       message={message}
-      username={searchParams?.username}
       helpUrl={searchParams?.helpUrl}
     />
   );

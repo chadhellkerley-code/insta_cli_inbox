@@ -21,13 +21,33 @@ create table if not exists public.instagram_accounts (
   profile_picture_url text,
   access_token text not null,
   token_expires_at timestamptz,
+  token_lifecycle text,
+  last_token_refresh_at timestamptz,
   scopes text[] not null default '{}'::text[],
   status text not null default 'connected',
   connected_at timestamptz not null default timezone('utc'::text, now()),
+  last_oauth_at timestamptz,
+  webhook_subscribed_at timestamptz,
+  webhook_subscription_error text,
   last_webhook_at timestamptz,
   created_at timestamptz not null default timezone('utc'::text, now()),
   updated_at timestamptz not null default timezone('utc'::text, now())
 );
+
+alter table public.instagram_accounts
+  add column if not exists token_lifecycle text;
+
+alter table public.instagram_accounts
+  add column if not exists last_token_refresh_at timestamptz;
+
+alter table public.instagram_accounts
+  add column if not exists last_oauth_at timestamptz;
+
+alter table public.instagram_accounts
+  add column if not exists webhook_subscribed_at timestamptz;
+
+alter table public.instagram_accounts
+  add column if not exists webhook_subscription_error text;
 
 create table if not exists public.instagram_conversations (
   id uuid primary key default gen_random_uuid(),

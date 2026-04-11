@@ -1,7 +1,10 @@
+import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
 import { getMetaServerEnv } from "@/lib/meta/config";
 import { createAdminClient } from "@/lib/supabase/admin";
+
+export const runtime = "nodejs";
 
 type MessagingEvent = {
   sender?: { id?: string; username?: string };
@@ -76,6 +79,29 @@ function getMessagePreview(text: string | null, messageType: string) {
     default:
       return "Mensaje";
   }
+}
+
+function validateWebhookSignature(rawBody: string, signatureHeader: string | null) {
+  if (!signatureHeader?.startsWith("sha256=")) {
+    return false;
+  }
+
+  const expected = signatureHeader.slice("sha256=".length).trim();
+
+  if (!expected) {
+    return false;
+  }
+
+  const { appSecret } = getMetaServerEnv();
+  const actual = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const actualBuffer = Buffer.from(actual, "hex");
+
+  if (expectedBuffer.length === 0 || expectedBuffer.length !== actualBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 async function findAccountForEntry(
@@ -241,6 +267,7 @@ async function persistMessagingEvent(
     .from("instagram_accounts")
     .update({
       last_webhook_at: new Date().toISOString(),
+      webhook_subscription_error: null,
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", account.id);
@@ -272,10 +299,26 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as WebhookPayload | null;
+  const rawBody = await request.text();
+
+  if (!validateWebhookSignature(rawBody, request.headers.get("x-hub-signature-256"))) {
+    return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
+  }
+
+  const body = (() => {
+    try {
+      return JSON.parse(rawBody) as WebhookPayload | null;
+    } catch {
+      return null;
+    }
+  })();
 
   if (!body) {
     return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
+  }
+
+  if (typeof body.object !== "string" || body.object.toLowerCase() !== "instagram") {
+    return NextResponse.json({ error: "Unsupported webhook object." }, { status: 400 });
   }
 
   const admin = createAdminClient();

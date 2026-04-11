@@ -2,10 +2,6 @@ import { NextResponse } from "next/server";
 
 import { subscribeInstagramAppUserToWebhooks } from "@/lib/meta/client";
 import { META_WEBHOOK_FIELDS } from "@/lib/meta/config";
-import {
-  INSTAGRAM_ACCOUNT_STATUS_CONNECTED,
-  resolveInstagramAccountStatus,
-} from "@/lib/meta/account-status";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -42,6 +38,7 @@ export async function POST(_request: Request, context: RouteContext) {
 
   try {
     const admin = createAdminClient();
+    const nowIso = new Date().toISOString();
     const accountResult = await admin
       .from("instagram_accounts")
       .select("id, owner_id, instagram_account_id, status, access_token, token_expires_at")
@@ -57,7 +54,7 @@ export async function POST(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
 
-    const accessToken = await ensureInstagramAccessToken({
+    const managedToken = await ensureInstagramAccessToken({
       accessToken: account.access_token,
       expiresAt: account.token_expires_at,
       persistToken: async (token) => {
@@ -66,7 +63,9 @@ export async function POST(_request: Request, context: RouteContext) {
           .update({
             access_token: token.accessToken,
             token_expires_at: token.expiresAt,
-            updated_at: new Date().toISOString(),
+            token_lifecycle: token.lifecycle,
+            last_token_refresh_at: nowIso,
+            updated_at: nowIso,
           } as never)
           .eq("id", account.id);
 
@@ -77,7 +76,7 @@ export async function POST(_request: Request, context: RouteContext) {
     });
 
     await subscribeInstagramAppUserToWebhooks({
-      accessToken,
+      accessToken: managedToken.accessToken,
       instagramUserId: account.instagram_account_id,
       subscribedFields: META_WEBHOOK_FIELDS,
     });
@@ -85,8 +84,14 @@ export async function POST(_request: Request, context: RouteContext) {
     const connectedUpdate = await admin
       .from("instagram_accounts")
       .update({
-        status: INSTAGRAM_ACCOUNT_STATUS_CONNECTED,
-        updated_at: new Date().toISOString(),
+        status: "connected",
+        access_token: managedToken.accessToken,
+        token_expires_at: managedToken.expiresAt,
+        token_lifecycle: managedToken.lifecycle,
+        last_token_refresh_at: nowIso,
+        webhook_subscribed_at: nowIso,
+        webhook_subscription_error: null,
+        updated_at: nowIso,
       } as never)
       .eq("id", account.id);
 
@@ -94,30 +99,24 @@ export async function POST(_request: Request, context: RouteContext) {
       throw new Error(connectedUpdate.error.message);
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      message: "La cuenta quedo revalidada y el webhook de Instagram sigue activo.",
+    });
   } catch (error) {
     if (accountId) {
       try {
         const admin = createAdminClient();
-        const accountResult = await admin
+        await admin
           .from("instagram_accounts")
-          .select("id, status")
-          .eq("id", accountId)
-          .maybeSingle();
-        const account = accountResult.data as Pick<AccountLookup, "id" | "status"> | null;
-
-        if (!accountResult.error && account) {
-          await admin
-            .from("instagram_accounts")
-            .update({
-              status: resolveInstagramAccountStatus({
-                currentStatus: account.status,
-                webhookSubscriptionActive: false,
-              }),
-              updated_at: new Date().toISOString(),
-            } as never)
-            .eq("id", account.id);
-        }
+          .update({
+            webhook_subscription_error:
+              error instanceof Error
+                ? error.message
+                : "No pudimos revalidar la suscripcion del webhook.",
+            updated_at: new Date().toISOString(),
+          } as never)
+          .eq("id", accountId);
       } catch {
         // Best effort only: the original subscription error is the actionable result.
       }
