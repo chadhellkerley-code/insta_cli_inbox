@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import {
   exchangeCodeForShortLivedToken,
@@ -6,12 +6,21 @@ import {
   fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
-  getMetaCanonicalRedirectUri,
+  getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
   isProfessionalAccountType,
   META_LOGIN_SCOPES,
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
+import {
+  attachStoredMetaOauthResult,
+  readStoredMetaOauthResult,
+  type MetaOauthCompletionPayload,
+} from "@/lib/meta/oauth-callback-result";
+import {
+  compareExactValues,
+  createOpaqueFingerprint,
+} from "@/lib/meta/oauth-observability";
 import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -33,7 +42,40 @@ export function buildMetaOauthCompletionUrl(
   return url;
 }
 
-export async function handleCanonicalMetaOauthCallback(request: Request) {
+function buildRedirectMismatchMessage(comparison: ReturnType<typeof compareExactValues>) {
+  if (comparison.exact) {
+    return null;
+  }
+
+  return `META_OAUTH_REDIRECT_URI no coincide exactamente con el redirect_uri firmado en el authorize step. firstDiffIndex=${comparison.firstDiffIndex}, expectedLength=${comparison.expectedLength}, actualLength=${comparison.actualLength}.`;
+}
+
+function createMetaOauthCompletionResponse(
+  origin: string,
+  params: MetaOauthCompletionPayload,
+  options?: {
+    code?: string;
+  },
+) {
+  const response = NextResponse.redirect(
+    buildMetaOauthCompletionUrl(origin, {
+      status: params.status,
+      message: params.message,
+      ...(params.username ? { username: params.username } : {}),
+      ...(params.helpUrl ? { helpUrl: params.helpUrl } : {}),
+    }),
+  );
+
+  response.headers.set("Cache-Control", "no-store");
+
+  if (options?.code) {
+    attachStoredMetaOauthResult(response, options.code, params);
+  }
+
+  return response;
+}
+
+export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const origin = requestUrl.origin;
   const code = requestUrl.searchParams.get("code");
@@ -43,38 +85,92 @@ export async function handleCanonicalMetaOauthCallback(request: Request) {
   const errorDescription = requestUrl.searchParams.get("error_description");
   const oauthState = verifyMetaOauthState(state);
   const oauthConfig = getMetaOauthConfig();
-  const canonicalRedirectUri = getMetaCanonicalRedirectUri();
+  const redirectConfig = getMetaCanonicalRedirectConfig();
+  const stateRedirectUri = oauthState?.redirectUri ?? null;
+  const redirectUriComparison = oauthState
+    ? compareExactValues(redirectConfig.redirectUri, oauthState.redirectUri)
+    : null;
+  const codeFingerprint = code ? createOpaqueFingerprint(code) : null;
+  const storedResult = code ? readStoredMetaOauthResult(request, code) : null;
 
   console.info("[meta-oauth] callback received", {
     flow: oauthConfig.flow,
     route: requestUrl.pathname,
     callbackUrl: requestUrl.toString(),
-    canonicalRedirectUri,
+    canonicalCallbackPath: redirectConfig.callbackPath,
+    canonicalRedirectUri: redirectConfig.redirectUri,
+    stateRedirectUri,
+    redirectUriMatchesCanonical: redirectUriComparison?.exact ?? null,
+    redirectUriComparison,
     hasCode: Boolean(code),
+    codeFingerprint,
     codeLength: code?.length ?? 0,
     hasState: Boolean(state),
     stateLength: state?.length ?? 0,
     stateValid: Boolean(oauthState),
+    duplicateCallbackDetected: Boolean(storedResult),
     error,
     errorReason,
     errorDescription,
   });
 
+  if (code && storedResult) {
+    console.warn("[meta-oauth] duplicate callback replay detected", {
+      flow: oauthConfig.flow,
+      route: requestUrl.pathname,
+      codeFingerprint,
+      redirectUriMatchesCanonical: redirectUriComparison?.exact ?? null,
+      completionStatus: storedResult.status,
+    });
+
+    return createMetaOauthCompletionResponse(origin, storedResult, { code });
+  }
+
   if (error) {
-    return NextResponse.redirect(
-      buildMetaOauthCompletionUrl(origin, {
-        status: "error",
-        message: errorDescription || "Meta cancelo o rechazo la autorizacion.",
-      }),
-    );
+    return createMetaOauthCompletionResponse(origin, {
+      status: "error",
+      message: errorDescription || "Meta cancelo o rechazo la autorizacion.",
+    });
   }
 
   if (!code || !oauthState) {
-    return NextResponse.redirect(
-      buildMetaOauthCompletionUrl(origin, {
+    return createMetaOauthCompletionResponse(origin, {
+      status: "error",
+      message: "No pudimos validar la autorizacion de Meta.",
+    });
+  }
+
+  if (!redirectUriComparison) {
+    return createMetaOauthCompletionResponse(
+      origin,
+      {
         status: "error",
-        message: "No pudimos validar la autorizacion de Meta.",
-      }),
+        message: "No pudimos validar el redirect_uri firmado para completar la autorizacion.",
+      },
+      { code },
+    );
+  }
+
+  if (!redirectUriComparison.exact) {
+    const redirectMismatchMessage = buildRedirectMismatchMessage(redirectUriComparison);
+
+    console.error("[meta-oauth] redirect URI mismatch detected before token exchange", {
+      flow: oauthConfig.flow,
+      route: requestUrl.pathname,
+      codeFingerprint,
+      canonicalRedirectUri: redirectConfig.redirectUri,
+      stateRedirectUri,
+      redirectUriComparison,
+      tokenExchangeEndpoint: oauthConfig.shortLivedTokenUrl,
+    });
+
+    return createMetaOauthCompletionResponse(
+      origin,
+      {
+        status: "error",
+        message: `${redirectMismatchMessage} Verifica en Meta Dashboard > Instagram > API setup with Instagram login > Business login settings que OAuth redirect URIs tenga exactamente ${redirectConfig.redirectUri}.`,
+      },
+      { code },
     );
   }
 
@@ -83,15 +179,20 @@ export async function handleCanonicalMetaOauthCallback(request: Request) {
     const userResult = await admin.auth.admin.getUserById(oauthState.userId);
 
     if (userResult.error || !userResult.data.user) {
-      return NextResponse.redirect(
-        buildMetaOauthCompletionUrl(origin, {
+      return createMetaOauthCompletionResponse(
+        origin,
+        {
           status: "error",
           message: "No pudimos validar el usuario para completar la conexion.",
-        }),
+        },
+        { code },
       );
     }
 
-    const shortLivedToken = await exchangeCodeForShortLivedToken(code);
+    const shortLivedToken = await exchangeCodeForShortLivedToken(code, oauthState.redirectUri, {
+      codeFingerprint: codeFingerprint ?? undefined,
+      redirectUriComparison,
+    });
     const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
     const profile = await fetchInstagramProfile(longLivedToken.access_token);
 
@@ -108,13 +209,15 @@ export async function handleCanonicalMetaOauthCallback(request: Request) {
       !profile.username ||
       !isProfessionalAccountType(profile.accountType)
     ) {
-      return NextResponse.redirect(
-        buildMetaOauthCompletionUrl(origin, {
+      return createMetaOauthCompletionResponse(
+        origin,
+        {
           status: "error",
           message:
             "La cuenta conectada no es Professional. Cambiala a Business o Creator e intentalo otra vez.",
           helpUrl: PROFESSIONAL_ACCOUNT_HELP_URL,
-        }),
+        },
+        { code },
       );
     }
 
@@ -162,30 +265,41 @@ export async function handleCanonicalMetaOauthCallback(request: Request) {
       throw new Error(upsertResult.error.message);
     }
 
-    return NextResponse.redirect(
-      buildMetaOauthCompletionUrl(origin, {
+    return createMetaOauthCompletionResponse(
+      origin,
+      {
         status: "success",
         message: `Conectamos @${profile.username} correctamente.`,
         username: profile.username,
-      }),
+      },
+      { code },
     );
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = rawMessage.includes("redirect_uri")
+      ? `Meta rechazo el intercambio del codigo porque el redirect_uri no coincide exactamente. Verifica en Meta Dashboard > Instagram > API setup with Instagram login > Business login settings que el OAuth redirect URI sea exactamente ${oauthState.redirectUri}.`
+      : rawMessage;
+
     console.error("[meta-oauth] callback failed", {
       flow: oauthConfig.flow,
       route: requestUrl.pathname,
       callbackUrl: requestUrl.toString(),
-      canonicalRedirectUri,
-      message: error instanceof Error ? error.message : String(error),
+      canonicalRedirectUri: redirectConfig.redirectUri,
+      stateRedirectUri,
+      redirectUriMatchesCanonical: redirectUriComparison.exact,
+      redirectUriComparison,
+      codeFingerprint,
+      tokenExchangeEndpoint: oauthConfig.shortLivedTokenUrl,
+      externalErrorMessage: rawMessage,
     });
 
-    return NextResponse.redirect(
-      buildMetaOauthCompletionUrl(origin, {
+    return createMetaOauthCompletionResponse(
+      origin,
+      {
         status: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "No pudimos completar la conexion con Meta.",
-      }),
+        message,
+      },
+      { code },
     );
   }
 }

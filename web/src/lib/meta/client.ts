@@ -2,6 +2,7 @@ import {
   getMetaOauthConfig,
   getMetaServerEnv,
 } from "@/lib/meta/config";
+import type { ExactValueComparison } from "@/lib/meta/oauth-observability";
 
 type MetaErrorPayload = {
   error?: {
@@ -124,8 +125,13 @@ export function buildMetaOauthUrl(state: string) {
 
 export async function exchangeCodeForShortLivedToken(
   code: string,
+  redirectUri: string,
+  options?: {
+    codeFingerprint?: string;
+    redirectUriComparison?: ExactValueComparison;
+  },
 ): Promise<ShortLivedTokenResponse> {
-  const { appId, appSecret, redirectUri } = getMetaServerEnv();
+  const { appId, appSecret } = getMetaServerEnv();
   const oauthConfig = getMetaOauthConfig();
   const body = new URLSearchParams();
   body.set("client_id", appId);
@@ -138,9 +144,12 @@ export async function exchangeCodeForShortLivedToken(
     flow: oauthConfig.flow,
     endpoint: oauthConfig.shortLivedTokenUrl,
     appId,
-    redirectUri,
-    bodyRedirectUri: body.get("redirect_uri"),
+    callbackPath: oauthConfig.callbackPath,
+    redirectUriUsedForExchange: redirectUri,
+    redirectUriMatchesCanonical: options?.redirectUriComparison?.exact ?? null,
+    redirectUriComparison: options?.redirectUriComparison ?? null,
     requestFormat: "application/x-www-form-urlencoded",
+    codeFingerprint: options?.codeFingerprint ?? null,
     codeLength: code.length,
   });
 
@@ -158,7 +167,7 @@ export async function exchangeCodeForShortLivedToken(
     endpoint: oauthConfig.shortLivedTokenUrl,
     status: response.status,
     ok: response.ok,
-    error: summarizeMetaError(payload),
+    externalError: summarizeMetaError(payload),
   });
 
   assertMetaResponseOk(response, payload, "Short-lived token exchange failed");

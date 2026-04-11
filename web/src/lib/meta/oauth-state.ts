@@ -7,12 +7,14 @@ const STATE_TTL_SECONDS = 10 * 60;
 type MetaOauthStatePayload = {
   v: 1;
   uid: string;
+  rdu: string;
   nonce: string;
   exp: number;
 };
 
 export type VerifiedMetaOauthState = {
   userId: string;
+  redirectUri: string;
 };
 
 function base64UrlEncode(value: string) {
@@ -49,16 +51,19 @@ function isPayload(value: unknown): value is MetaOauthStatePayload {
     payload.v === 1 &&
     typeof payload.uid === "string" &&
     payload.uid.length > 0 &&
+    typeof payload.rdu === "string" &&
+    payload.rdu.length > 0 &&
     typeof payload.nonce === "string" &&
     payload.nonce.length > 0 &&
     typeof payload.exp === "number"
   );
 }
 
-export function createMetaOauthState(userId: string) {
+export function createMetaOauthState(userId: string, redirectUri: string) {
   const payload: MetaOauthStatePayload = {
     v: 1,
     uid: userId,
+    rdu: redirectUri,
     nonce: randomUUID(),
     exp: Math.floor(Date.now() / 1000) + STATE_TTL_SECONDS,
   };
@@ -103,5 +108,6 @@ export function verifyMetaOauthState(state: string | null): VerifiedMetaOauthSta
 
   return {
     userId: payload.uid,
+    redirectUri: payload.rdu,
   };
 }

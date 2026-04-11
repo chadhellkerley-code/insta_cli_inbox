@@ -1,6 +1,5 @@
 export const META_API_VERSION = "v25.0";
 export const META_OAUTH_FLOW = "instagram_api_with_instagram_login";
-export const EXPECTED_META_APP_ID = "951837267330748";
 export const META_OAUTH_CALLBACK_PATH = "/auth/callback";
 export const META_MEDIA_BUCKET = "instagram-media";
 export const PROFESSIONAL_ACCOUNT_HELP_URL =
@@ -14,6 +13,12 @@ export const META_REFRESH_TOKEN_URL =
   "https://graph.instagram.com/refresh_access_token";
 export const META_GRAPH_BASE_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
+export type MetaCanonicalRedirectConfig = {
+  redirectUri: string;
+  callbackPath: string;
+  origin: string;
+};
+
 function readEnv(value: string | undefined, missingMessage: string) {
   const trimmed = value?.trim();
 
@@ -24,7 +29,7 @@ function readEnv(value: string | undefined, missingMessage: string) {
   return trimmed;
 }
 
-export function getMetaCanonicalRedirectUri() {
+export function getMetaCanonicalRedirectConfig(): MetaCanonicalRedirectConfig {
   const rawRedirectUri = readEnv(
     process.env.META_OAUTH_REDIRECT_URI,
     "Missing required env: META_OAUTH_REDIRECT_URI.",
@@ -52,16 +57,25 @@ export function getMetaCanonicalRedirectUri() {
     );
   }
 
-  return redirectUri.toString();
+  return {
+    redirectUri: rawRedirectUri,
+    callbackPath: redirectUri.pathname,
+    origin: redirectUri.origin,
+  };
+}
+
+export function getMetaCanonicalRedirectUri() {
+  return getMetaCanonicalRedirectConfig().redirectUri;
 }
 
 export function getMetaServerEnv() {
   const appId = readEnv(process.env.META_APP_ID, "Missing required env: META_APP_ID.");
-  const redirectUri = getMetaCanonicalRedirectUri();
+  const { redirectUri } = getMetaCanonicalRedirectConfig();
+  const publicAppId = process.env.NEXT_PUBLIC_META_APP_ID?.trim();
 
-  if (appId !== EXPECTED_META_APP_ID) {
+  if (publicAppId && publicAppId !== appId) {
     throw new Error(
-      `Invalid META_APP_ID. Expected ${EXPECTED_META_APP_ID} for Meta OAuth.`,
+      "Invalid Meta app configuration. META_APP_ID and NEXT_PUBLIC_META_APP_ID must match.",
     );
   }
 
@@ -85,12 +99,6 @@ export function getMetaPublicEnv() {
     "Missing required env: NEXT_PUBLIC_META_APP_ID.",
   );
 
-  if (appId !== EXPECTED_META_APP_ID) {
-    throw new Error(
-      `Invalid NEXT_PUBLIC_META_APP_ID. Expected ${EXPECTED_META_APP_ID} for Meta OAuth.`,
-    );
-  }
-
   return {
     appId,
   };
@@ -103,6 +111,8 @@ export const META_LOGIN_SCOPES = [
 ] as const;
 
 export function getMetaOauthConfig() {
+  const redirectConfig = getMetaCanonicalRedirectConfig();
+
   return {
     flow: META_OAUTH_FLOW,
     authorizeUrl: META_AUTHORIZE_URL,
@@ -110,7 +120,9 @@ export function getMetaOauthConfig() {
     longLivedTokenUrl: META_LONG_LIVED_TOKEN_URL,
     refreshTokenUrl: META_REFRESH_TOKEN_URL,
     graphBaseUrl: META_GRAPH_BASE_URL,
-    redirectUri: getMetaCanonicalRedirectUri(),
+    redirectUri: redirectConfig.redirectUri,
+    callbackPath: redirectConfig.callbackPath,
+    callbackOrigin: redirectConfig.origin,
     scopes: Array.from(META_LOGIN_SCOPES),
   };
 }

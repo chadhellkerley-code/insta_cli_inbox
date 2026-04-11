@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import { buildMetaOauthUrl } from "@/lib/meta/client";
 import {
-  EXPECTED_META_APP_ID,
+  getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
+  getMetaServerEnv,
 } from "@/lib/meta/config";
 import { createMetaOauthState } from "@/lib/meta/oauth-state";
 import { createClient } from "@/lib/supabase/server";
@@ -24,17 +25,21 @@ export async function GET(request: Request) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const state = createMetaOauthState(user.id);
-  const oauthUrl = buildMetaOauthUrl(state);
   const oauthConfig = getMetaOauthConfig();
+  const redirectConfig = getMetaCanonicalRedirectConfig();
+  const { appId } = getMetaServerEnv();
+  const state = createMetaOauthState(user.id, oauthConfig.redirectUri);
+  const oauthUrl = buildMetaOauthUrl(state);
 
   console.info("[meta-oauth] authorize URL created", {
     flow: oauthConfig.flow,
-    authorizeUrl: oauthUrl,
     authorizeEndpoint: oauthConfig.authorizeUrl,
-    clientId: EXPECTED_META_APP_ID,
-    redirectUri: oauthConfig.redirectUri,
-    callbackPath: new URL(oauthConfig.redirectUri).pathname,
+    clientId: appId,
+    canonicalCallbackPath: redirectConfig.callbackPath,
+    canonicalRedirectUri: redirectConfig.redirectUri,
+    authorizeRedirectUri: oauthConfig.redirectUri,
+    redirectUriStoredInState: oauthConfig.redirectUri,
+    redirectUriMatchesCanonical: oauthConfig.redirectUri === redirectConfig.redirectUri,
     scopes: oauthConfig.scopes,
     hasState: true,
     stateLength: state.length,
@@ -44,7 +49,7 @@ export async function GET(request: Request) {
   const response = debug
     ? NextResponse.json({
         url: oauthUrl,
-        clientId: EXPECTED_META_APP_ID,
+        clientId: appId,
         redirectUri: oauthConfig.redirectUri,
       })
     : NextResponse.redirect(oauthUrl);
