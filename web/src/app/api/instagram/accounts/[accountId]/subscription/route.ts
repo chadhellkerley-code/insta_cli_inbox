@@ -10,6 +10,7 @@ type AccountLookup = {
   id: string;
   owner_id: string;
   instagram_account_id: string;
+  instagram_app_user_id: string | null;
   status: string | null;
   access_token: string;
   token_expires_at: string | null;
@@ -41,7 +42,9 @@ export async function POST(_request: Request, context: RouteContext) {
     const nowIso = new Date().toISOString();
     const accountResult = await admin
       .from("instagram_accounts")
-      .select("id, owner_id, instagram_account_id, status, access_token, token_expires_at")
+      .select(
+        "id, owner_id, instagram_account_id, instagram_app_user_id, status, access_token, token_expires_at",
+      )
       .eq("id", accountId)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
@@ -77,7 +80,13 @@ export async function POST(_request: Request, context: RouteContext) {
 
     await subscribeInstagramAppUserToWebhooks({
       accessToken: managedToken.accessToken,
-      instagramUserId: account.instagram_account_id,
+      instagramUserIds: [
+        account.instagram_app_user_id,
+        account.instagram_account_id,
+      ].filter(
+        (candidate, index, values): candidate is string =>
+          Boolean(candidate) && values.indexOf(candidate) === index,
+      ),
       subscribedFields: META_WEBHOOK_FIELDS,
     });
 

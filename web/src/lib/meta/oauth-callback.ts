@@ -251,6 +251,13 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const resolvedInstagramAppUserId = profile?.appScopedUserId ?? instagramAccountId;
     const resolvedUsername =
       profile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
+    const webhookSubscriptionIds = [
+      resolvedInstagramAppUserId,
+      resolvedInstagramAccountId,
+    ].filter(
+      (candidate, index, values): candidate is string =>
+        Boolean(candidate) && values.indexOf(candidate) === index,
+    );
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -269,7 +276,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
     await subscribeInstagramAppUserToWebhooks({
       accessToken: managedToken.accessToken,
-      instagramUserId: resolvedInstagramAccountId,
+      instagramUserIds: webhookSubscriptionIds,
       subscribedFields: META_WEBHOOK_FIELDS,
     });
 

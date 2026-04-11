@@ -39,6 +39,7 @@ type AccountLookup = {
   id: string;
   owner_id: string;
   instagram_account_id: string;
+  instagram_app_user_id: string | null;
 };
 
 type ConversationLookup = {
@@ -112,15 +113,17 @@ async function findAccountForEntry(
   const candidateIds = [entryId, recipientId].filter(Boolean) as string[];
 
   for (const candidateId of candidateIds) {
-    const result = await admin
-      .from("instagram_accounts")
-      .select("id, owner_id, instagram_account_id")
-      .eq("instagram_account_id", candidateId)
-      .maybeSingle();
-    const account = result.data as AccountLookup | null;
+    for (const column of ["instagram_account_id", "instagram_app_user_id"] as const) {
+      const result = await admin
+        .from("instagram_accounts")
+        .select("id, owner_id, instagram_account_id, instagram_app_user_id")
+        .eq(column, candidateId)
+        .maybeSingle();
+      const account = result.data as AccountLookup | null;
 
-    if (!result.error && account) {
-      return account;
+      if (!result.error && account) {
+        return account;
+      }
     }
   }
 
