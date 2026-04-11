@@ -142,7 +142,7 @@ function buildWebhookSubscriptionErrorMessage(payload: unknown) {
     return [
       "Meta rechazo la suscripcion del webhook para esta cuenta.",
       "La sesion del panel esta iniciada, pero la cuenta o el token no pudieron activar webhooks.",
-      "Revisa que la cuenta profesional tenga acceso a mensajeria, que tenga rol en la app si la app sigue en modo Development, o que la app ya tenga el nivel de acceso requerido para cuentas externas.",
+      "Revisa que en Meta App Dashboard > Webhooks hayas configurado y verificado el callback URL de /api/webhook/instagram con el mismo verify token del entorno, que la app este suscripta a los fields del objeto Instagram, que la cuenta profesional tenga acceso a mensajeria, que tenga rol en la app si la app sigue en modo Development, o que la app ya tenga el nivel de acceso requerido para cuentas externas.",
       `Detalle de Meta: ${message}`,
     ].join(" ");
   }
