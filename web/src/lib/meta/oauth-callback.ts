@@ -192,7 +192,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       codeFingerprint: codeFingerprint ?? undefined,
       redirectUriComparison,
     });
-    const profile = await fetchInstagramProfile(shortLivedToken.access_token);
+    const profile = await fetchInstagramProfile(shortLivedToken.access_token, {
+      instagramUserId: shortLivedToken.user_id ?? null,
+    });
 
     console.info("[meta-oauth] profile resolved", {
       flow: oauthConfig.flow,

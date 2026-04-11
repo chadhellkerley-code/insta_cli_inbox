@@ -230,42 +230,70 @@ export async function exchangeForLongLivedToken(shortLivedToken: string) {
   return payload as LongLivedTokenResponse;
 }
 
-export async function fetchInstagramProfile(accessToken: string) {
+export async function fetchInstagramProfile(
+  accessToken: string,
+  options?: {
+    instagramUserId?: string | null;
+  },
+) {
   const oauthConfig = getMetaOauthConfig();
-  const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
-  url.searchParams.set(
-    "fields",
-    "id,user_id,username,account_type,name,profile_picture_url",
-  );
-  url.searchParams.set("access_token", accessToken);
+  const fields = "id,user_id,username,account_type,name,profile_picture_url";
+  const endpointCandidates = [
+    options?.instagramUserId?.trim() || null,
+    "me",
+  ].filter((candidate, index, values): candidate is string => Boolean(candidate) && values.indexOf(candidate) === index);
 
-  console.info("[meta-oauth] profile fetch request", {
-    flow: oauthConfig.flow,
-    endpoint: `${oauthConfig.graphBaseUrl}/me`,
-    fields: url.searchParams.get("fields"),
-  });
+  let payload: unknown = null;
+  let resolvedEndpoint = "";
 
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-  });
-  const payload = await readMetaJson(response);
+  for (const candidate of endpointCandidates) {
+    const url = new URL(`${oauthConfig.graphBaseUrl}/${candidate}`);
+    url.searchParams.set("fields", fields);
 
-  console.info("[meta-oauth] profile fetch response", {
-    endpoint: `${oauthConfig.graphBaseUrl}/me`,
-    status: response.status,
-    ok: response.ok,
-    error: summarizeMetaError(payload),
-  });
+    console.info("[meta-oauth] profile fetch request", {
+      flow: oauthConfig.flow,
+      endpoint: url.toString(),
+      candidate,
+      fields,
+      authScheme: "bearer",
+    });
 
-  assertMetaResponseOk(response, payload, "Profile fetch failed");
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+    payload = await readMetaJson(response);
+
+    console.info("[meta-oauth] profile fetch response", {
+      endpoint: url.toString(),
+      candidate,
+      status: response.status,
+      ok: response.ok,
+      error: summarizeMetaError(payload),
+    });
+
+    if (!response.ok) {
+      continue;
+    }
+
+    resolvedEndpoint = candidate;
+    break;
+  }
+
+  if (!resolvedEndpoint) {
+    throw new Error(`Profile fetch failed: ${getMetaErrorMessage(payload)}`);
+  }
 
   const typedPayload = payload as MetaProfileResponse;
   const profile = Array.isArray(typedPayload.data) ? typedPayload.data[0] : typedPayload;
+  const normalizedInstagramUserId = options?.instagramUserId?.trim() || null;
 
   return {
-    appScopedUserId: profile.id ?? null,
-    instagramAccountId: profile.user_id ?? profile.id ?? null,
+    appScopedUserId: profile.id ?? normalizedInstagramUserId,
+    instagramAccountId: profile.user_id ?? normalizedInstagramUserId ?? profile.id ?? null,
     username: profile.username ?? null,
     name: profile.name ?? null,
     accountType: profile.account_type ?? null,
