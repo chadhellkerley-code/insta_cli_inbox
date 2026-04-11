@@ -28,6 +28,10 @@ type ExistingAccountLookup = {
   owner_id: string;
 };
 
+function buildFallbackInstagramUsername(instagramAccountId: string) {
+  return `ig_${instagramAccountId}`;
+}
+
 export function buildMetaOauthCompletionUrl(
   origin: string,
   params: Record<string, string>,
@@ -192,23 +196,39 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       codeFingerprint: codeFingerprint ?? undefined,
       redirectUriComparison,
     });
-    const profile = await fetchInstagramProfile(shortLivedToken.access_token, {
-      instagramUserId: shortLivedToken.user_id ?? null,
-    });
+    const instagramAccountId = shortLivedToken.user_id ?? null;
+
+    if (!instagramAccountId) {
+      throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
+    }
+
+    let profile:
+      | Awaited<ReturnType<typeof fetchInstagramProfile>>
+      | null = null;
+
+    try {
+      profile = await fetchInstagramProfile(shortLivedToken.access_token, {
+        instagramUserId: instagramAccountId,
+      });
+    } catch (profileError) {
+      console.warn("[meta-oauth] profile enrichment skipped", {
+        flow: oauthConfig.flow,
+        instagramAccountId,
+        profileError:
+          profileError instanceof Error ? profileError.message : String(profileError),
+      });
+    }
 
     console.info("[meta-oauth] profile resolved", {
       flow: oauthConfig.flow,
-      appScopedUserId: profile.appScopedUserId,
-      instagramAccountId: profile.instagramAccountId,
-      username: profile.username,
-      accountType: profile.accountType,
+      appScopedUserId: profile?.appScopedUserId ?? instagramAccountId,
+      instagramAccountId: profile?.instagramAccountId ?? instagramAccountId,
+      username: profile?.username ?? null,
+      accountType: profile?.accountType ?? null,
+      profileResolved: Boolean(profile),
     });
 
-    if (
-      !profile.instagramAccountId ||
-      !profile.username ||
-      !isProfessionalAccountType(profile.accountType)
-    ) {
+    if (profile?.accountType && !isProfessionalAccountType(profile.accountType)) {
       return createMetaOauthCompletionResponse(
         origin,
         {
@@ -224,7 +244,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const existingResult = await admin
       .from("instagram_accounts")
       .select("id, owner_id")
-      .eq("instagram_account_id", profile.instagramAccountId)
+      .eq("instagram_account_id", profile?.instagramAccountId ?? instagramAccountId)
       .maybeSingle();
     const existing = existingResult.data as ExistingAccountLookup | null;
 
@@ -243,12 +263,14 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
         owner_id: oauthState.userId,
-        instagram_account_id: profile.instagramAccountId,
-        instagram_app_user_id: profile.appScopedUserId,
-        username: profile.username,
-        name: profile.name,
-        account_type: profile.accountType,
-        profile_picture_url: profile.profilePictureUrl,
+        instagram_account_id: profile?.instagramAccountId ?? instagramAccountId,
+        instagram_app_user_id: profile?.appScopedUserId ?? instagramAccountId,
+        username:
+          profile?.username ??
+          buildFallbackInstagramUsername(profile?.instagramAccountId ?? instagramAccountId),
+        name: profile?.name ?? null,
+        account_type: profile?.accountType ?? null,
+        profile_picture_url: profile?.profilePictureUrl ?? null,
         access_token: shortLivedToken.access_token,
         token_expires_at: expiresAt,
         status: "connected",
@@ -269,8 +291,10 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message: `Conectamos @${profile.username} correctamente.`,
-        username: profile.username,
+        message: profile?.username
+          ? `Conectamos @${profile.username} correctamente.`
+          : "Conectamos la cuenta de Instagram correctamente.",
+        username: profile?.username ?? undefined,
       },
       { code },
     );
