@@ -25,6 +25,10 @@ type WebhookPayload = {
   entry?: Array<{
     id?: string;
     messaging?: MessagingEvent[];
+    changes?: Array<{
+      field?: string;
+      value?: MessagingEvent;
+    }>;
   }>;
 };
 
@@ -242,6 +246,17 @@ async function persistMessagingEvent(
     .eq("id", account.id);
 }
 
+function normalizeEntryMessagingEvents(entry: NonNullable<WebhookPayload["entry"]>[number]) {
+  const directEvents = Array.isArray(entry.messaging) ? entry.messaging : [];
+  const changeEvents = Array.isArray(entry.changes)
+    ? entry.changes
+        .filter((change) => change?.field === "messages" && change.value)
+        .map((change) => change.value as MessagingEvent)
+    : [];
+
+  return [...directEvents, ...changeEvents];
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
@@ -267,7 +282,7 @@ export async function POST(request: Request) {
   const entries = Array.isArray(body.entry) ? body.entry : [];
 
   for (const entry of entries) {
-    const messagingEvents = Array.isArray(entry.messaging) ? entry.messaging : [];
+    const messagingEvents = normalizeEntryMessagingEvents(entry);
 
     for (const event of messagingEvents) {
       try {
