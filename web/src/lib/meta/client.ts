@@ -205,24 +205,20 @@ export async function exchangeCodeForShortLivedToken(
 export async function exchangeForLongLivedToken(shortLivedToken: string) {
   const oauthConfig = getMetaOauthConfig();
   const { appSecret } = getMetaServerEnv();
-  const body = new URLSearchParams();
-  body.set("grant_type", "ig_exchange_token");
-  body.set("client_secret", appSecret);
-  body.set("access_token", shortLivedToken);
+  const url = new URL(oauthConfig.longLivedTokenUrl);
+  url.searchParams.set("grant_type", "ig_exchange_token");
+  url.searchParams.set("client_secret", appSecret);
+  url.searchParams.set("access_token", shortLivedToken);
 
   console.info("[meta-oauth] long-lived token exchange request", {
     flow: oauthConfig.flow,
     endpoint: oauthConfig.longLivedTokenUrl,
     grantType: "ig_exchange_token",
-    requestFormat: "application/x-www-form-urlencoded",
+    requestMethod: "GET",
   });
 
-  const response = await fetch(oauthConfig.longLivedTokenUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-    },
-    body,
+  const response = await fetch(url, {
+    method: "GET",
     cache: "no-store",
   });
   const payload = await readMetaJson(response);
@@ -239,6 +235,41 @@ export async function exchangeForLongLivedToken(shortLivedToken: string) {
   });
 
   assertMetaResponseOk(response, payload, "Long-lived token exchange failed");
+
+  return payload as LongLivedTokenResponse;
+}
+
+export async function refreshLongLivedInstagramToken(longLivedToken: string) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(oauthConfig.refreshTokenUrl);
+  url.searchParams.set("grant_type", "ig_refresh_token");
+  url.searchParams.set("access_token", longLivedToken);
+
+  console.info("[meta-oauth] long-lived token refresh request", {
+    flow: oauthConfig.flow,
+    endpoint: oauthConfig.refreshTokenUrl,
+    grantType: "ig_refresh_token",
+    requestMethod: "GET",
+  });
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = await readMetaJson(response);
+
+  console.info("[meta-oauth] long-lived token refresh response", {
+    endpoint: oauthConfig.refreshTokenUrl,
+    status: response.status,
+    ok: response.ok,
+    expiresIn:
+      payload && typeof payload === "object" && "expires_in" in payload
+        ? (payload as LongLivedTokenResponse).expires_in ?? null
+        : null,
+    error: summarizeMetaError(payload),
+  });
+
+  assertMetaResponseOk(response, payload, "Long-lived token refresh failed");
 
   return payload as LongLivedTokenResponse;
 }
