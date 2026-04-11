@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   exchangeCodeForShortLivedToken,
-  exchangeForLongLivedToken,
   fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
@@ -193,8 +192,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       codeFingerprint: codeFingerprint ?? undefined,
       redirectUriComparison,
     });
-    const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
-    const profile = await fetchInstagramProfile(longLivedToken.access_token);
+    const profile = await fetchInstagramProfile(shortLivedToken.access_token);
 
     console.info("[meta-oauth] profile resolved", {
       flow: oauthConfig.flow,
@@ -237,7 +235,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     }
 
     const expiresAt = new Date(
-      Date.now() + (longLivedToken.expires_in ?? 60 * 24 * 60 * 60) * 1000,
+      Date.now() + (shortLivedToken.expires_in ?? 60 * 60) * 1000,
     ).toISOString();
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
@@ -249,7 +247,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         name: profile.name,
         account_type: profile.accountType,
         profile_picture_url: profile.profilePictureUrl,
-        access_token: longLivedToken.access_token,
+        access_token: shortLivedToken.access_token,
         token_expires_at: expiresAt,
         status: "connected",
         connected_at: new Date().toISOString(),
