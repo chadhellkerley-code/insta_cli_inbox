@@ -348,6 +348,40 @@ export async function fetchInstagramProfile(
   };
 }
 
+export async function subscribeInstagramAppUserToWebhooks(options: {
+  accessToken: string;
+  instagramUserId: string;
+  subscribedFields: readonly string[];
+}) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramUserId}/subscribed_apps`);
+  url.searchParams.set("subscribed_fields", options.subscribedFields.join(","));
+  url.searchParams.set("access_token", options.accessToken);
+
+  console.info("[meta-oauth] webhook subscription request", {
+    flow: oauthConfig.flow,
+    endpoint: `${oauthConfig.graphBaseUrl}/${options.instagramUserId}/subscribed_apps`,
+    subscribedFields: options.subscribedFields,
+  });
+
+  const response = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+  });
+  const payload = await readMetaJson(response);
+
+  console.info("[meta-oauth] webhook subscription response", {
+    endpoint: `${oauthConfig.graphBaseUrl}/${options.instagramUserId}/subscribed_apps`,
+    status: response.status,
+    ok: response.ok,
+    error: summarizeMetaError(payload),
+  });
+
+  assertMetaResponseOk(response, payload, "Webhook subscription failed");
+
+  return payload as { success?: boolean };
+}
+
 export async function sendInstagramMessage(options: {
   accessToken: string;
   instagramAccountId: string;

@@ -1,4 +1,5 @@
 import { DeleteInstagramAccountButton } from "@/components/delete-instagram-account-button";
+import { InstagramWebhookSubscriptionSync } from "@/components/instagram-webhook-subscription-sync";
 import Link from "next/link";
 
 import { MetaConnectButton } from "@/components/meta-connect-button";
@@ -35,6 +36,9 @@ export default async function CuentasPage({
 
   return (
     <div className="page-stack">
+      <InstagramWebhookSubscriptionSync
+        accounts={accounts.map((account) => ({ id: account.id }))}
+      />
       <section className="page-header">
         <div>
           <span className="eyebrow">Cuentas</span>

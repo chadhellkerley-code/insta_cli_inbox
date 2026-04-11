@@ -3,12 +3,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   exchangeCodeForShortLivedToken,
   fetchInstagramProfile,
+  subscribeInstagramAppUserToWebhooks,
 } from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
   isProfessionalAccountType,
   META_LOGIN_SCOPES,
+  META_WEBHOOK_FIELDS,
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
 import {
@@ -243,6 +245,12 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         { code },
       );
     }
+
+    await subscribeInstagramAppUserToWebhooks({
+      accessToken: managedToken.accessToken,
+      instagramUserId: profile?.instagramAccountId ?? instagramAccountId,
+      subscribedFields: META_WEBHOOK_FIELDS,
+    });
 
     const existingResult = await admin
       .from("instagram_accounts")

@@ -110,6 +110,15 @@ export const META_LOGIN_SCOPES = [
   "instagram_business_manage_comments",
 ] as const;
 
+export const META_WEBHOOK_FIELDS = [
+  "messages",
+  "message_reactions",
+  "messaging_seen",
+  "messaging_postbacks",
+  "messaging_referral",
+  "messaging_optins",
+] as const;
+
 export function getMetaOauthConfig() {
   const redirectConfig = getMetaCanonicalRedirectConfig();
 
