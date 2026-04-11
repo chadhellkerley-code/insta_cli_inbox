@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 
 import { subscribeInstagramAppUserToWebhooks } from "@/lib/meta/client";
 import { META_WEBHOOK_FIELDS } from "@/lib/meta/config";
+import {
+  INSTAGRAM_ACCOUNT_STATUS_CONNECTED,
+  resolveInstagramAccountStatus,
+} from "@/lib/meta/account-status";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -10,6 +14,7 @@ type AccountLookup = {
   id: string;
   owner_id: string;
   instagram_account_id: string;
+  status: string | null;
   access_token: string;
   token_expires_at: string | null;
 };
@@ -39,7 +44,7 @@ export async function POST(_request: Request, context: RouteContext) {
     const admin = createAdminClient();
     const accountResult = await admin
       .from("instagram_accounts")
-      .select("id, owner_id, instagram_account_id, access_token, token_expires_at")
+      .select("id, owner_id, instagram_account_id, status, access_token, token_expires_at")
       .eq("id", accountId)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
@@ -77,8 +82,47 @@ export async function POST(_request: Request, context: RouteContext) {
       subscribedFields: META_WEBHOOK_FIELDS,
     });
 
+    const connectedUpdate = await admin
+      .from("instagram_accounts")
+      .update({
+        status: INSTAGRAM_ACCOUNT_STATUS_CONNECTED,
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq("id", account.id);
+
+    if (connectedUpdate.error) {
+      throw new Error(connectedUpdate.error.message);
+    }
+
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (accountId) {
+      try {
+        const admin = createAdminClient();
+        const accountResult = await admin
+          .from("instagram_accounts")
+          .select("id, status")
+          .eq("id", accountId)
+          .maybeSingle();
+        const account = accountResult.data as Pick<AccountLookup, "id" | "status"> | null;
+
+        if (!accountResult.error && account) {
+          await admin
+            .from("instagram_accounts")
+            .update({
+              status: resolveInstagramAccountStatus({
+                currentStatus: account.status,
+                webhookSubscriptionActive: false,
+              }),
+              updated_at: new Date().toISOString(),
+            } as never)
+            .eq("id", account.id);
+        }
+      } catch {
+        // Best effort only: the original subscription error is the actionable result.
+      }
+    }
+
     return NextResponse.json(
       {
         error:

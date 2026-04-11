@@ -3,6 +3,10 @@ import { InstagramWebhookSubscriptionSync } from "@/components/instagram-webhook
 import Link from "next/link";
 
 import { MetaConnectButton } from "@/components/meta-connect-button";
+import {
+  getInstagramAccountStatusCopy,
+  getInstagramAccountStatusLabel,
+} from "@/lib/meta/account-status";
 import { formatDateTime, formatRelativeTime, loadOwnedAccounts, requireUserContext } from "@/lib/app-data";
 
 type SearchParams = {
@@ -160,11 +164,13 @@ export default async function CuentasPage({
                 </div>
 
                 <div className="account-meta">
-                  <span className="pill">{account.status || "connected"}</span>
+                  <span className="pill">{getInstagramAccountStatusLabel(account.status)}</span>
                   <span className="status-copy">
-                    {account.last_webhook_at
-                      ? `Webhook ${formatRelativeTime(account.last_webhook_at)}`
-                      : "Sin eventos de webhook todavia"}
+                    {getInstagramAccountStatusCopy({
+                      status: account.status,
+                      lastWebhookAt: account.last_webhook_at,
+                      formatRelativeTime,
+                    })}
                   </span>
                   <DeleteInstagramAccountButton
                     accountId={account.id}

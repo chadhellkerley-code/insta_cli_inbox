@@ -14,6 +14,10 @@ import {
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
 import {
+  INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_PENDING,
+  resolveInstagramAccountStatus,
+} from "@/lib/meta/account-status";
+import {
   attachStoredMetaOauthResult,
   readStoredMetaOauthResult,
   type MetaOauthCompletionPayload,
@@ -29,6 +33,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
+  status: string | null;
 };
 
 function buildFallbackInstagramUsername(instagramAccountId: string) {
@@ -246,16 +251,15 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       );
     }
 
-    await subscribeInstagramAppUserToWebhooks({
-      accessToken: managedToken.accessToken,
-      instagramUserId: profile?.instagramAccountId ?? instagramAccountId,
-      subscribedFields: META_WEBHOOK_FIELDS,
-    });
+    const resolvedInstagramAccountId = profile?.instagramAccountId ?? instagramAccountId;
+    const resolvedInstagramAppUserId = profile?.appScopedUserId ?? instagramAccountId;
+    const resolvedUsername =
+      profile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
 
     const existingResult = await admin
       .from("instagram_accounts")
-      .select("id, owner_id")
-      .eq("instagram_account_id", profile?.instagramAccountId ?? instagramAccountId)
+      .select("id, owner_id, status")
+      .eq("instagram_account_id", resolvedInstagramAccountId)
       .maybeSingle();
     const existing = existingResult.data as ExistingAccountLookup | null;
 
@@ -267,20 +271,43 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
+    let webhookSubscriptionActive = false;
+
+    try {
+      await subscribeInstagramAppUserToWebhooks({
+        accessToken: managedToken.accessToken,
+        instagramUserId: resolvedInstagramAccountId,
+        subscribedFields: META_WEBHOOK_FIELDS,
+      });
+      webhookSubscriptionActive = true;
+    } catch (subscriptionError) {
+      console.warn("[meta-oauth] webhook subscription deferred", {
+        flow: oauthConfig.flow,
+        instagramAccountId: resolvedInstagramAccountId,
+        webhookSubscriptionError:
+          subscriptionError instanceof Error
+            ? subscriptionError.message
+            : String(subscriptionError),
+      });
+    }
+
+    const accountStatus = resolveInstagramAccountStatus({
+      currentStatus: existing?.status ?? null,
+      webhookSubscriptionActive,
+    });
+
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
         owner_id: oauthState.userId,
-        instagram_account_id: profile?.instagramAccountId ?? instagramAccountId,
-        instagram_app_user_id: profile?.appScopedUserId ?? instagramAccountId,
-        username:
-          profile?.username ??
-          buildFallbackInstagramUsername(profile?.instagramAccountId ?? instagramAccountId),
+        instagram_account_id: resolvedInstagramAccountId,
+        instagram_app_user_id: resolvedInstagramAppUserId,
+        username: resolvedUsername,
         name: profile?.name ?? null,
         account_type: profile?.accountType ?? null,
         profile_picture_url: profile?.profilePictureUrl ?? null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
-        status: "connected",
+        status: accountStatus,
         connected_at: new Date().toISOString(),
         scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
         updated_at: new Date().toISOString(),
@@ -298,9 +325,14 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message: profile?.username
-          ? `Conectamos @${profile.username} correctamente.`
-          : "Conectamos la cuenta de Instagram correctamente.",
+        message:
+          accountStatus === INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_PENDING
+            ? profile?.username
+              ? `Conectamos @${profile.username}. El webhook quedo pendiente, asi que el inbox se activara cuando Meta acepte la suscripcion. Esta pantalla lo va a reintentar automaticamente.`
+              : "Conectamos la cuenta de Instagram. El webhook quedo pendiente y esta pantalla lo va a reintentar automaticamente."
+            : profile?.username
+              ? `Conectamos @${profile.username} correctamente.`
+              : "Conectamos la cuenta de Instagram correctamente.",
         username: profile?.username ?? undefined,
       },
       { code },
