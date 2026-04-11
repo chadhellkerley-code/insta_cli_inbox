@@ -1,3 +1,4 @@
+import { DeleteInstagramAccountButton } from "@/components/delete-instagram-account-button";
 import Link from "next/link";
 
 import { MetaConnectButton } from "@/components/meta-connect-button";
@@ -161,6 +162,10 @@ export default async function CuentasPage({
                       ? `Webhook ${formatRelativeTime(account.last_webhook_at)}`
                       : "Sin eventos de webhook todavia"}
                   </span>
+                  <DeleteInstagramAccountButton
+                    accountId={account.id}
+                    username={account.username}
+                  />
                 </div>
               </div>
             ))}

@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   exchangeCodeForShortLivedToken,
-  exchangeForLongLivedToken,
   fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
@@ -22,6 +21,7 @@ import {
   createOpaqueFingerprint,
 } from "@/lib/meta/oauth-observability";
 import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
+import { resolveInitialInstagramToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type ExistingAccountLookup = {
@@ -197,7 +197,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       codeFingerprint: codeFingerprint ?? undefined,
       redirectUriComparison,
     });
-    const longLivedToken = await exchangeForLongLivedToken(shortLivedToken.access_token);
+    const managedToken = await resolveInitialInstagramToken(shortLivedToken);
     const instagramAccountId = shortLivedToken.user_id ?? null;
 
     if (!instagramAccountId) {
@@ -209,7 +209,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       | null = null;
 
     try {
-      profile = await fetchInstagramProfile(longLivedToken.access_token, {
+      profile = await fetchInstagramProfile(managedToken.accessToken, {
         instagramUserId: instagramAccountId,
       });
     } catch (profileError) {
@@ -228,6 +228,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       username: profile?.username ?? null,
       accountType: profile?.accountType ?? null,
       profileResolved: Boolean(profile),
+      tokenLifecycle: managedToken.lifecycle,
     });
 
     if (profile?.accountType && !isProfessionalAccountType(profile.accountType)) {
@@ -258,10 +259,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
-    const expiresAt = new Date(
-      Date.now() + (longLivedToken.expires_in ?? 60 * 24 * 60 * 60) * 1000,
-    ).toISOString();
-
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
         owner_id: oauthState.userId,
@@ -273,8 +270,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         name: profile?.name ?? null,
         account_type: profile?.accountType ?? null,
         profile_picture_url: profile?.profilePictureUrl ?? null,
-        access_token: longLivedToken.access_token,
-        token_expires_at: expiresAt,
+        access_token: managedToken.accessToken,
+        token_expires_at: managedToken.expiresAt,
         status: "connected",
         connected_at: new Date().toISOString(),
         scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),

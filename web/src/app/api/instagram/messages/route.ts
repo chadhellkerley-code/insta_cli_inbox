@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 
-import {
-  exchangeForLongLivedToken,
-  refreshLongLivedInstagramToken,
-  sendInstagramMessage,
-} from "@/lib/meta/client";
+import { sendInstagramMessage } from "@/lib/meta/client";
+import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,67 +25,6 @@ type AccountLookup = {
   access_token: string;
   token_expires_at: string | null;
 };
-
-const SHORT_LIVED_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-const LONG_LIVED_REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
-
-function getTokenTimeRemaining(expiresAt: string | null | undefined) {
-  if (!expiresAt) {
-    return null;
-  }
-
-  const expiresAtMs = new Date(expiresAt).getTime();
-
-  if (Number.isNaN(expiresAtMs)) {
-    return null;
-  }
-
-  return expiresAtMs - Date.now();
-}
-
-async function ensureUsableInstagramAccessToken(
-  admin: ReturnType<typeof createAdminClient>,
-  account: AccountLookup,
-) {
-  const timeRemainingMs = getTokenTimeRemaining(account.token_expires_at);
-
-  if (timeRemainingMs === null || timeRemainingMs > LONG_LIVED_REFRESH_THRESHOLD_MS) {
-    return account.access_token;
-  }
-
-  const shouldExchangeShortLivedToken = timeRemainingMs <= SHORT_LIVED_THRESHOLD_MS;
-
-  try {
-    const refreshedToken = shouldExchangeShortLivedToken
-      ? await exchangeForLongLivedToken(account.access_token)
-      : await refreshLongLivedInstagramToken(account.access_token);
-
-    const nextExpiresAt = new Date(
-      Date.now() + (refreshedToken.expires_in ?? 60 * 24 * 60 * 60) * 1000,
-    ).toISOString();
-
-    const updateResult = await admin
-      .from("instagram_accounts")
-      .update({
-        access_token: refreshedToken.access_token,
-        token_expires_at: nextExpiresAt,
-        updated_at: new Date().toISOString(),
-      } as never)
-      .eq("id", account.id);
-
-    if (updateResult.error) {
-      throw new Error(updateResult.error.message);
-    }
-
-    return refreshedToken.access_token;
-  } catch (error) {
-    if (timeRemainingMs > 0) {
-      return account.access_token;
-    }
-
-    throw error;
-  }
-}
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -155,7 +91,24 @@ export async function POST(request: Request) {
       throw new Error(accountResult.error?.message ?? "Cuenta no encontrada.");
     }
 
-    const accessToken = await ensureUsableInstagramAccessToken(admin, account);
+    const accessToken = await ensureInstagramAccessToken({
+      accessToken: account.access_token,
+      expiresAt: account.token_expires_at,
+      persistToken: async (token) => {
+        const updateResult = await admin
+          .from("instagram_accounts")
+          .update({
+            access_token: token.accessToken,
+            token_expires_at: token.expiresAt,
+            updated_at: new Date().toISOString(),
+          } as never)
+          .eq("id", account.id);
+
+        if (updateResult.error) {
+          throw new Error(updateResult.error.message);
+        }
+      },
+    });
 
     const metaResponse = await sendInstagramMessage({
       accessToken,

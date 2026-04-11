@@ -385,6 +385,14 @@ main {
   text-align: right;
 }
 
+.account-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 260px;
+}
+
 .list-row:first-child {
   border-top: 0;
   padding-top: 0;
@@ -571,6 +579,12 @@ main {
   background: rgba(255, 255, 255, 0.04);
   border-color: var(--line);
   color: var(--text);
+}
+
+.button-danger {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.28);
+  color: #fecaca;
 }
 
 .feedback {
