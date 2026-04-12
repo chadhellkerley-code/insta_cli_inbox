@@ -337,7 +337,22 @@ export async function POST(request: Request) {
           event.recipient?.id ?? null,
         );
 
-        if (!account || !event.message) {
+        if (!event.message) {
+          console.info("[instagram-webhook] skipping non-message event", {
+            entryId: entry.id ?? null,
+            recipientId: event.recipient?.id ?? null,
+            senderId: event.sender?.id ?? null,
+          });
+          continue;
+        }
+
+        if (!account) {
+          console.warn("[instagram-webhook] account match failed", {
+            entryId: entry.id ?? null,
+            recipientId: event.recipient?.id ?? null,
+            senderId: event.sender?.id ?? null,
+            messageId: event.message.mid ?? null,
+          });
           continue;
         }
 
