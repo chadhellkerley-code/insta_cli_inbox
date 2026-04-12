@@ -7,10 +7,6 @@ export const PROFESSIONAL_ACCOUNT_HELP_URL =
 export const META_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
 export const META_SHORT_LIVED_TOKEN_URL =
   "https://api.instagram.com/oauth/access_token";
-export const META_LONG_LIVED_TOKEN_URL =
-  "https://graph.instagram.com/access_token";
-export const META_REFRESH_TOKEN_URL =
-  "https://graph.instagram.com/refresh_access_token";
 export const META_GRAPH_BASE_URL = `https://graph.instagram.com/${META_API_VERSION}`;
 
 export type MetaCanonicalRedirectConfig = {
@@ -117,21 +113,10 @@ export function getMetaOauthConfig() {
     flow: META_OAUTH_FLOW,
     authorizeUrl: META_AUTHORIZE_URL,
     shortLivedTokenUrl: META_SHORT_LIVED_TOKEN_URL,
-    longLivedTokenUrl: META_LONG_LIVED_TOKEN_URL,
-    refreshTokenUrl: META_REFRESH_TOKEN_URL,
     graphBaseUrl: META_GRAPH_BASE_URL,
     redirectUri: redirectConfig.redirectUri,
     callbackPath: redirectConfig.callbackPath,
     callbackOrigin: redirectConfig.origin,
     scopes: Array.from(META_LOGIN_SCOPES),
   };
-}
-
-export function normalizeAccountType(accountType: string | null | undefined) {
-  return (accountType ?? "").trim().toUpperCase();
-}
-
-export function isProfessionalAccountType(accountType: string | null | undefined) {
-  const normalized = normalizeAccountType(accountType);
-  return normalized === "BUSINESS" || normalized === "MEDIA_CREATOR";
 }

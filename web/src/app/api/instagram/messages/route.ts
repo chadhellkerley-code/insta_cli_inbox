@@ -95,22 +95,6 @@ export async function POST(request: Request) {
     const managedToken = await ensureInstagramAccessToken({
       accessToken: account.access_token,
       expiresAt: account.token_expires_at,
-      persistToken: async (token) => {
-        const updateResult = await admin
-          .from("instagram_accounts")
-          .update({
-            access_token: token.accessToken,
-            token_expires_at: token.expiresAt,
-            token_lifecycle: token.lifecycle,
-            last_token_refresh_at: nowIso,
-            updated_at: nowIso,
-          } as never)
-          .eq("id", account.id);
-
-        if (updateResult.error) {
-          throw new Error(updateResult.error.message);
-        }
-      },
     });
 
     const metaResponse = await sendInstagramMessage({

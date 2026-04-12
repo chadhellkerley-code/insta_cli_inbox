@@ -45,7 +45,7 @@ export default async function CuentasPage({
           <h1>Conecta Instagram con Instagram Login oficial</h1>
           <p className="page-copy">
             Cada cuenta se conecta con el consentimiento oficial en instagram.com y
-            solo queda guardada cuando OAuth, token y perfil terminan bien.
+            solo queda guardada cuando OAuth y el token devuelto por Meta terminan bien.
           </p>
         </div>
         <MetaConnectButton />
@@ -96,7 +96,7 @@ export default async function CuentasPage({
             <div className="list-row">
               <div>
                 <strong>2. Validacion completa</strong>
-                <p>El backend intercambia el code, valida el perfil professional y guarda la cuenta conectada.</p>
+                <p>El backend intercambia el code, valida el token y el identificador devuelto por Meta, y guarda la cuenta conectada.</p>
               </div>
             </div>
             <div className="list-row">

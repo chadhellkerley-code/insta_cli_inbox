@@ -2,14 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   exchangeCodeForShortLivedToken,
-  fetchInstagramProfile,
 } from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
-  isProfessionalAccountType,
   META_LOGIN_SCOPES,
-  PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
 import {
   attachStoredMetaOauthResult,
@@ -205,37 +202,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
-    const profile = await fetchInstagramProfile(managedToken.accessToken, {
-      instagramUserId: instagramAccountId,
-    });
-
-    console.info("[meta-oauth] profile resolved", {
-      flow: oauthConfig.flow,
-      appScopedUserId: profile?.appScopedUserId ?? instagramAccountId,
-      instagramAccountId: profile?.instagramAccountId ?? instagramAccountId,
-      username: profile?.username ?? null,
-      accountType: profile?.accountType ?? null,
-      profileResolved: Boolean(profile),
-      tokenLifecycle: managedToken.lifecycle,
-    });
-
-    if (profile?.accountType && !isProfessionalAccountType(profile.accountType)) {
-      return createMetaOauthCompletionResponse(
-        origin,
-        {
-          status: "error",
-          message:
-            "La cuenta conectada no es Professional. Cambiala a Business o Creator e intentalo otra vez.",
-          helpUrl: PROFESSIONAL_ACCOUNT_HELP_URL,
-        },
-        { code },
-      );
-    }
-
-    const resolvedInstagramAccountId = profile?.instagramAccountId ?? instagramAccountId;
-    const resolvedInstagramAppUserId = profile?.appScopedUserId ?? instagramAccountId;
-    const resolvedUsername =
-      profile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
+    const resolvedInstagramAccountId = instagramAccountId;
+    const resolvedInstagramAppUserId = instagramAccountId;
+    const resolvedUsername = buildFallbackInstagramUsername(resolvedInstagramAccountId);
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -258,9 +227,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         instagram_account_id: resolvedInstagramAccountId,
         instagram_app_user_id: resolvedInstagramAppUserId,
         username: resolvedUsername,
-        name: profile?.name ?? null,
-        account_type: profile?.accountType ?? null,
-        profile_picture_url: profile?.profilePictureUrl ?? null,
+        name: null,
+        account_type: null,
+        profile_picture_url: null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
         token_lifecycle: managedToken.lifecycle,
@@ -284,10 +253,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message: profile?.username
-          ? `Conectamos @${profile.username} correctamente.`
-          : "Conectamos la cuenta de Instagram correctamente.",
-        username: profile?.username ?? undefined,
+        message: "Conectamos la cuenta de Instagram correctamente.",
+        username: undefined,
       },
       { code },
     );
