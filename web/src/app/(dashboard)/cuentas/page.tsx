@@ -5,6 +5,7 @@ import { MetaConnectButton } from "@/components/meta-connect-button";
 import {
   getInstagramAccountStatusCopy,
   getInstagramAccountStatusLabel,
+  isFallbackInstagramUsername,
   isInstagramProfileEnrichmentPending,
 } from "@/lib/meta/account-status";
 import { formatDateTime, formatRelativeTime, loadOwnedAccounts, requireUserContext } from "@/lib/app-data";
@@ -134,11 +135,18 @@ export default async function CuentasPage({
         ) : (
           <div className="stack-list">
             {accounts.map((account) => {
+              const fallbackUsername = isFallbackInstagramUsername(account.username);
               const profileEnrichmentPending = isInstagramProfileEnrichmentPending({
                 username: account.username,
                 name: account.name,
                 accountType: account.account_type,
               });
+              const accountTitle = fallbackUsername
+                ? "Cuenta conectada"
+                : `@${account.username}`;
+              const accountSecondaryLine = fallbackUsername
+                ? `ID de Instagram: ${account.instagram_account_id}`
+                : account.name || `ID de Instagram: ${account.instagram_account_id}`;
 
               return (
                 <div key={account.id} className="account-row">
@@ -154,22 +162,19 @@ export default async function CuentasPage({
                   </div>
 
                   <div className="account-copy">
-                    <strong>@{account.username}</strong>
-                    <p>
-                      {account.name ||
-                        (profileEnrichmentPending
-                          ? "Cuenta conectada correctamente. Metadatos del perfil pendientes de enriquecimiento."
-                          : "Cuenta de Instagram conectada")}
-                    </p>
+                    <strong>{accountTitle}</strong>
+                    <p>{accountSecondaryLine}</p>
                     <p>
                       Tipo:{" "}
                       <code>
-                        {account.account_type ||
-                          (profileEnrichmentPending
-                            ? "pendiente de enriquecimiento"
-                            : "sin dato")}
+                        {account.account_type || "Perfil pendiente de sincronizacion"}
                       </code>
                     </p>
+                    {profileEnrichmentPending ? (
+                      <p className="status-copy">
+                        Los datos publicos del perfil se completaran en una sincronizacion posterior.
+                      </p>
+                    ) : null}
                     <p>
                       Conectada {formatDateTime(account.connected_at)} - token vence{" "}
                       {account.token_expires_at
@@ -189,7 +194,6 @@ export default async function CuentasPage({
                     <span className="status-copy">
                       {getInstagramAccountStatusCopy({
                         lastWebhookAt: account.last_webhook_at,
-                        hasPendingProfileEnrichment: profileEnrichmentPending,
                         formatRelativeTime,
                       })}
                     </span>
