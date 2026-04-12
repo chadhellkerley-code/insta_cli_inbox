@@ -1,9 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import {
-  exchangeCodeForShortLivedToken,
-  fetchInstagramAccountProfile,
-} from "@/lib/meta/client";
+import { exchangeCodeForShortLivedToken } from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
@@ -197,49 +194,22 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       redirectUriComparison,
     });
     const managedToken = await resolveInitialInstagramToken(shortLivedToken);
-    const instagramAccountId = shortLivedToken.user_id ?? null;
-    let hydratedProfile: {
-      user_id: string | null;
-      username: string | null;
-      name: string | null;
-      account_type: string | null;
-      profile_picture_url: string | null;
-    } | null = null;
+    const instagramUserId = shortLivedToken.user_id ?? null;
 
-    if (instagramAccountId) {
-      try {
-        hydratedProfile = await fetchInstagramAccountProfile({
-          accessToken: managedToken.accessToken,
-          instagramUserId: instagramAccountId,
-        });
-        console.info("[meta-oauth] instagram profile hydrated", {
-          instagramUserId: hydratedProfile.user_id,
-          username: hydratedProfile.username,
-          accountType: hydratedProfile.account_type,
-          hasProfilePicture: Boolean(hydratedProfile.profile_picture_url),
-        });
-      } catch (error) {
-        console.error("[meta-oauth] instagram profile hydration failed", {
-          instagramUserIdFromToken: instagramAccountId,
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
-      }
-    } else {
-      console.warn("[meta-oauth] instagram profile hydration skipped", {
-        reason: "missing-instagram-user-id-from-token-exchange",
-      });
-    }
-
-    const resolvedInstagramAccountId =
-      hydratedProfile?.user_id ?? shortLivedToken.user_id ?? instagramAccountId;
-
-    if (!resolvedInstagramAccountId) {
+    if (!instagramUserId) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
-    const resolvedInstagramAppUserId = resolvedInstagramAccountId;
-    const resolvedUsername =
-      hydratedProfile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
+    console.info("[meta-oauth] profile enrichment deferred", {
+      instagramUserId,
+      fallbackUsername: buildFallbackInstagramUsername(instagramUserId),
+      tokenLifecycle: managedToken.lifecycle,
+      reason: "callback-no-longer-reads-instagram-profile",
+    });
+
+    const resolvedInstagramAccountId = instagramUserId;
+    const resolvedInstagramAppUserId = instagramUserId;
+    const resolvedUsername = buildFallbackInstagramUsername(instagramUserId);
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -262,9 +232,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         instagram_account_id: resolvedInstagramAccountId,
         instagram_app_user_id: resolvedInstagramAppUserId,
         username: resolvedUsername,
-        name: hydratedProfile?.name ?? null,
-        account_type: hydratedProfile?.account_type ?? null,
-        profile_picture_url: hydratedProfile?.profile_picture_url ?? null,
+        name: null,
+        account_type: null,
+        profile_picture_url: null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
         token_lifecycle: managedToken.lifecycle,
@@ -288,7 +258,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message: "Conectamos la cuenta de Instagram correctamente.",
+        message:
+          "Cuenta conectada correctamente. Los metadatos del perfil quedaron pendientes de enriquecimiento.",
         username: undefined,
       },
       { code },

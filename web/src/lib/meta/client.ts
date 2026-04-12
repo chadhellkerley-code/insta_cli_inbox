@@ -1,8 +1,4 @@
-import {
-  META_API_VERSION,
-  getMetaOauthConfig,
-  getMetaServerEnv,
-} from "@/lib/meta/config";
+import { getMetaOauthConfig, getMetaServerEnv } from "@/lib/meta/config";
 import type { ExactValueComparison } from "@/lib/meta/oauth-observability";
 
 type MetaErrorPayload = {
@@ -38,12 +34,12 @@ type ShortLivedTokenResponse = {
   expires_in?: number;
 };
 
-export type InstagramAccountProfile = {
-  user_id: string | null;
-  username: string | null;
-  name: string | null;
-  account_type: string | null;
-  profile_picture_url: string | null;
+export type InstagramProfileEnrichmentDiagnostic = {
+  status: "pending";
+  instagramUserId: string;
+  fallbackUsername: string;
+  reason: string;
+  nextAction: string;
 };
 
 function normalizeMetaIdentifier(value: unknown) {
@@ -89,39 +85,6 @@ function summarizeMetaError(payload: unknown) {
     subcode: errorPayload.error?.error_subcode ?? errorPayload.error_subcode ?? null,
     fbtraceId: errorPayload.fbtrace_id ?? null,
   };
-}
-
-function sanitizeMetaLogPayload(payload: unknown, depth = 0): unknown {
-  if (payload == null) {
-    return null;
-  }
-
-  if (
-    typeof payload === "string" ||
-    typeof payload === "number" ||
-    typeof payload === "boolean"
-  ) {
-    return payload;
-  }
-
-  if (depth >= 2) {
-    return "[truncated]";
-  }
-
-  if (Array.isArray(payload)) {
-    return payload.slice(0, 10).map((item) => sanitizeMetaLogPayload(item, depth + 1));
-  }
-
-  if (typeof payload === "object") {
-    return Object.fromEntries(
-      Object.entries(payload as Record<string, unknown>).slice(0, 20).map(([key, value]) => [
-        key,
-        sanitizeMetaLogPayload(value, depth + 1),
-      ]),
-    );
-  }
-
-  return String(payload);
 }
 
 function getMetaErrorMessage(payload: unknown) {
@@ -221,85 +184,19 @@ export async function exchangeCodeForShortLivedToken(
   };
 }
 
-function normalizeOptionalMetaString(value: unknown) {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  return trimmed || null;
-}
-
-type RawInstagramAccountProfileResponse = {
-  id?: string | number;
-  user_id?: string | number;
-  username?: string;
-  name?: string;
-  account_type?: string;
-  profile_picture_url?: string;
-};
-
-export async function fetchInstagramAccountProfile(options: {
-  accessToken: string;
+export function buildInstagramProfileEnrichmentDiagnostic(options: {
   instagramUserId: string;
-}): Promise<InstagramAccountProfile> {
-  const oauthConfig = getMetaOauthConfig();
-  const profileUrl = new URL(
-    `https://graph.facebook.com/${META_API_VERSION}/${options.instagramUserId}`,
-  );
-  profileUrl.searchParams.set(
-    "fields",
-    "id,username,name,profile_picture_url",
-  );
-  profileUrl.searchParams.set("access_token", options.accessToken);
-
-  console.info("[meta-oauth] instagram profile hydration request", {
-    flow: oauthConfig.flow,
-    endpoint: profileUrl.origin + profileUrl.pathname,
+  tokenLifecycle?: string | null;
+}): InstagramProfileEnrichmentDiagnostic {
+  return {
+    status: "pending",
     instagramUserId: options.instagramUserId,
-    fields: profileUrl.searchParams.get("fields"),
-  });
-
-  const profileResponse = await fetch(profileUrl, {
-    method: "GET",
-    cache: "no-store",
-  });
-  const profilePayload = await readMetaJson(profileResponse);
-  const profile = profilePayload as RawInstagramAccountProfileResponse;
-  const parsedProfile = {
-    user_id:
-      normalizeMetaIdentifier(profile.user_id) ??
-      normalizeMetaIdentifier(profile.id) ??
-      options.instagramUserId,
-    username: normalizeOptionalMetaString(profile.username),
-    name: normalizeOptionalMetaString(profile.name),
-    account_type: normalizeOptionalMetaString(profile.account_type),
-    profile_picture_url: normalizeOptionalMetaString(profile.profile_picture_url),
+    fallbackUsername: `ig_${options.instagramUserId}`,
+    reason:
+      "Instagram Login tokens from api.instagram.com/oauth/access_token are not valid for the profile read paths observed during callback diagnostics.",
+    nextAction:
+      `Run profile enrichment later with a supported endpoint for this token type. Current token lifecycle: ${options.tokenLifecycle ?? "unknown"}.`,
   };
-
-  console.info("[meta-oauth] instagram profile hydration response", {
-    endpoint: profileUrl.origin + profileUrl.pathname,
-    instagramUserId: options.instagramUserId,
-    status: profileResponse.status,
-    ok: profileResponse.ok,
-    profile: {
-      user_id: parsedProfile.user_id,
-      username: parsedProfile.username,
-      name: parsedProfile.name,
-      account_type: parsedProfile.account_type,
-      hasProfilePicture: Boolean(parsedProfile.profile_picture_url),
-    },
-    error: summarizeMetaError(profilePayload),
-    rawErrorPayload: profileResponse.ok ? null : sanitizeMetaLogPayload(profilePayload),
-  });
-
-  assertMetaResponseOk(
-    profileResponse,
-    profilePayload,
-    "Instagram profile hydration failed",
-  );
-
-  return parsedProfile;
 }
 
 export async function sendInstagramMessage(options: {

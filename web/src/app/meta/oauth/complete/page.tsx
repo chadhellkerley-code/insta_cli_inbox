@@ -16,7 +16,9 @@ function MetaOauthCompleteContent({
   const status = searchParams?.status === "success" ? "success" : "error";
   const message =
     searchParams?.message ??
-    (status === "success" ? "Cuenta conectada." : "No pudimos completar la conexion.");
+    (status === "success"
+      ? "Cuenta conectada correctamente. Los metadatos del perfil quedaron pendientes de enriquecimiento."
+      : "No pudimos completar la conexion.");
 
   return (
     <MetaOauthCompleteClient

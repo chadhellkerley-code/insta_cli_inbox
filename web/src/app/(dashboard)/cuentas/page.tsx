@@ -5,6 +5,7 @@ import { MetaConnectButton } from "@/components/meta-connect-button";
 import {
   getInstagramAccountStatusCopy,
   getInstagramAccountStatusLabel,
+  isInstagramProfileEnrichmentPending,
 } from "@/lib/meta/account-status";
 import { formatDateTime, formatRelativeTime, loadOwnedAccounts, requireUserContext } from "@/lib/app-data";
 
@@ -132,52 +133,74 @@ export default async function CuentasPage({
           </div>
         ) : (
           <div className="stack-list">
-            {accounts.map((account) => (
-              <div key={account.id} className="account-row">
-                <div className="account-avatar" aria-hidden="true">
-                  {account.profile_picture_url ? (
-                    <div
-                      className="account-avatar-image"
-                      style={{ backgroundImage: `url(${account.profile_picture_url})` }}
+            {accounts.map((account) => {
+              const profileEnrichmentPending = isInstagramProfileEnrichmentPending({
+                username: account.username,
+                name: account.name,
+                accountType: account.account_type,
+              });
+
+              return (
+                <div key={account.id} className="account-row">
+                  <div className="account-avatar" aria-hidden="true">
+                    {account.profile_picture_url ? (
+                      <div
+                        className="account-avatar-image"
+                        style={{ backgroundImage: `url(${account.profile_picture_url})` }}
+                      />
+                    ) : (
+                      <span>{account.username.slice(0, 1).toUpperCase()}</span>
+                    )}
+                  </div>
+
+                  <div className="account-copy">
+                    <strong>@{account.username}</strong>
+                    <p>
+                      {account.name ||
+                        (profileEnrichmentPending
+                          ? "Cuenta conectada correctamente. Metadatos del perfil pendientes de enriquecimiento."
+                          : "Cuenta de Instagram conectada")}
+                    </p>
+                    <p>
+                      Tipo:{" "}
+                      <code>
+                        {account.account_type ||
+                          (profileEnrichmentPending
+                            ? "pendiente de enriquecimiento"
+                            : "sin dato")}
+                      </code>
+                    </p>
+                    <p>
+                      Conectada {formatDateTime(account.connected_at)} - token vence{" "}
+                      {account.token_expires_at
+                        ? formatRelativeTime(account.token_expires_at)
+                        : "sin dato"}
+                    </p>
+                    <p>
+                      Token: <code>{account.token_lifecycle || "sin dato"}</code> - ultimo OAuth{" "}
+                      {account.last_oauth_at
+                        ? formatRelativeTime(account.last_oauth_at)
+                        : "sin dato"}
+                    </p>
+                  </div>
+
+                  <div className="account-meta">
+                    <span className="pill">{getInstagramAccountStatusLabel(account.status)}</span>
+                    <span className="status-copy">
+                      {getInstagramAccountStatusCopy({
+                        lastWebhookAt: account.last_webhook_at,
+                        hasPendingProfileEnrichment: profileEnrichmentPending,
+                        formatRelativeTime,
+                      })}
+                    </span>
+                    <DeleteInstagramAccountButton
+                      accountId={account.id}
+                      username={account.username}
                     />
-                  ) : (
-                    <span>{account.username.slice(0, 1).toUpperCase()}</span>
-                  )}
+                  </div>
                 </div>
-
-                <div className="account-copy">
-                  <strong>@{account.username}</strong>
-                  <p>{account.name || "Cuenta de Instagram conectada"}</p>
-                  <p>
-                    Tipo: <code>{account.account_type || "sin dato"}</code>
-                  </p>
-                  <p>
-                    Conectada {formatDateTime(account.connected_at)} - token vence{" "}
-                    {account.token_expires_at
-                      ? formatRelativeTime(account.token_expires_at)
-                      : "sin dato"}
-                  </p>
-                  <p>
-                    Token: <code>{account.token_lifecycle || "sin dato"}</code> - ultimo OAuth{" "}
-                    {account.last_oauth_at ? formatRelativeTime(account.last_oauth_at) : "sin dato"}
-                  </p>
-                </div>
-
-                <div className="account-meta">
-                  <span className="pill">{getInstagramAccountStatusLabel(account.status)}</span>
-                  <span className="status-copy">
-                    {getInstagramAccountStatusCopy({
-                      lastWebhookAt: account.last_webhook_at,
-                      formatRelativeTime,
-                    })}
-                  </span>
-                  <DeleteInstagramAccountButton
-                    accountId={account.id}
-                    username={account.username}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

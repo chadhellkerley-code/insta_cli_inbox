@@ -26,7 +26,7 @@ export function MetaOauthCompleteClient({
     <main className="auth-shell">
       <section className="auth-card">
         <span className="eyebrow">Instagram</span>
-        <h1>{status === "success" ? "Cuenta conectada" : "Conexion cancelada"}</h1>
+        <h1>{status === "success" ? "Cuenta conectada correctamente" : "Conexion cancelada"}</h1>
         <p className="auth-copy">{message}</p>
       </section>
     </main>
