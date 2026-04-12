@@ -84,6 +84,7 @@ export async function loadOwnedAccounts(
       [
         "id",
         "owner_id",
+        "instagram_user_id",
         "instagram_account_id",
         "instagram_app_user_id",
         "username",
@@ -91,6 +92,9 @@ export async function loadOwnedAccounts(
         "account_type",
         "profile_picture_url",
         "status",
+        "token_obtained_at",
+        "expires_in",
+        "expires_at",
         "token_expires_at",
         "token_lifecycle",
         "last_token_refresh_at",

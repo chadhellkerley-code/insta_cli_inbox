@@ -1,19 +1,11 @@
+import { isFallbackInstagramUsername } from "@/lib/meta/instagram-username";
+
 export const INSTAGRAM_ACCOUNT_STATUS_CONNECTED = "connected";
 
-export function isFallbackInstagramUsername(username?: string | null) {
-  return Boolean(username?.startsWith("ig_"));
-}
+export { isFallbackInstagramUsername };
 
-export function isInstagramProfileEnrichmentPending(options: {
-  username?: string | null;
-  name?: string | null;
-  accountType?: string | null;
-}) {
-  return (
-    isFallbackInstagramUsername(options.username) ||
-    !options.name ||
-    !options.accountType
-  );
+export function isInstagramUsernamePending(username?: string | null) {
+  return isFallbackInstagramUsername(username);
 }
 
 export function getInstagramAccountStatusLabel(status: string | null | undefined) {

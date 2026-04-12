@@ -6,7 +6,7 @@ import {
   getInstagramAccountStatusCopy,
   getInstagramAccountStatusLabel,
   isFallbackInstagramUsername,
-  isInstagramProfileEnrichmentPending,
+  isInstagramUsernamePending,
 } from "@/lib/meta/account-status";
 import { formatDateTime, formatRelativeTime, loadOwnedAccounts, requireUserContext } from "@/lib/app-data";
 
@@ -136,17 +136,16 @@ export default async function CuentasPage({
           <div className="stack-list">
             {accounts.map((account) => {
               const fallbackUsername = isFallbackInstagramUsername(account.username);
-              const profileEnrichmentPending = isInstagramProfileEnrichmentPending({
-                username: account.username,
-                name: account.name,
-                accountType: account.account_type,
-              });
+              const usernamePending = isInstagramUsernamePending(account.username);
               const accountTitle = fallbackUsername
                 ? "Cuenta conectada"
                 : `@${account.username}`;
               const accountSecondaryLine = fallbackUsername
                 ? `ID de Instagram: ${account.instagram_account_id}`
                 : account.name || `ID de Instagram: ${account.instagram_account_id}`;
+              const accountStatusLabel = usernamePending
+                ? "Conectada · username pendiente"
+                : getInstagramAccountStatusLabel(account.status);
 
               return (
                 <div key={account.id} className="account-row">
@@ -167,12 +166,12 @@ export default async function CuentasPage({
                     <p>
                       Tipo:{" "}
                       <code>
-                        {account.account_type || "Perfil pendiente de sincronizacion"}
+                        {account.account_type || "Sin sincronizar"}
                       </code>
                     </p>
-                    {profileEnrichmentPending ? (
+                    {usernamePending ? (
                       <p className="status-copy">
-                        Los datos publicos del perfil se completaran en una sincronizacion posterior.
+                        La cuenta ya esta operativa. El username real se mostrara cuando llegue metadata confiable.
                       </p>
                     ) : null}
                     <p>
@@ -190,7 +189,7 @@ export default async function CuentasPage({
                   </div>
 
                   <div className="account-meta">
-                    <span className="pill">{getInstagramAccountStatusLabel(account.status)}</span>
+                    <span className="pill">{accountStatusLabel}</span>
                     <span className="status-copy">
                       {getInstagramAccountStatusCopy({
                         lastWebhookAt: account.last_webhook_at,

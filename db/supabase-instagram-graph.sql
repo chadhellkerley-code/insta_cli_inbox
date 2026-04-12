@@ -13,6 +13,7 @@ $$;
 create table if not exists public.instagram_accounts (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
+  instagram_user_id text,
   instagram_account_id text not null unique,
   instagram_app_user_id text,
   username text not null,
@@ -20,6 +21,9 @@ create table if not exists public.instagram_accounts (
   account_type text,
   profile_picture_url text,
   access_token text not null,
+  token_obtained_at timestamptz,
+  expires_in integer,
+  expires_at timestamptz,
   token_expires_at timestamptz,
   token_lifecycle text,
   last_token_refresh_at timestamptz,
@@ -33,6 +37,18 @@ create table if not exists public.instagram_accounts (
 );
 
 alter table public.instagram_accounts
+  add column if not exists instagram_user_id text;
+
+alter table public.instagram_accounts
+  add column if not exists token_obtained_at timestamptz;
+
+alter table public.instagram_accounts
+  add column if not exists expires_in integer;
+
+alter table public.instagram_accounts
+  add column if not exists expires_at timestamptz;
+
+alter table public.instagram_accounts
   add column if not exists token_lifecycle text;
 
 alter table public.instagram_accounts
@@ -40,6 +56,16 @@ alter table public.instagram_accounts
 
 alter table public.instagram_accounts
   add column if not exists last_oauth_at timestamptz;
+
+update public.instagram_accounts
+set
+  instagram_user_id = coalesce(instagram_user_id, instagram_account_id),
+  token_obtained_at = coalesce(token_obtained_at, last_oauth_at, connected_at, created_at),
+  expires_at = coalesce(expires_at, token_expires_at)
+where
+  instagram_user_id is null
+  or token_obtained_at is null
+  or expires_at is null;
 
 create table if not exists public.instagram_conversations (
   id uuid primary key default gen_random_uuid(),

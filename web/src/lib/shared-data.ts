@@ -9,6 +9,7 @@ export type UserProfile = {
 export type InstagramAccountRecord = {
   id: string;
   owner_id: string;
+  instagram_user_id: string | null;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
   username: string;
@@ -16,6 +17,9 @@ export type InstagramAccountRecord = {
   account_type: string | null;
   profile_picture_url: string | null;
   status: string | null;
+  token_obtained_at: string | null;
+  expires_in: number | null;
+  expires_at: string | null;
   token_expires_at: string | null;
   token_lifecycle: string | null;
   last_token_refresh_at: string | null;

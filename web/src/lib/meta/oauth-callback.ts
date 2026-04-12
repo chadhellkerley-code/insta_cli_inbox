@@ -16,17 +16,18 @@ import {
   createOpaqueFingerprint,
 } from "@/lib/meta/oauth-observability";
 import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
+import { buildFallbackInstagramUsername } from "@/lib/meta/instagram-username";
 import { resolveInitialInstagramToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
+  username: string | null;
+  name: string | null;
+  account_type: string | null;
+  profile_picture_url: string | null;
 };
-
-function buildFallbackInstagramUsername(instagramAccountId: string) {
-  return `ig_${instagramAccountId}`;
-}
 
 export function buildMetaOauthCompletionUrl(
   origin: string,
@@ -175,7 +176,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
   try {
     const admin = createAdminClient();
-    const nowIso = new Date().toISOString();
     const userResult = await admin.auth.admin.getUserById(oauthState.userId);
 
     if (userResult.error || !userResult.data.user) {
@@ -200,21 +200,17 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
-    console.info("[meta-oauth] profile enrichment deferred", {
+    console.info("[meta-oauth] username enrichment deferred", {
       instagramUserId,
       fallbackUsername: buildFallbackInstagramUsername(instagramUserId),
       tokenLifecycle: managedToken.lifecycle,
-      reason: "callback-no-longer-reads-instagram-profile",
+      reason: "callback-persists-token-only-and-defers-username-resolution",
     });
-
-    const resolvedInstagramAccountId = instagramUserId;
-    const resolvedInstagramAppUserId = instagramUserId;
-    const resolvedUsername = buildFallbackInstagramUsername(instagramUserId);
 
     const existingResult = await admin
       .from("instagram_accounts")
-      .select("id, owner_id")
-      .eq("instagram_account_id", resolvedInstagramAccountId)
+      .select("id, owner_id, username, name, account_type, profile_picture_url")
+      .eq("instagram_account_id", instagramUserId)
       .maybeSingle();
     const existing = existingResult.data as ExistingAccountLookup | null;
 
@@ -226,24 +222,33 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
+    const resolvedInstagramAccountId = instagramUserId;
+    const resolvedInstagramAppUserId = instagramUserId;
+    const resolvedUsername =
+      existing?.username?.trim() || buildFallbackInstagramUsername(instagramUserId);
+
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
         owner_id: oauthState.userId,
+        instagram_user_id: instagramUserId,
         instagram_account_id: resolvedInstagramAccountId,
         instagram_app_user_id: resolvedInstagramAppUserId,
         username: resolvedUsername,
-        name: null,
-        account_type: null,
-        profile_picture_url: null,
+        name: existing?.name ?? null,
+        account_type: existing?.account_type ?? null,
+        profile_picture_url: existing?.profile_picture_url ?? null,
         access_token: managedToken.accessToken,
+        token_obtained_at: managedToken.obtainedAt,
+        expires_in: managedToken.expiresIn,
+        expires_at: managedToken.expiresAt,
         token_expires_at: managedToken.expiresAt,
         token_lifecycle: managedToken.lifecycle,
-        last_token_refresh_at: nowIso,
+        last_token_refresh_at: managedToken.obtainedAt,
         status: "connected",
-        connected_at: nowIso,
-        last_oauth_at: nowIso,
+        connected_at: managedToken.obtainedAt,
+        last_oauth_at: managedToken.obtainedAt,
         scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
-        updated_at: nowIso,
+        updated_at: managedToken.obtainedAt,
       } as never,
       {
         onConflict: "instagram_account_id",
@@ -259,7 +264,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       {
         status: "success",
         message:
-          "Cuenta conectada correctamente. Los metadatos del perfil quedaron pendientes de enriquecimiento.",
+          "Cuenta conectada correctamente. El username real se sincronizara cuando llegue metadata confiable.",
         username: undefined,
       },
       { code },

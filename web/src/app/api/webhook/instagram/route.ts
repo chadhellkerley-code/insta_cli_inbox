@@ -2,13 +2,17 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
 import { getMetaServerEnv } from "@/lib/meta/config";
+import {
+  resolveInstagramUsernameCandidateFromMessagingEvent,
+  syncInstagramUsername,
+} from "@/lib/meta/instagram-username";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
 type MessagingEvent = {
   sender?: { id?: string; username?: string };
-  recipient?: { id?: string };
+  recipient?: { id?: string; username?: string };
   timestamp?: number;
   message?: {
     mid?: string;
@@ -40,6 +44,7 @@ type AccountLookup = {
   owner_id: string;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
+  username: string | null;
 };
 
 type ConversationLookup = {
@@ -116,7 +121,7 @@ async function findAccountForEntry(
     for (const column of ["instagram_account_id", "instagram_app_user_id"] as const) {
       const result = await admin
         .from("instagram_accounts")
-        .select("id, owner_id, instagram_account_id, instagram_app_user_id")
+        .select("id, owner_id, instagram_account_id, instagram_app_user_id, username")
         .eq(column, candidateId)
         .maybeSingle();
       const account = result.data as AccountLookup | null;
@@ -203,6 +208,43 @@ async function upsertConversationForMessage(
   return insertedConversation.id;
 }
 
+function resolveConversationContactUsername(
+  account: AccountLookup,
+  event: MessagingEvent,
+  isInbound: boolean,
+) {
+  if (isInbound) {
+    return event.sender?.username ?? event.recipient?.username ?? null;
+  }
+
+  const recipientUsername = event.recipient?.username ?? null;
+
+  if (recipientUsername && recipientUsername !== account.username) {
+    return recipientUsername;
+  }
+
+  return null;
+}
+
+async function enrichAccountUsernameFromEvent(
+  admin: ReturnType<typeof createAdminClient>,
+  account: AccountLookup,
+  event: MessagingEvent,
+) {
+  const candidate = resolveInstagramUsernameCandidateFromMessagingEvent(account, event);
+
+  if (!candidate) {
+    return;
+  }
+
+  await syncInstagramUsername({
+    admin,
+    account,
+    candidateUsername: candidate.username,
+    source: candidate.source,
+  });
+}
+
 async function persistMessagingEvent(
   admin: ReturnType<typeof createAdminClient>,
   account: AccountLookup,
@@ -233,7 +275,7 @@ async function persistMessagingEvent(
     accountId: account.id,
     ownerId: account.owner_id,
     contactIgsid,
-    contactUsername: event.sender?.username ?? null,
+    contactUsername: resolveConversationContactUsername(account, event, isInbound),
     preview,
     messageType,
     createdAt,
@@ -273,6 +315,8 @@ async function persistMessagingEvent(
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", account.id);
+
+  await enrichAccountUsernameFromEvent(admin, account, event);
 }
 
 function normalizeEntryMessagingEvents(entry: NonNullable<WebhookPayload["entry"]>[number]) {

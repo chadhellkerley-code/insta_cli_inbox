@@ -2,7 +2,9 @@ export const SHORT_LIVED_FALLBACK_MS = 60 * 60 * 1000;
 
 export type ManagedInstagramToken = {
   accessToken: string;
+  expiresIn: number;
   expiresAt: string;
+  obtainedAt: string;
   lifecycle: "oauth";
 };
 
@@ -28,9 +30,13 @@ export async function resolveInitialInstagramToken(shortLivedToken: {
   access_token: string;
   expires_in?: number;
 }) {
+  const expiresIn = shortLivedToken.expires_in ?? SHORT_LIVED_FALLBACK_MS / 1000;
+
   return {
     accessToken: shortLivedToken.access_token,
-    expiresAt: buildExpiresAt(shortLivedToken.expires_in ?? SHORT_LIVED_FALLBACK_MS / 1000),
+    expiresIn,
+    expiresAt: buildExpiresAt(expiresIn),
+    obtainedAt: new Date().toISOString(),
     lifecycle: "oauth",
   } satisfies ManagedInstagramToken;
 }
@@ -44,7 +50,9 @@ export async function ensureInstagramAccessToken(options: {
   if (timeRemainingMs === null || timeRemainingMs > 0) {
     return {
       accessToken: options.accessToken,
+      expiresIn: SHORT_LIVED_FALLBACK_MS / 1000,
       expiresAt: options.expiresAt ?? buildExpiresAt(SHORT_LIVED_FALLBACK_MS / 1000),
+      obtainedAt: new Date().toISOString(),
       lifecycle: "oauth",
     } satisfies ManagedInstagramToken;
   }
