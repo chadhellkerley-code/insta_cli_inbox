@@ -206,20 +206,27 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       profile_picture_url: string | null;
     } | null = null;
 
-    try {
-      hydratedProfile = await fetchInstagramAccountProfile({
-        accessToken: managedToken.accessToken,
-      });
-      console.info("[meta-oauth] instagram profile hydrated", {
-        instagramUserId: hydratedProfile.user_id,
-        username: hydratedProfile.username,
-        accountType: hydratedProfile.account_type,
-        hasProfilePicture: Boolean(hydratedProfile.profile_picture_url),
-      });
-    } catch (error) {
-      console.error("[meta-oauth] instagram profile hydration failed", {
-        instagramUserIdFromToken: shortLivedToken.user_id ?? null,
-        errorMessage: error instanceof Error ? error.message : String(error),
+    if (instagramAccountId) {
+      try {
+        hydratedProfile = await fetchInstagramAccountProfile({
+          accessToken: managedToken.accessToken,
+          instagramUserId: instagramAccountId,
+        });
+        console.info("[meta-oauth] instagram profile hydrated", {
+          instagramUserId: hydratedProfile.user_id,
+          username: hydratedProfile.username,
+          accountType: hydratedProfile.account_type,
+          hasProfilePicture: Boolean(hydratedProfile.profile_picture_url),
+        });
+      } catch (error) {
+        console.error("[meta-oauth] instagram profile hydration failed", {
+          instagramUserIdFromToken: instagramAccountId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else {
+      console.warn("[meta-oauth] instagram profile hydration skipped", {
+        reason: "missing-instagram-user-id-from-token-exchange",
       });
     }
 

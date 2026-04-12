@@ -238,118 +238,65 @@ type RawInstagramAccountProfileResponse = {
   profile_picture_url?: string;
 };
 
-type RawInstagramAccountProfileLookupResponse = {
-  name?: string;
-  account_type?: string;
-  profile_picture_url?: string;
-};
-
 export async function fetchInstagramAccountProfile(options: {
   accessToken: string;
+  instagramUserId: string;
 }): Promise<InstagramAccountProfile> {
   const oauthConfig = getMetaOauthConfig();
-  const stepAUrl = new URL(`${oauthConfig.graphBaseUrl}/me`);
-  stepAUrl.searchParams.set("fields", "user_id,username");
-  stepAUrl.searchParams.set("access_token", options.accessToken);
+  const profileUrl = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramUserId}`);
+  profileUrl.searchParams.set(
+    "fields",
+    "user_id,username,name,account_type,profile_picture_url",
+  );
+  profileUrl.searchParams.set("access_token", options.accessToken);
 
-  console.info("[meta-oauth] instagram profile hydration step A request", {
+  console.info("[meta-oauth] instagram profile hydration request", {
     flow: oauthConfig.flow,
-    step: "A",
-    endpoint: stepAUrl.origin + stepAUrl.pathname,
-    fields: stepAUrl.searchParams.get("fields"),
+    endpoint: profileUrl.origin + profileUrl.pathname,
+    instagramUserId: options.instagramUserId,
+    fields: profileUrl.searchParams.get("fields"),
   });
 
-  const stepAResponse = await fetch(stepAUrl, {
+  const profileResponse = await fetch(profileUrl, {
     method: "GET",
     cache: "no-store",
   });
-  const stepAPayload = await readMetaJson(stepAResponse);
-  const stepAProfile = stepAPayload as RawInstagramAccountProfileResponse;
-  const stepAUserId = normalizeMetaIdentifier(stepAProfile.user_id);
-  const stepAUsername = normalizeOptionalMetaString(stepAProfile.username);
-
-  console.info("[meta-oauth] instagram profile hydration step A response", {
-    step: "A",
-    endpoint: stepAUrl.origin + stepAUrl.pathname,
-    status: stepAResponse.status,
-    ok: stepAResponse.ok,
-    profile: {
-      user_id: stepAUserId,
-      username: stepAUsername,
-    },
-    error: summarizeMetaError(stepAPayload),
-    rawErrorPayload: stepAResponse.ok ? null : sanitizeMetaLogPayload(stepAPayload),
-  });
-
-  assertMetaResponseOk(
-    stepAResponse,
-    stepAPayload,
-    "Instagram profile hydration step A failed",
-  );
-
-  if (!stepAUserId) {
-    console.warn("[meta-oauth] instagram profile hydration step B skipped", {
-      step: "B",
-      reason: "step-a-missing-user-id",
-      endpointTemplate: `${oauthConfig.graphBaseUrl}/{user_id}`,
-    });
-
-    return {
-      user_id: null,
-      username: stepAUsername,
-      name: null,
-      account_type: null,
-      profile_picture_url: null,
-    };
-  }
-
-  const stepBUrl = new URL(`${oauthConfig.graphBaseUrl}/${stepAUserId}`);
-  stepBUrl.searchParams.set("fields", "name,account_type,profile_picture_url");
-  stepBUrl.searchParams.set("access_token", options.accessToken);
-
-  console.info("[meta-oauth] instagram profile hydration step B request", {
-    flow: oauthConfig.flow,
-    step: "B",
-    endpoint: stepBUrl.origin + stepBUrl.pathname,
-    instagramUserId: stepAUserId,
-    fields: stepBUrl.searchParams.get("fields"),
-  });
-
-  const stepBResponse = await fetch(stepBUrl, {
-    method: "GET",
-    cache: "no-store",
-  });
-  const stepBPayload = await readMetaJson(stepBResponse);
-  const stepBProfile = stepBPayload as RawInstagramAccountProfileLookupResponse;
-
-  console.info("[meta-oauth] instagram profile hydration step B response", {
-    step: "B",
-    endpoint: stepBUrl.origin + stepBUrl.pathname,
-    instagramUserId: stepAUserId,
-    status: stepBResponse.status,
-    ok: stepBResponse.ok,
-    profile: {
-      name: normalizeOptionalMetaString(stepBProfile.name),
-      account_type: normalizeOptionalMetaString(stepBProfile.account_type),
-      hasProfilePicture: Boolean(normalizeOptionalMetaString(stepBProfile.profile_picture_url)),
-    },
-    error: summarizeMetaError(stepBPayload),
-    rawErrorPayload: stepBResponse.ok ? null : sanitizeMetaLogPayload(stepBPayload),
-  });
-
-  assertMetaResponseOk(
-    stepBResponse,
-    stepBPayload,
-    "Instagram profile hydration step B failed",
-  );
-
-  return {
-    user_id: stepAUserId,
-    username: stepAUsername,
-    name: normalizeOptionalMetaString(stepBProfile.name),
-    account_type: normalizeOptionalMetaString(stepBProfile.account_type),
-    profile_picture_url: normalizeOptionalMetaString(stepBProfile.profile_picture_url),
+  const profilePayload = await readMetaJson(profileResponse);
+  const profile = profilePayload as RawInstagramAccountProfileResponse;
+  const parsedProfile = {
+    user_id:
+      normalizeMetaIdentifier(profile.user_id) ??
+      normalizeMetaIdentifier(profile.id) ??
+      options.instagramUserId,
+    username: normalizeOptionalMetaString(profile.username),
+    name: normalizeOptionalMetaString(profile.name),
+    account_type: normalizeOptionalMetaString(profile.account_type),
+    profile_picture_url: normalizeOptionalMetaString(profile.profile_picture_url),
   };
+
+  console.info("[meta-oauth] instagram profile hydration response", {
+    endpoint: profileUrl.origin + profileUrl.pathname,
+    instagramUserId: options.instagramUserId,
+    status: profileResponse.status,
+    ok: profileResponse.ok,
+    profile: {
+      user_id: parsedProfile.user_id,
+      username: parsedProfile.username,
+      name: parsedProfile.name,
+      account_type: parsedProfile.account_type,
+      hasProfilePicture: Boolean(parsedProfile.profile_picture_url),
+    },
+    error: summarizeMetaError(profilePayload),
+    rawErrorPayload: profileResponse.ok ? null : sanitizeMetaLogPayload(profilePayload),
+  });
+
+  assertMetaResponseOk(
+    profileResponse,
+    profilePayload,
+    "Instagram profile hydration failed",
+  );
+
+  return parsedProfile;
 }
 
 export async function sendInstagramMessage(options: {
