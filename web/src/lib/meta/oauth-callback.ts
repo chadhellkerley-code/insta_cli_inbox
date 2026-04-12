@@ -198,45 +198,40 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     });
     const managedToken = await resolveInitialInstagramToken(shortLivedToken);
     const instagramAccountId = shortLivedToken.user_id ?? null;
-
-    if (!instagramAccountId) {
-      throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
-    }
-
-    const resolvedInstagramAccountId = instagramAccountId;
-    const resolvedInstagramAppUserId = instagramAccountId;
-    const fallbackUsername = buildFallbackInstagramUsername(resolvedInstagramAccountId);
-    let hydratedProfile: Awaited<ReturnType<typeof fetchInstagramAccountProfile>> | null = null;
+    let hydratedProfile: {
+      user_id: string | null;
+      username: string | null;
+      name: string | null;
+      account_type: string | null;
+      profile_picture_url: string | null;
+    } | null = null;
 
     try {
       hydratedProfile = await fetchInstagramAccountProfile({
         accessToken: managedToken.accessToken,
-        instagramAccountId: resolvedInstagramAccountId,
       });
-
-      if (
-        hydratedProfile.userId &&
-        hydratedProfile.userId !== resolvedInstagramAccountId
-      ) {
-        console.warn("[meta-oauth] instagram profile hydration returned mismatched user id", {
-          flow: oauthConfig.flow,
-          route: requestUrl.pathname,
-          instagramAccountId: resolvedInstagramAccountId,
-          hydratedInstagramAccountId: hydratedProfile.userId,
-          codeFingerprint,
-        });
-      }
+      console.info("[meta-oauth] instagram profile hydrated", {
+        instagramUserId: hydratedProfile.user_id,
+        username: hydratedProfile.username,
+        accountType: hydratedProfile.account_type,
+        hasProfilePicture: Boolean(hydratedProfile.profile_picture_url),
+      });
     } catch (error) {
       console.error("[meta-oauth] instagram profile hydration failed", {
-        flow: oauthConfig.flow,
-        route: requestUrl.pathname,
-        instagramAccountId: resolvedInstagramAccountId,
-        codeFingerprint,
-        externalErrorMessage: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error ? error.message : String(error),
       });
     }
 
-    const resolvedUsername = hydratedProfile?.username ?? fallbackUsername;
+    const resolvedInstagramAccountId =
+      hydratedProfile?.user_id ?? shortLivedToken.user_id ?? instagramAccountId;
+
+    if (!resolvedInstagramAccountId) {
+      throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
+    }
+
+    const resolvedInstagramAppUserId = resolvedInstagramAccountId;
+    const resolvedUsername =
+      hydratedProfile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -260,8 +255,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         instagram_app_user_id: resolvedInstagramAppUserId,
         username: resolvedUsername,
         name: hydratedProfile?.name ?? null,
-        account_type: hydratedProfile?.accountType ?? null,
-        profile_picture_url: hydratedProfile?.profilePictureUrl ?? null,
+        account_type: hydratedProfile?.account_type ?? null,
+        profile_picture_url: hydratedProfile?.profile_picture_url ?? null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
         token_lifecycle: managedToken.lifecycle,

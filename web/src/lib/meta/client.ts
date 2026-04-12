@@ -38,11 +38,11 @@ type ShortLivedTokenResponse = {
 };
 
 export type InstagramAccountProfile = {
-  userId: string | null;
+  user_id: string | null;
   username: string | null;
   name: string | null;
-  accountType: string | null;
-  profilePictureUrl: string | null;
+  account_type: string | null;
+  profile_picture_url: string | null;
 };
 
 function normalizeMetaIdentifier(value: unknown) {
@@ -207,21 +207,15 @@ type RawInstagramAccountProfileResponse = {
 
 export async function fetchInstagramAccountProfile(options: {
   accessToken: string;
-  instagramAccountId?: string | null;
 }): Promise<InstagramAccountProfile> {
   const oauthConfig = getMetaOauthConfig();
-  const endpoint = `${oauthConfig.graphBaseUrl}/me`;
-  const url = new URL(endpoint);
-  url.searchParams.set(
-    "fields",
-    ["user_id", "username", "name", "account_type", "profile_picture_url"].join(","),
-  );
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
+  url.searchParams.set("fields", "user_id,username,name,account_type,profile_picture_url");
   url.searchParams.set("access_token", options.accessToken);
 
   console.info("[meta-oauth] instagram profile hydration request", {
     flow: oauthConfig.flow,
-    endpoint,
-    requestedInstagramAccountId: options.instagramAccountId ?? null,
+    endpoint: url.origin + url.pathname,
     fields: url.searchParams.get("fields"),
   });
 
@@ -232,7 +226,7 @@ export async function fetchInstagramAccountProfile(options: {
   const payload = await readMetaJson(response);
 
   console.info("[meta-oauth] instagram profile hydration response", {
-    endpoint,
+    endpoint: url.origin + url.pathname,
     status: response.status,
     ok: response.ok,
     error: summarizeMetaError(payload),
@@ -240,15 +234,16 @@ export async function fetchInstagramAccountProfile(options: {
 
   assertMetaResponseOk(response, payload, "Instagram profile hydration failed");
 
-  const profile = payload as RawInstagramAccountProfileResponse;
-
   return {
-    userId:
-      normalizeMetaIdentifier(profile.user_id) ?? normalizeMetaIdentifier(profile.id) ?? null,
-    username: normalizeOptionalMetaString(profile.username),
-    name: normalizeOptionalMetaString(profile.name),
-    accountType: normalizeOptionalMetaString(profile.account_type),
-    profilePictureUrl: normalizeOptionalMetaString(profile.profile_picture_url),
+    user_id: normalizeMetaIdentifier((payload as RawInstagramAccountProfileResponse).user_id) ?? null,
+    username: normalizeOptionalMetaString((payload as RawInstagramAccountProfileResponse).username),
+    name: normalizeOptionalMetaString((payload as RawInstagramAccountProfileResponse).name),
+    account_type: normalizeOptionalMetaString(
+      (payload as RawInstagramAccountProfileResponse).account_type,
+    ),
+    profile_picture_url: normalizeOptionalMetaString(
+      (payload as RawInstagramAccountProfileResponse).profile_picture_url,
+    ),
   };
 }
 

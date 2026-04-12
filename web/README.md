@@ -27,4 +27,4 @@ npm run dev
 3. Cargar exactamente ese mismo valor en `OAuth redirect URIs` dentro de Meta.
 4. En Meta App Dashboard agregar `Webhooks`, configurar el objeto `Instagram`, verificar `https://tu-dominio/api/webhook/instagram` con el mismo `META_WEBHOOK_VERIFY_TOKEN` del entorno y suscribir la app a los fields de Instagram que usa el proyecto.
 
-Si el webhook de la app no esta configurado y verificado en Meta, el OAuth puede iniciar bien pero la suscripcion por cuenta (`POST /{ig_user_id}/subscribed_apps`) falla al final de la conexion.
+La configuracion de webhooks de Instagram se hace desde Meta App Dashboard. Este flujo OAuth no suscribe cuentas via `/{ig_user_id}/subscribed_apps`.
