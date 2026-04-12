@@ -1,14 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import {
-  exchangeCodeForShortLivedToken,
-  subscribeInstagramAppUserToWebhooks,
-} from "@/lib/meta/client";
+import { exchangeCodeForShortLivedToken } from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
   META_LOGIN_SCOPES,
-  META_WEBHOOK_FIELDS,
 } from "@/lib/meta/config";
 import {
   attachStoredMetaOauthResult,
@@ -207,13 +203,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const resolvedInstagramAccountId = instagramAccountId;
     const resolvedInstagramAppUserId = instagramAccountId;
     const resolvedUsername = buildFallbackInstagramUsername(resolvedInstagramAccountId);
-    const webhookSubscriptionIds = [
-      resolvedInstagramAppUserId,
-      resolvedInstagramAccountId,
-    ].filter(
-      (candidate, index, values): candidate is string =>
-        Boolean(candidate) && values.indexOf(candidate) === index,
-    );
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -229,12 +218,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     if (existing && existing.owner_id !== oauthState.userId) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
-
-    await subscribeInstagramAppUserToWebhooks({
-      accessToken: managedToken.accessToken,
-      instagramUserIds: webhookSubscriptionIds,
-      subscribedFields: META_WEBHOOK_FIELDS,
-    });
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
