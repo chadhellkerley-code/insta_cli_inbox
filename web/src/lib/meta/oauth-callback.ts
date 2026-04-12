@@ -218,7 +218,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       });
     } catch (error) {
       console.error("[meta-oauth] instagram profile hydration failed", {
-        error: error instanceof Error ? error.message : String(error),
+        instagramUserIdFromToken: shortLivedToken.user_id ?? null,
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
 
