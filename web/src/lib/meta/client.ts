@@ -47,16 +47,10 @@ type MetaProfileResponse = {
   id?: string | number;
   user_id?: string | number;
   username?: string;
-  name?: string;
-  account_type?: string;
-  profile_picture_url?: string;
   data?: Array<{
     id?: string | number;
     user_id?: string | number;
     username?: string;
-    name?: string;
-    account_type?: string;
-    profile_picture_url?: string;
   }>;
 };
 
@@ -281,40 +275,38 @@ export async function fetchInstagramProfile(
   },
 ) {
   const oauthConfig = getMetaOauthConfig();
-  const fields = "id,user_id,username,account_type,name,profile_picture_url";
   const normalizedInstagramUserId = normalizeMetaIdentifier(options?.instagramUserId);
-  const endpointCandidates = [
-    normalizedInstagramUserId,
-    "me",
-  ].filter((candidate, index, values): candidate is string => Boolean(candidate) && values.indexOf(candidate) === index);
-
+  const fieldSets = [
+    "id,user_id,username",
+    "user_id,username",
+    "id,username",
+  ] as const;
   let payload: unknown = null;
-  let resolvedEndpoint = "";
+  let resolvedFields = "";
 
-  for (const candidate of endpointCandidates) {
-    const url = new URL(`${oauthConfig.graphBaseUrl}/${candidate}`);
+  for (const fields of fieldSets) {
+    const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
     url.searchParams.set("fields", fields);
+    url.searchParams.set("access_token", accessToken);
 
     console.info("[meta-oauth] profile fetch request", {
       flow: oauthConfig.flow,
       endpoint: url.toString(),
-      candidate,
+      candidate: "me",
       fields,
-      authScheme: "bearer",
+      authScheme: "query-string",
     });
 
     const response = await fetch(url, {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
       cache: "no-store",
     });
     payload = await readMetaJson(response);
 
     console.info("[meta-oauth] profile fetch response", {
       endpoint: url.toString(),
-      candidate,
+      candidate: "me",
+      fields,
       status: response.status,
       ok: response.ok,
       error: summarizeMetaError(payload),
@@ -324,11 +316,11 @@ export async function fetchInstagramProfile(
       continue;
     }
 
-    resolvedEndpoint = candidate;
+    resolvedFields = fields;
     break;
   }
 
-  if (!resolvedEndpoint) {
+  if (!resolvedFields) {
     throw new Error(`Profile fetch failed: ${getMetaErrorMessage(payload)}`);
   }
 
@@ -342,9 +334,9 @@ export async function fetchInstagramProfile(
     instagramAccountId:
       normalizedInstagramAccountId ?? normalizedInstagramUserId ?? normalizedAppScopedUserId,
     username: profile.username ?? null,
-    name: profile.name ?? null,
-    accountType: profile.account_type ?? null,
-    profilePictureUrl: profile.profile_picture_url ?? null,
+    name: null,
+    accountType: null,
+    profilePictureUrl: null,
   };
 }
 
