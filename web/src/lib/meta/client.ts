@@ -1,4 +1,5 @@
 import {
+  META_API_VERSION,
   getMetaOauthConfig,
   getMetaServerEnv,
 } from "@/lib/meta/config";
@@ -243,10 +244,12 @@ export async function fetchInstagramAccountProfile(options: {
   instagramUserId: string;
 }): Promise<InstagramAccountProfile> {
   const oauthConfig = getMetaOauthConfig();
-  const profileUrl = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramUserId}`);
+  const profileUrl = new URL(
+    `https://graph.facebook.com/${META_API_VERSION}/${options.instagramUserId}`,
+  );
   profileUrl.searchParams.set(
     "fields",
-    "user_id,username,name,account_type,profile_picture_url",
+    "id,username,name,profile_picture_url",
   );
   profileUrl.searchParams.set("access_token", options.accessToken);
 
