@@ -406,122 +406,123 @@ export async function subscribeInstagramAppUserToWebhooks(options: {
     throw new Error("No encontramos un identificador valido de Instagram para activar webhooks.");
   }
 
-  for (const instagramUserId of candidateIds) {
-    const getUrl = new URL(`${oauthConfig.graphBaseUrl}/${instagramUserId}/subscribed_apps`);
-    getUrl.searchParams.set("access_token", options.accessToken);
+  const subscriptionTarget = "me";
+  const endpoint = `${oauthConfig.graphBaseUrl}/${subscriptionTarget}/subscribed_apps`;
+  const getUrl = new URL(endpoint);
+  getUrl.searchParams.set("access_token", options.accessToken);
 
-    console.info("[meta-oauth] webhook subscription state request", {
-      flow: oauthConfig.flow,
-      endpoint: getUrl.toString(),
-      instagramUserId,
-    });
+  console.info("[meta-oauth] webhook subscription state request", {
+    flow: oauthConfig.flow,
+    endpoint: getUrl.toString(),
+    subscriptionTarget,
+    candidateInstagramUserIds: candidateIds,
+  });
 
-    const stateResponse = await fetch(getUrl, {
-      method: "GET",
-      cache: "no-store",
-    });
-    const statePayload = await readMetaJson(stateResponse);
+  const stateResponse = await fetch(getUrl, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const statePayload = await readMetaJson(stateResponse);
 
-    console.info("[meta-oauth] webhook subscription state response", {
-      endpoint: getUrl.toString(),
-      instagramUserId,
-      status: stateResponse.status,
-      ok: stateResponse.ok,
-      error: summarizeMetaError(statePayload),
-    });
+  console.info("[meta-oauth] webhook subscription state response", {
+    endpoint: getUrl.toString(),
+    subscriptionTarget,
+    status: stateResponse.status,
+    ok: stateResponse.ok,
+    error: summarizeMetaError(statePayload),
+  });
 
-    if (stateResponse.ok) {
-      const typedStatePayload = statePayload as InstagramSubscribedAppsResponse;
-      const subscribedFields = Array.isArray(typedStatePayload.data)
-        ? typedStatePayload.data.flatMap((item) =>
-            normalizeSubscribedFields(item.subscribed_fields),
-          )
-        : [];
-      const hasRequiredFields = options.subscribedFields.every((field) =>
-        subscribedFields.includes(field),
-      );
+  if (stateResponse.ok) {
+    const typedStatePayload = statePayload as InstagramSubscribedAppsResponse;
+    const subscribedFields = Array.isArray(typedStatePayload.data)
+      ? typedStatePayload.data.flatMap((item) =>
+          normalizeSubscribedFields(item.subscribed_fields),
+        )
+      : [];
+    const hasRequiredFields = options.subscribedFields.every((field) =>
+      subscribedFields.includes(field),
+    );
 
-      if (hasRequiredFields) {
-        return {
-          success: true,
-          alreadySubscribed: true,
-          instagramUserId,
-        };
-      }
+    if (hasRequiredFields) {
+      return {
+        success: true,
+        alreadySubscribed: true,
+        instagramUserId: candidateIds[0],
+      };
     }
+  }
 
-    const endpoint = `${oauthConfig.graphBaseUrl}/${instagramUserId}/subscribed_apps`;
-    const url = new URL(endpoint);
-    url.searchParams.set("access_token", options.accessToken);
-    url.searchParams.set("subscribed_fields", options.subscribedFields.join(","));
+  const url = new URL(endpoint);
+  url.searchParams.set("access_token", options.accessToken);
+  url.searchParams.set("subscribed_fields", options.subscribedFields.join(","));
 
-    console.info("[meta-oauth] webhook subscription request", {
+  console.info("[meta-oauth] webhook subscription request", {
+    flow: oauthConfig.flow,
+    endpoint,
+    subscriptionTarget,
+    candidateInstagramUserIds: candidateIds,
+    subscribedFields: options.subscribedFields,
+    requestStyle: "query-string",
+  });
+
+  let response = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+  });
+  let payload = await readMetaJson(response);
+
+  console.info("[meta-oauth] webhook subscription response", {
+    endpoint,
+    subscriptionTarget,
+    status: response.status,
+    ok: response.ok,
+    error: summarizeMetaError(payload),
+  });
+
+  if (!response.ok && isUnsupportedMethodMetaError(payload, "post")) {
+    const fallbackBody = new URLSearchParams();
+    fallbackBody.set("access_token", options.accessToken);
+    fallbackBody.set("subscribed_fields", options.subscribedFields.join(","));
+
+    console.info("[meta-oauth] webhook subscription fallback request", {
       flow: oauthConfig.flow,
       endpoint,
-      instagramUserId,
+      subscriptionTarget,
+      candidateInstagramUserIds: candidateIds,
       subscribedFields: options.subscribedFields,
-      requestStyle: "query-string",
+      requestStyle: "form-urlencoded",
     });
 
-    let response = await fetch(url, {
+    response = await fetch(endpoint, {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.accessToken}`,
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: fallbackBody,
       cache: "no-store",
     });
-    let payload = await readMetaJson(response);
+    payload = await readMetaJson(response);
 
-    console.info("[meta-oauth] webhook subscription response", {
+    console.info("[meta-oauth] webhook subscription fallback response", {
       endpoint,
-      instagramUserId,
+      subscriptionTarget,
       status: response.status,
       ok: response.ok,
       error: summarizeMetaError(payload),
     });
-
-    if (!response.ok && isUnsupportedMethodMetaError(payload, "post")) {
-      const fallbackBody = new URLSearchParams();
-      fallbackBody.set("access_token", options.accessToken);
-      fallbackBody.set("subscribed_fields", options.subscribedFields.join(","));
-
-      console.info("[meta-oauth] webhook subscription fallback request", {
-        flow: oauthConfig.flow,
-        endpoint,
-        instagramUserId,
-        subscribedFields: options.subscribedFields,
-        requestStyle: "form-urlencoded",
-      });
-
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${options.accessToken}`,
-          "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-        },
-        body: fallbackBody,
-        cache: "no-store",
-      });
-      payload = await readMetaJson(response);
-
-      console.info("[meta-oauth] webhook subscription fallback response", {
-        endpoint,
-        instagramUserId,
-        status: response.status,
-        ok: response.ok,
-        error: summarizeMetaError(payload),
-      });
-    }
-
-    if (response.ok) {
-      return {
-        ...(payload as { success?: boolean }),
-        alreadySubscribed: false,
-        instagramUserId,
-      };
-    }
-
-    lastPayload = payload;
   }
 
-  throw new Error(buildWebhookSubscriptionErrorMessage(lastPayload));
+  if (!response.ok) {
+    lastPayload = payload;
+    throw new Error(buildWebhookSubscriptionErrorMessage(lastPayload));
+  }
+
+  return {
+    ...(payload as { success?: boolean }),
+    alreadySubscribed: false,
+    instagramUserId: candidateIds[0],
+  };
 }
 
 export async function sendInstagramMessage(options: {
