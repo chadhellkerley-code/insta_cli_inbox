@@ -1,3 +1,5 @@
+import { createAdminClient } from "@/lib/supabase/admin";
+
 export const INSTAGRAM_FALLBACK_USERNAME_PREFIX = "ig_";
 
 type AccountUsernameRecord = {
@@ -77,20 +79,24 @@ export function resolveInstagramUsernameCandidateFromMessagingEvent(
 }
 
 export async function syncInstagramUsername(options: {
-  admin: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>;
+  admin: ReturnType<typeof createAdminClient>;
   account: AccountUsernameRecord;
   candidateUsername?: string | null;
   source: string;
 }) {
-  const currentUsername = normalizeInstagramUsername(options.account.username);
-  const nextUsername = normalizeInstagramUsername(options.candidateUsername);
+  const fallbackUsername = normalizeInstagramUsername(options.account.username);
+  const realUsername = normalizeInstagramUsername(options.candidateUsername);
 
-  if (!isFallbackInstagramUsername(currentUsername) || !isRealInstagramUsername(nextUsername)) {
+  if (!fallbackUsername || !realUsername) {
     return false;
   }
 
-  const fallbackUsername = currentUsername;
-  const realUsername = nextUsername;
+  if (
+    !isFallbackInstagramUsername(fallbackUsername) ||
+    !isRealInstagramUsername(realUsername)
+  ) {
+    return false;
+  }
 
   if (fallbackUsername === realUsername) {
     return false;
