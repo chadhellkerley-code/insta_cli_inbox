@@ -276,52 +276,64 @@ export async function fetchInstagramProfile(
 ) {
   const oauthConfig = getMetaOauthConfig();
   const normalizedInstagramUserId = normalizeMetaIdentifier(options?.instagramUserId);
-  const fieldSets = [
-    "id,user_id,username",
-    "user_id,username",
-    "id,username",
-  ] as const;
+  const endpointCandidates = [
+    normalizedInstagramUserId,
+    "me",
+  ].filter((candidate, index, values): candidate is string => Boolean(candidate) && values.indexOf(candidate) === index);
+  const fieldSets = ["id,username,user_id", "id,username", "username"] as const;
   let payload: unknown = null;
+  let resolvedEndpoint = "";
   let resolvedFields = "";
+  let lastAttemptedUrl = "";
 
-  for (const fields of fieldSets) {
-    const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
-    url.searchParams.set("fields", fields);
-    url.searchParams.set("access_token", accessToken);
+  for (const candidate of endpointCandidates) {
+    for (const fields of fieldSets) {
+      const url = new URL(`${oauthConfig.graphBaseUrl}/${candidate}`);
+      url.searchParams.set("fields", fields);
+      url.searchParams.set("access_token", accessToken);
+      lastAttemptedUrl = url.toString();
 
-    console.info("[meta-oauth] profile fetch request", {
-      flow: oauthConfig.flow,
-      endpoint: url.toString(),
-      candidate: "me",
-      fields,
-      authScheme: "query-string",
-    });
+      console.info("[meta-oauth] profile fetch request", {
+        flow: oauthConfig.flow,
+        endpoint: lastAttemptedUrl,
+        candidate,
+        fields,
+        authScheme: "query-string",
+      });
 
-    const response = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-    });
-    payload = await readMetaJson(response);
+      const response = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+      });
+      payload = await readMetaJson(response);
 
-    console.info("[meta-oauth] profile fetch response", {
-      endpoint: url.toString(),
-      candidate: "me",
-      fields,
-      status: response.status,
-      ok: response.ok,
-      error: summarizeMetaError(payload),
-    });
+      console.info("[meta-oauth] profile fetch response", {
+        endpoint: lastAttemptedUrl,
+        candidate,
+        fields,
+        status: response.status,
+        ok: response.ok,
+        error: summarizeMetaError(payload),
+      });
 
-    if (!response.ok) {
-      continue;
+      if (!response.ok) {
+        continue;
+      }
+
+      resolvedEndpoint = candidate;
+      resolvedFields = fields;
+      break;
     }
 
-    resolvedFields = fields;
-    break;
+    if (resolvedEndpoint) {
+      break;
+    }
   }
 
-  if (!resolvedFields) {
-    throw new Error(`Profile fetch failed: ${getMetaErrorMessage(payload)}`);
+  if (!resolvedEndpoint || !resolvedFields) {
+    throw new Error(
+      `Profile fetch failed: ${getMetaErrorMessage(payload)}. Endpoints intentados: ${endpointCandidates.join(", ")}. Ultimo request: ${lastAttemptedUrl}`,
+    );
   }
 
   const typedPayload = payload as MetaProfileResponse;

@@ -58,7 +58,7 @@ Si la URL en Meta y la URL en Vercel no son identicas byte por byte, Meta permit
 
 ## Meta Webhooks
 
-Ademas del OAuth, la app de Meta tiene que tener Webhooks configurado a nivel aplicacion. Sin eso, la conexion puede abrir el popup y hasta emitir token, pero fallar cuando el backend intenta activar `/{ig_user_id}/subscribed_apps`.
+Ademas del OAuth, la app de Meta tiene que tener Webhooks configurado a nivel aplicacion. La conexion de cuenta no hace una suscripcion adicional por cuenta: depende de esta configuracion global del objeto `Instagram`.
 
 Configuralo asi:
 
@@ -79,7 +79,5 @@ https://insta-cli-inbox.vercel.app/api/webhook/instagram
    - `messaging_postbacks`
    - `messaging_referral`
    - `messaging_optins`
-
-Si este paso falta, Meta suele rechazar la activacion por cuenta con errores poco claros, incluido `Unsupported request - method type: post` al intentar `POST /{ig_user_id}/subscribed_apps`.
 
 Si queres que Vercel no dependa de `Root Directory = web`, la solucion correcta no es un parche: hay que mover la app Next.js desde `web/` a la raiz del repo y dejar el backend Express como proyecto separado.
