@@ -10,16 +10,11 @@ export function getInstagramAccountStatusLabel(status: string | null | undefined
 
 export function getInstagramAccountStatusCopy(options: {
   lastWebhookAt?: string | null;
-  webhookSubscribedAt?: string | null;
   formatRelativeTime: (value: string | null | undefined) => string;
 }) {
   if (options.lastWebhookAt) {
     return `Webhook ${options.formatRelativeTime(options.lastWebhookAt)}`;
   }
 
-  if (options.webhookSubscribedAt) {
-    return `Webhook activado ${options.formatRelativeTime(options.webhookSubscribedAt)}.`;
-  }
-
-  return "Webhook activo, esperando el primer evento.";
+  return "Esperando el primer evento del webhook.";
 }

@@ -270,7 +270,6 @@ async function persistMessagingEvent(
     .from("instagram_accounts")
     .update({
       last_webhook_at: new Date().toISOString(),
-      webhook_subscription_error: null,
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", account.id);

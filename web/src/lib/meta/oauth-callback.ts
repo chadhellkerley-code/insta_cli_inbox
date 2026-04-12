@@ -3,14 +3,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   exchangeCodeForShortLivedToken,
   fetchInstagramProfile,
-  subscribeInstagramAppUserToWebhooks,
 } from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
   isProfessionalAccountType,
   META_LOGIN_SCOPES,
-  META_WEBHOOK_FIELDS,
   PROFESSIONAL_ACCOUNT_HELP_URL,
 } from "@/lib/meta/config";
 import {
@@ -207,22 +205,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
-    let profile:
-      | Awaited<ReturnType<typeof fetchInstagramProfile>>
-      | null = null;
-
-    try {
-      profile = await fetchInstagramProfile(managedToken.accessToken, {
-        instagramUserId: instagramAccountId,
-      });
-    } catch (profileError) {
-      console.warn("[meta-oauth] profile enrichment skipped", {
-        flow: oauthConfig.flow,
-        instagramAccountId,
-        profileError:
-          profileError instanceof Error ? profileError.message : String(profileError),
-      });
-    }
+    const profile = await fetchInstagramProfile(managedToken.accessToken, {
+      instagramUserId: instagramAccountId,
+    });
 
     console.info("[meta-oauth] profile resolved", {
       flow: oauthConfig.flow,
@@ -251,13 +236,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const resolvedInstagramAppUserId = profile?.appScopedUserId ?? instagramAccountId;
     const resolvedUsername =
       profile?.username ?? buildFallbackInstagramUsername(resolvedInstagramAccountId);
-    const webhookSubscriptionIds = [
-      resolvedInstagramAppUserId,
-      resolvedInstagramAccountId,
-    ].filter(
-      (candidate, index, values): candidate is string =>
-        Boolean(candidate) && values.indexOf(candidate) === index,
-    );
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -273,12 +251,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     if (existing && existing.owner_id !== oauthState.userId) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
-
-    await subscribeInstagramAppUserToWebhooks({
-      accessToken: managedToken.accessToken,
-      instagramUserIds: webhookSubscriptionIds,
-      subscribedFields: META_WEBHOOK_FIELDS,
-    });
 
     const upsertResult = await admin.from("instagram_accounts").upsert(
       {
@@ -296,8 +268,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         status: "connected",
         connected_at: nowIso,
         last_oauth_at: nowIso,
-        webhook_subscribed_at: nowIso,
-        webhook_subscription_error: null,
         scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
         updated_at: nowIso,
       } as never,
@@ -315,8 +285,8 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       {
         status: "success",
         message: profile?.username
-          ? `Conectamos @${profile.username} correctamente y el webhook de mensajes quedo activo.`
-          : "Conectamos la cuenta de Instagram correctamente y el webhook de mensajes quedo activo.",
+          ? `Conectamos @${profile.username} correctamente.`
+          : "Conectamos la cuenta de Instagram correctamente.",
         username: profile?.username ?? undefined,
       },
       { code },

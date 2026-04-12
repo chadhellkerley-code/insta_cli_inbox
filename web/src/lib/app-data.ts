@@ -96,8 +96,6 @@ export async function loadOwnedAccounts(
         "last_token_refresh_at",
         "connected_at",
         "last_oauth_at",
-        "webhook_subscribed_at",
-        "webhook_subscription_error",
         "last_webhook_at",
         "created_at",
         "updated_at",

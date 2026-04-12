@@ -21,8 +21,6 @@ export type InstagramAccountRecord = {
   last_token_refresh_at: string | null;
   connected_at: string | null;
   last_oauth_at: string | null;
-  webhook_subscribed_at: string | null;
-  webhook_subscription_error: string | null;
   last_webhook_at?: string | null;
   created_at: string | null;
   updated_at: string | null;

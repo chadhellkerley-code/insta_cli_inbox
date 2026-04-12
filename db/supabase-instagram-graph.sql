@@ -27,8 +27,6 @@ create table if not exists public.instagram_accounts (
   status text not null default 'connected',
   connected_at timestamptz not null default timezone('utc'::text, now()),
   last_oauth_at timestamptz,
-  webhook_subscribed_at timestamptz,
-  webhook_subscription_error text,
   last_webhook_at timestamptz,
   created_at timestamptz not null default timezone('utc'::text, now()),
   updated_at timestamptz not null default timezone('utc'::text, now())
@@ -42,12 +40,6 @@ alter table public.instagram_accounts
 
 alter table public.instagram_accounts
   add column if not exists last_oauth_at timestamptz;
-
-alter table public.instagram_accounts
-  add column if not exists webhook_subscribed_at timestamptz;
-
-alter table public.instagram_accounts
-  add column if not exists webhook_subscription_error text;
 
 create table if not exists public.instagram_conversations (
   id uuid primary key default gen_random_uuid(),
