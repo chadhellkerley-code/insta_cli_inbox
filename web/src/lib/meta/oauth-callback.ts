@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { exchangeCodeForShortLivedToken } from "@/lib/meta/client";
+import {
+  exchangeCodeForShortLivedToken,
+  fetchInstagramAccountProfile,
+} from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
@@ -202,7 +205,38 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
     const resolvedInstagramAccountId = instagramAccountId;
     const resolvedInstagramAppUserId = instagramAccountId;
-    const resolvedUsername = buildFallbackInstagramUsername(resolvedInstagramAccountId);
+    const fallbackUsername = buildFallbackInstagramUsername(resolvedInstagramAccountId);
+    let hydratedProfile: Awaited<ReturnType<typeof fetchInstagramAccountProfile>> | null = null;
+
+    try {
+      hydratedProfile = await fetchInstagramAccountProfile({
+        accessToken: managedToken.accessToken,
+        instagramAccountId: resolvedInstagramAccountId,
+      });
+
+      if (
+        hydratedProfile.userId &&
+        hydratedProfile.userId !== resolvedInstagramAccountId
+      ) {
+        console.warn("[meta-oauth] instagram profile hydration returned mismatched user id", {
+          flow: oauthConfig.flow,
+          route: requestUrl.pathname,
+          instagramAccountId: resolvedInstagramAccountId,
+          hydratedInstagramAccountId: hydratedProfile.userId,
+          codeFingerprint,
+        });
+      }
+    } catch (error) {
+      console.error("[meta-oauth] instagram profile hydration failed", {
+        flow: oauthConfig.flow,
+        route: requestUrl.pathname,
+        instagramAccountId: resolvedInstagramAccountId,
+        codeFingerprint,
+        externalErrorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const resolvedUsername = hydratedProfile?.username ?? fallbackUsername;
 
     const existingResult = await admin
       .from("instagram_accounts")
@@ -225,9 +259,9 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         instagram_account_id: resolvedInstagramAccountId,
         instagram_app_user_id: resolvedInstagramAppUserId,
         username: resolvedUsername,
-        name: null,
-        account_type: null,
-        profile_picture_url: null,
+        name: hydratedProfile?.name ?? null,
+        account_type: hydratedProfile?.accountType ?? null,
+        profile_picture_url: hydratedProfile?.profilePictureUrl ?? null,
         access_token: managedToken.accessToken,
         token_expires_at: managedToken.expiresAt,
         token_lifecycle: managedToken.lifecycle,
