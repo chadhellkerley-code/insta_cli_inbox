@@ -50,6 +50,7 @@ async function selectOwnedAccounts(
       [
         "id",
         "owner_id",
+        "page_id",
         "instagram_user_id",
         "instagram_account_id",
         "instagram_app_user_id",

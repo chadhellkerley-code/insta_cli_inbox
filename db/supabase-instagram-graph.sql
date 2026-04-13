@@ -13,6 +13,7 @@ $$;
 create table if not exists public.instagram_accounts (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
+  page_id text,
   instagram_user_id text,
   instagram_account_id text not null unique,
   instagram_app_user_id text,
@@ -35,6 +36,9 @@ create table if not exists public.instagram_accounts (
   created_at timestamptz not null default timezone('utc'::text, now()),
   updated_at timestamptz not null default timezone('utc'::text, now())
 );
+
+alter table public.instagram_accounts
+  add column if not exists page_id text;
 
 alter table public.instagram_accounts
   add column if not exists instagram_user_id text;

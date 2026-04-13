@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { exchangeCodeForShortLivedToken } from "@/lib/meta/client";
+import {
+  exchangeCodeForShortLivedToken,
+  getUserPages,
+  subscribePage,
+} from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
@@ -24,6 +28,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
+  page_id: string | null;
   instagram_app_user_id: string | null;
   username: string | null;
   name: string | null;
@@ -202,8 +207,25 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
+    const pages = await getUserPages(managedToken.accessToken);
+    const page = pages.find(
+      (candidate) => candidate.instagram_business_account?.id === instagramUserId,
+    );
+
+    if (!page) {
+      throw new Error("No page linked to IG account.");
+    }
+
+    await subscribePage({
+      pageId: page.id,
+      accessToken: managedToken.accessToken,
+      subscribedFields: ["messages", "messaging_postbacks"],
+    });
+
     console.info("[meta-oauth] username enrichment deferred", {
       instagramUserId,
+      pageId: page.id,
+      pageName: page.name,
       fallbackUsername: buildFallbackInstagramUsername(instagramUserId),
       tokenLifecycle: managedToken.lifecycle,
       reason: "callback-persists-token-only-and-defers-username-resolution",
@@ -212,7 +234,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const existingResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
+        "id, owner_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
       )
       .eq("instagram_account_id", instagramUserId)
       .maybeSingle();
@@ -236,6 +258,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       .upsert(
         {
           owner_id: oauthState.userId,
+          page_id: page.id,
           instagram_user_id: instagramUserId,
           instagram_account_id: resolvedInstagramAccountId,
           instagram_app_user_id: resolvedInstagramAppUserId,

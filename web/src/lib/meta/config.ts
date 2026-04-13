@@ -8,6 +8,8 @@ export const META_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
 export const META_SHORT_LIVED_TOKEN_URL =
   "https://api.instagram.com/oauth/access_token";
 export const META_GRAPH_BASE_URL = `https://graph.instagram.com/${META_API_VERSION}`;
+export const META_FACEBOOK_GRAPH_BASE_URL =
+  `https://graph.facebook.com/${META_API_VERSION}`;
 
 export type MetaCanonicalRedirectConfig = {
   redirectUri: string;
@@ -114,6 +116,7 @@ export function getMetaOauthConfig() {
     authorizeUrl: META_AUTHORIZE_URL,
     shortLivedTokenUrl: META_SHORT_LIVED_TOKEN_URL,
     graphBaseUrl: META_GRAPH_BASE_URL,
+    facebookGraphBaseUrl: META_FACEBOOK_GRAPH_BASE_URL,
     redirectUri: redirectConfig.redirectUri,
     callbackPath: redirectConfig.callbackPath,
     callbackOrigin: redirectConfig.origin,

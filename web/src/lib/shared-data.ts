@@ -9,6 +9,7 @@ export type UserProfile = {
 export type InstagramAccountRecord = {
   id: string;
   owner_id: string;
+  page_id: string | null;
   instagram_user_id: string | null;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
