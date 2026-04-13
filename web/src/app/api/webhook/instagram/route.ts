@@ -808,7 +808,8 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
 
-  for (const [entryIndex, entry] of entries.entries()) {
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex];
     const messagingEvents = normalizeEntryMessagingEvents(entry);
 
     logWebhook("info", "entry received", {
@@ -818,7 +819,8 @@ export async function POST(request: Request) {
       eventCount: messagingEvents.length,
     });
 
-    for (const [eventIndex, event] of messagingEvents.entries()) {
+    for (let eventIndex = 0; eventIndex < messagingEvents.length; eventIndex += 1) {
+      const event = messagingEvents[eventIndex];
       const entryId = normalizeInstagramIdentifier(entry.id ?? null);
       const senderId = normalizeInstagramIdentifier(event.sender?.id ?? null);
       const recipientId = normalizeInstagramIdentifier(event.recipient?.id ?? null);
