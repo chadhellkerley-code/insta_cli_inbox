@@ -734,10 +734,37 @@ export async function GET(request: Request) {
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
-  const { webhookVerifyToken } = getMetaServerEnv();
+  const requestUrl = new URL(request.url);
 
-  if (mode === "subscribe" && token === webhookVerifyToken && challenge) {
-    return new Response(challenge, { status: 200 });
+  logWebhook("info", "verification request received", {
+    method: request.method,
+    path: requestUrl.pathname,
+    mode,
+    hasVerifyToken: Boolean(token),
+    hasChallenge: Boolean(challenge),
+  });
+
+  try {
+    const { webhookVerifyToken } = getMetaServerEnv();
+    const verified =
+      mode === "subscribe" && token === webhookVerifyToken && Boolean(challenge);
+
+    logWebhook(verified ? "info" : "warn", "verification result", {
+      mode,
+      verified,
+      hasVerifyToken: Boolean(token),
+      hasChallenge: Boolean(challenge),
+    });
+
+    if (verified && challenge) {
+      return new Response(challenge, { status: 200 });
+    }
+  } catch (error) {
+    logWebhook("error", "verification failed", {
+      mode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Webhook verification failed." }, { status: 500 });
   }
 
   return NextResponse.json({ error: "Webhook verification failed." }, { status: 403 });
@@ -808,8 +835,7 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
 
-  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-    const entry = entries[entryIndex];
+  for (const [entryIndex, entry] of entries.entries()) {
     const messagingEvents = normalizeEntryMessagingEvents(entry);
 
     logWebhook("info", "entry received", {
@@ -819,8 +845,7 @@ export async function POST(request: Request) {
       eventCount: messagingEvents.length,
     });
 
-    for (let eventIndex = 0; eventIndex < messagingEvents.length; eventIndex += 1) {
-      const event = messagingEvents[eventIndex];
+    for (const [eventIndex, event] of messagingEvents.entries()) {
       const entryId = normalizeInstagramIdentifier(entry.id ?? null);
       const senderId = normalizeInstagramIdentifier(event.sender?.id ?? null);
       const recipientId = normalizeInstagramIdentifier(event.recipient?.id ?? null);
