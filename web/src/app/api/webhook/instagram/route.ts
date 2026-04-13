@@ -18,7 +18,7 @@ export const runtime = "nodejs";
 type MessagingEvent = {
   sender?: { id?: string; username?: string };
   recipient?: { id?: string; username?: string };
-  timestamp?: number;
+  timestamp?: number | string;
   message?: {
     mid?: string;
     text?: string;
@@ -113,6 +113,28 @@ function mapAttachmentType(type: string | undefined) {
     default:
       return "text";
   }
+}
+
+function resolveWebhookTimestampToIso(timestamp?: number | string) {
+  if (timestamp === undefined || timestamp === null || timestamp === "") {
+    return new Date().toISOString();
+  }
+
+  const numeric =
+    typeof timestamp === "string" ? Number(timestamp.trim()) : timestamp;
+
+  if (!Number.isFinite(numeric)) {
+    return new Date().toISOString();
+  }
+
+  const milliseconds = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toISOString();
+  }
+
+  return date.toISOString();
 }
 
 function getMessagePreview(text: string | null, messageType: string) {
@@ -669,9 +691,7 @@ async function persistMessagingEvent(
   const messageType = event.message.text?.trim()
     ? "text"
     : mapAttachmentType(attachment?.type);
-  const createdAt = event.timestamp
-    ? new Date(event.timestamp).toISOString()
-    : new Date().toISOString();
+  const createdAt = resolveWebhookTimestampToIso(event.timestamp);
   const preview = getMessagePreview(event.message.text ?? null, messageType);
   const conversationId = await upsertConversationForMessage(admin, {
     accountId: account.id,
