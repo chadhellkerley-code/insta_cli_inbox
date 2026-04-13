@@ -31,7 +31,19 @@ function logInstagramMessage(
   message: string,
   payload: Record<string, unknown>,
 ) {
-  console[level](`[instagram-messages] ${message}`, payload);
+  const formattedMessage = `[instagram-messages] ${message}`;
+
+  if (level === "error") {
+    console.error(formattedMessage, payload);
+    return;
+  }
+
+  if (level === "warn") {
+    console.warn(formattedMessage, payload);
+    return;
+  }
+
+  console.info(formattedMessage, payload);
 }
 
 export async function POST(request: Request) {
