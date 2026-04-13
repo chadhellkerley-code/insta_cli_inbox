@@ -26,7 +26,17 @@ export default async function CuentasPage({
   searchParams?: SearchParams;
 }) {
   const { supabase, user } = await requireUserContext();
+
+  console.log("[cuentas-page] current user", { userId: user.id });
+
   const accounts = await loadOwnedAccounts(supabase, user.id);
+
+  console.log("[cuentas-page] loaded accounts", {
+    userId: user.id,
+    count: accounts.length,
+    accounts,
+  });
+
   const error = readParam(searchParams?.error);
   const success = readParam(searchParams?.success);
   const helpUrl = readParam(searchParams?.helpUrl);

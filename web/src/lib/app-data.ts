@@ -40,44 +40,32 @@ function castRows<T>(value: unknown) {
   return value as T[];
 }
 
-async function selectOwnedAccounts(
+export async function selectOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
   const { data, error } = await supabase
     .from("instagram_accounts")
-    .select(
-      [
-        "id",
-        "owner_id",
-        "page_id",
-        "instagram_user_id",
-        "instagram_account_id",
-        "instagram_app_user_id",
-        "username",
-        "name",
-        "account_type",
-        "profile_picture_url",
-        "status",
-        "token_obtained_at",
-        "expires_in",
-        "expires_at",
-        "token_expires_at",
-        "token_lifecycle",
-        "last_token_refresh_at",
-        "connected_at",
-        "last_oauth_at",
-        "last_webhook_at",
-        "created_at",
-        "updated_at",
-      ].join(","),
-    )
+    .select("*")
     .eq("owner_id", userId)
-    .order("connected_at", { ascending: false });
+    .order("created_at", { ascending: false });
 
   if (error || !data) {
+    console.error("[selectOwnedAccounts] failed", {
+      userId,
+      error: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      code: error?.code,
+    });
     return [];
   }
+
+  console.log("[selectOwnedAccounts] raw rows", {
+    userId,
+    count: data.length,
+    rows: data,
+  });
 
   return castRows<InstagramAccountRecord>(data);
 }
@@ -124,6 +112,12 @@ export async function loadOwnedAccounts(
 ): Promise<InstagramAccountRecord[]> {
   const accounts = await selectOwnedAccounts(supabase, userId);
 
+  console.log("[loadOwnedAccounts] mapped accounts", {
+    userId,
+    count: accounts.length,
+    accounts,
+  });
+
   if (accounts.length === 0) {
     return accounts;
   }
@@ -138,7 +132,15 @@ export async function loadOwnedAccounts(
     return accounts;
   }
 
-  return selectOwnedAccounts(supabase, userId);
+  const refreshedAccounts = await selectOwnedAccounts(supabase, userId);
+
+  console.log("[loadOwnedAccounts] mapped accounts", {
+    userId,
+    count: refreshedAccounts.length,
+    accounts: refreshedAccounts,
+  });
+
+  return refreshedAccounts;
 }
 
 export async function loadConversations(
