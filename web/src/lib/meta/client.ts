@@ -34,26 +34,6 @@ type ShortLivedTokenResponse = {
   expires_in?: number;
 };
 
-type MetaPagePayload = {
-  id?: string | number;
-  name?: string;
-  instagram_business_account?: {
-    id?: string | number;
-  } | null;
-};
-
-type MetaPagesResponse = {
-  data?: MetaPagePayload[];
-};
-
-export type MetaUserPage = {
-  id: string;
-  name: string | null;
-  instagram_business_account: {
-    id: string;
-  } | null;
-};
-
 export type InstagramProfileEnrichmentDiagnostic = {
   status: "pending";
   instagramUserId: string;
@@ -217,85 +197,6 @@ export function buildInstagramProfileEnrichmentDiagnostic(options: {
     nextAction:
       `Run profile enrichment later with a supported endpoint for this token type. Current token lifecycle: ${options.tokenLifecycle ?? "unknown"}.`,
   };
-}
-
-export async function getUserPages(accessToken: string): Promise<MetaUserPage[]> {
-  const oauthConfig = getMetaOauthConfig();
-  const url = new URL(`${oauthConfig.facebookGraphBaseUrl}/me/accounts`);
-
-  url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("fields", "id,name,instagram_business_account");
-
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-  });
-  const payload = await readMetaJson(response);
-
-  assertMetaResponseOk(response, payload, "Get user pages failed");
-
-  const typedPayload = payload as MetaPagesResponse;
-
-  return (typedPayload.data ?? [])
-    .map((page) => {
-      const pageId = normalizeMetaIdentifier(page.id);
-
-      if (!pageId) {
-        return null;
-      }
-
-      const instagramBusinessAccountId = normalizeMetaIdentifier(
-        page.instagram_business_account?.id,
-      );
-
-      return {
-        id: pageId,
-        name: typeof page.name === "string" ? page.name : null,
-        instagram_business_account: instagramBusinessAccountId
-          ? {
-              id: instagramBusinessAccountId,
-            }
-          : null,
-      };
-    })
-    .filter((page): page is MetaUserPage => Boolean(page));
-}
-
-export async function subscribePage(options: {
-  pageId: string;
-  accessToken: string;
-  subscribedFields?: string[];
-}) {
-  const oauthConfig = getMetaOauthConfig();
-  const url = new URL(
-    `${oauthConfig.facebookGraphBaseUrl}/${options.pageId}/subscribed_apps`,
-  );
-  const subscribedFields = options.subscribedFields?.filter(Boolean) ?? [];
-  const body =
-    subscribedFields.length > 0
-      ? new URLSearchParams({
-          subscribed_fields: subscribedFields.join(","),
-        })
-      : null;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${options.accessToken}`,
-      ...(body
-        ? {
-            "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-          }
-        : {}),
-    },
-    body: body?.toString(),
-    cache: "no-store",
-  });
-  const payload = await readMetaJson(response);
-
-  assertMetaResponseOk(response, payload, "Subscribe page failed");
-
-  return payload;
 }
 
 export async function sendInstagramMessage(options: {
