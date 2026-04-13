@@ -1,3 +1,19 @@
+-- Required by the current Meta OAuth + Instagram webhook matching flow.
+-- Safe to run on an existing project that already has public.instagram_accounts.
+-- This migration is intentionally idempotent so it can be pasted into Supabase SQL Editor.
+
+create extension if not exists pgcrypto;
+
+create or replace function public.set_instagram_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = timezone('utc'::text, now());
+  return new;
+end;
+$$;
+
 create table if not exists public.instagram_account_identifiers (
   id uuid primary key default gen_random_uuid(),
   account_id uuid not null references public.instagram_accounts(id) on delete cascade,

@@ -37,6 +37,27 @@ La forma prolija de desplegar este repo en Vercel es:
    - `META_OAUTH_REDIRECT_URI`
    - `META_OAUTH_STATE_SECRET`
 
+## Supabase schema requerido
+
+El flujo productivo actual asume que existen estas dos tablas auxiliares:
+
+- `public.instagram_account_identifiers`
+- `public.instagram_webhook_events_debug`
+
+La conexion OAuth y el matching de webhooks dependen de `public.instagram_account_identifiers`. Si falta, la app ahora falla de forma explicita en el callback en vez de seguir con persistencia parcial.
+
+En un proyecto nuevo, corre el esquema completo:
+
+```sql
+-- db/supabase-instagram-graph.sql
+```
+
+En un proyecto existente que ya tiene `public.instagram_accounts` pero no tiene `public.instagram_account_identifiers`, corre exactamente esta migracion en Supabase SQL Editor:
+
+```sql
+-- db/migrations/20260412_add_instagram_webhook_identifier_debug_tables.sql
+```
+
 ## Meta OAuth
 
 El unico flujo OAuth soportado en la app productiva es `Instagram API with Instagram Login`.

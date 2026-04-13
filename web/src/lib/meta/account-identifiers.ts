@@ -9,6 +9,9 @@ type IdentifierInput = {
   identifierType: string;
 };
 
+export const REQUIRED_INSTAGRAM_IDENTIFIER_MIGRATION_PATH =
+  "db/migrations/20260412_add_instagram_webhook_identifier_debug_tables.sql";
+
 export function normalizeInstagramIdentifier(value: string | null | undefined) {
   if (typeof value !== "string") {
     return null;
@@ -56,6 +59,17 @@ export function dedupeInstagramIdentifiers(inputs: IdentifierInput[]) {
   return rows;
 }
 
+function buildIdentifierPersistenceErrorMessage(errorMessage: string) {
+  if (
+    errorMessage.includes("instagram_account_identifiers") &&
+    errorMessage.includes("schema cache")
+  ) {
+    return `Falta la tabla requerida public.instagram_account_identifiers. Ejecuta la migracion ${REQUIRED_INSTAGRAM_IDENTIFIER_MIGRATION_PATH} en Supabase y reintenta la conexion.`;
+  }
+
+  return `No pudimos persistir los identificadores requeridos de la cuenta de Instagram. ${errorMessage}`;
+}
+
 export async function persistInstagramAccountIdentifiers(options: {
   admin: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>;
   accountId: string;
@@ -73,11 +87,10 @@ export async function persistInstagramAccountIdentifiers(options: {
 
   const result = await options.admin.from("instagram_account_identifiers").upsert(rows as never, {
     onConflict: "identifier",
-    ignoreDuplicates: true,
   });
 
   if (result.error) {
-    console.warn("[instagram-account-identifiers] persistence skipped", {
+    console.error("[instagram-account-identifiers] persistence failed", {
       accountId: options.accountId,
       identifiers: rows.map((row) => ({
         identifier: row.identifier,
@@ -85,5 +98,7 @@ export async function persistInstagramAccountIdentifiers(options: {
       })),
       error: result.error.message,
     });
+
+    throw new Error(buildIdentifierPersistenceErrorMessage(result.error.message));
   }
 }
