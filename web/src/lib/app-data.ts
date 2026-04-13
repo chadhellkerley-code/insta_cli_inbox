@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { syncInstagramUsernamesFromStoredRuntimeMetadata } from "@/lib/meta/instagram-username";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 export type {
   ConversationRecord,
@@ -36,6 +38,47 @@ function castRow<T>(value: unknown) {
 
 function castRows<T>(value: unknown) {
   return value as T[];
+}
+
+async function selectOwnedAccounts(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<InstagramAccountRecord[]> {
+  const { data, error } = await supabase
+    .from("instagram_accounts")
+    .select(
+      [
+        "id",
+        "owner_id",
+        "instagram_user_id",
+        "instagram_account_id",
+        "instagram_app_user_id",
+        "username",
+        "name",
+        "account_type",
+        "profile_picture_url",
+        "status",
+        "token_obtained_at",
+        "expires_in",
+        "expires_at",
+        "token_expires_at",
+        "token_lifecycle",
+        "last_token_refresh_at",
+        "connected_at",
+        "last_oauth_at",
+        "last_webhook_at",
+        "created_at",
+        "updated_at",
+      ].join(","),
+    )
+    .eq("owner_id", userId)
+    .order("connected_at", { ascending: false });
+
+  if (error || !data) {
+    return [];
+  }
+
+  return castRows<InstagramAccountRecord>(data);
 }
 
 export async function requireUserContext() {
@@ -78,41 +121,23 @@ export async function loadOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
-  const { data, error } = await supabase
-    .from("instagram_accounts")
-    .select(
-      [
-        "id",
-        "owner_id",
-        "instagram_user_id",
-        "instagram_account_id",
-        "instagram_app_user_id",
-        "username",
-        "name",
-        "account_type",
-        "profile_picture_url",
-        "status",
-        "token_obtained_at",
-        "expires_in",
-        "expires_at",
-        "token_expires_at",
-        "token_lifecycle",
-        "last_token_refresh_at",
-        "connected_at",
-        "last_oauth_at",
-        "last_webhook_at",
-        "created_at",
-        "updated_at",
-      ].join(","),
-    )
-    .eq("owner_id", userId)
-    .order("connected_at", { ascending: false });
+  const accounts = await selectOwnedAccounts(supabase, userId);
 
-  if (error || !data) {
-    return [];
+  if (accounts.length === 0) {
+    return accounts;
   }
 
-  return castRows<InstagramAccountRecord>(data);
+  const updatedAccounts = await syncInstagramUsernamesFromStoredRuntimeMetadata({
+    admin: createAdminClient(),
+    ownerId: userId,
+    accounts,
+  });
+
+  if (updatedAccounts === 0) {
+    return accounts;
+  }
+
+  return selectOwnedAccounts(supabase, userId);
 }
 
 export async function loadConversations(
