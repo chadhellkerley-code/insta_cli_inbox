@@ -91,14 +91,16 @@ export async function selectOwnedAccounts(
     return [];
   }
 
+  const rows = castRows<InstagramAccountRecord>(data);
+
   console.log("[selectOwnedAccounts] raw rows", {
     userId,
     projectHost: getSupabaseProjectHost(),
-    count: data.length,
-    rows: data,
+    count: rows.length,
+    rows,
   });
 
-  return castRows<InstagramAccountRecord>(data);
+  return rows;
 }
 
 async function selectOwnedAccountsWithAdmin(
@@ -123,15 +125,17 @@ async function selectOwnedAccountsWithAdmin(
     return [];
   }
 
+  const rows = castRows<InstagramAccountRecord>(data);
+
   console.log("[selectOwnedAccountsWithAdmin] raw rows", {
     userId,
     projectHost: getSupabaseProjectHost(),
-    count: data.length,
-    ownerIds: data.map((account) => account.owner_id),
-    rows: data,
+    count: rows.length,
+    ownerIds: rows.map((account) => account.owner_id),
+    rows,
   });
 
-  return castRows<InstagramAccountRecord>(data);
+  return rows;
 }
 
 export async function requireUserContext() {
