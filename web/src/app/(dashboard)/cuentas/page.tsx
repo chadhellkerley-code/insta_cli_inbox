@@ -41,23 +41,13 @@ export default async function CuentasPage({
   const success = readParam(searchParams?.success);
   const helpUrl = readParam(searchParams?.helpUrl);
 
-  const recentlyActiveAccounts = accounts.filter((account) => {
-    if (!account.last_webhook_at) {
-      return false;
-    }
-
-    return Date.now() - new Date(account.last_webhook_at).getTime() < 24 * 60 * 60 * 1000;
-  }).length;
-
   return (
-    <div className="page-stack">
+    <div className="page-stack accounts-page">
       <section className="page-header">
         <div>
-          <span className="eyebrow">Cuentas</span>
-          <h1>Conecta Instagram con Instagram Login oficial</h1>
+          <h1>CONECTAR CUENTAS DE INSTAGRAM</h1>
           <p className="page-copy">
-            Cada cuenta se conecta con el consentimiento oficial en instagram.com y
-            solo queda guardada cuando OAuth y el token devuelto por Meta terminan bien.
+            Cada cuenta se conecta con el consentimiento oficial en instagram.com
           </p>
         </div>
         <MetaConnectButton />
@@ -75,63 +65,6 @@ export default async function CuentasPage({
           </p>
         </div>
       ) : null}
-
-      <section className="card-grid">
-        <article className="metric-card">
-          <span>Cuentas conectadas</span>
-          <strong>{accounts.length}</strong>
-          <p>Con OAuth guardado y visibles desde el CRM.</p>
-        </article>
-        <article className="metric-card">
-          <span>Webhook reciente</span>
-          <strong>{recentlyActiveAccounts}</strong>
-          <p>Cuentas con eventos recibidos en las ultimas 24 horas.</p>
-        </article>
-        <article className="metric-card">
-          <span>Tipo soportado</span>
-          <strong>Professional</strong>
-          <p>Solo Business y Creator pueden usar Instagram Graph API.</p>
-        </article>
-      </section>
-
-      <section className="split-grid">
-        <article className="list-card">
-          <span className="eyebrow">Conexion</span>
-          <h2>Como funciona</h2>
-          <div className="stack-list">
-            <div className="list-row">
-              <div>
-                <strong>1. Redireccion a Instagram</strong>
-                <p>Instagram muestra el consentimiento oficial y devuelve el codigo al callback del CRM.</p>
-              </div>
-            </div>
-            <div className="list-row">
-              <div>
-                <strong>2. Validacion completa</strong>
-                <p>El backend intercambia el code, valida el token, guarda la cuenta y enriquece el perfil de Instagram.</p>
-              </div>
-            </div>
-            <div className="list-row">
-              <div>
-                <strong>3. Prueba operativa</strong>
-                <p>Despues de OAuth la cuenta queda conectada en el CRM. Solo pasa a lista para inbox cuando entra el primer webhook real o confirmamos una operacion real de mensajeria.</p>
-              </div>
-            </div>
-          </div>
-        </article>
-
-        <article className="list-card">
-          <span className="eyebrow">Requisito</span>
-          <h2>Cuenta Professional</h2>
-          <p className="page-copy">
-            Si la cuenta conectada no es Business o Creator, el flujo mostrara el error
-            y un enlace directo con las instrucciones oficiales para cambiar el tipo de cuenta.
-          </p>
-          <p className="page-copy">
-            Una vez convertida, basta con repetir la conexion desde este panel para agregarla o reconectarla.
-          </p>
-        </article>
-      </section>
 
       <section className="list-card">
         <span className="eyebrow">Tus cuentas</span>

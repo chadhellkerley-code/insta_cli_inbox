@@ -270,6 +270,65 @@ main {
   padding: 28px;
 }
 
+.accounts-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  gap: 20px;
+}
+
+.accounts-page .page-header {
+  gap: 20px;
+  align-items: center;
+}
+
+.accounts-page .page-header h1 {
+  font-size: clamp(1.9rem, 3.1vw, 2.75rem);
+  line-height: 0.98;
+}
+
+.accounts-page .page-copy {
+  max-width: 52ch;
+  margin-top: 10px;
+  font-size: 0.98rem;
+}
+
+.accounts-page .list-card {
+  padding: 20px;
+}
+
+.accounts-page .stack-list {
+  margin-top: 16px;
+  gap: 10px;
+}
+
+.accounts-page .account-row {
+  gap: 14px;
+  padding: 14px 0;
+}
+
+.accounts-page .account-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+}
+
+.accounts-page .account-copy strong,
+.accounts-page .list-card h2 {
+  font-size: 1.05rem;
+}
+
+.accounts-page .account-copy p,
+.accounts-page .account-meta,
+.accounts-page .status-copy,
+.accounts-page .pill {
+  font-size: 0.9rem;
+}
+
+.accounts-page .button {
+  min-height: 44px;
+  padding: 0 16px;
+}
+
 .card-grid {
   display: grid;
   gap: 16px;
@@ -923,5 +982,22 @@ code {
 
   .message-bubble {
     max-width: 100%;
+  }
+
+  .accounts-page {
+    width: 100%;
+    gap: 18px;
+  }
+
+  .accounts-page .page-header {
+    align-items: flex-start;
+  }
+
+  .accounts-page .page-header h1 {
+    font-size: clamp(1.7rem, 9vw, 2.15rem);
+  }
+
+  .accounts-page .list-card {
+    padding: 18px;
   }
 }
