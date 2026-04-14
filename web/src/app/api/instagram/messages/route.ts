@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { sendInstagramMessage } from "@/lib/meta/client";
+import { persistInstagramAccountIdentifiers } from "@/lib/meta/account-identifiers";
+import {
+  fetchInstagramLoginAccountIdentity,
+  sendInstagramMessage,
+} from "@/lib/meta/client";
 import {
   INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
   INSTAGRAM_MESSAGING_STATUS_READY,
@@ -25,10 +29,23 @@ type ConversationLookup = {
 
 type AccountLookup = {
   id: string;
+  instagram_user_id: string | null;
   instagram_account_id: string;
+  instagram_app_user_id: string | null;
+  username: string | null;
+  account_type: string | null;
   access_token: string;
   token_expires_at: string | null;
 };
+
+function normalizeOptionalString(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
+}
 
 function logInstagramMessage(
   level: "info" | "warn" | "error",
@@ -150,7 +167,9 @@ export async function POST(request: Request) {
 
     const accountResult = await admin
       .from("instagram_accounts")
-      .select("id, instagram_account_id, access_token, token_expires_at")
+      .select(
+        "id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at",
+      )
       .eq("id", conversation.account_id)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
@@ -172,10 +191,86 @@ export async function POST(request: Request) {
       accessToken: account.access_token,
       expiresAt: account.token_expires_at,
     });
+    const remoteIdentity = await fetchInstagramLoginAccountIdentity({
+      accessToken: managedToken.accessToken,
+    }).catch((error) => {
+      logInstagramMessage("warn", "account identity fetch skipped", {
+        userId: user.id,
+        conversationId: conversation.id,
+        accountId: account.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return null;
+    });
+    const resolvedInstagramAccountId =
+      remoteIdentity?.instagramAccountId ?? account.instagram_account_id;
+    const resolvedInstagramAppUserId =
+      remoteIdentity?.appScopedUserId ??
+      account.instagram_app_user_id ??
+      account.instagram_user_id;
+    const resolvedUsername =
+      normalizeOptionalString(remoteIdentity?.username) ?? account.username;
+    const resolvedAccountType =
+      normalizeOptionalString(remoteIdentity?.accountType) ?? account.account_type;
+
+    if (
+      resolvedInstagramAccountId !== account.instagram_account_id ||
+      resolvedInstagramAppUserId !== account.instagram_app_user_id ||
+      resolvedUsername !== account.username ||
+      resolvedAccountType !== account.account_type
+    ) {
+      const accountUpdate = await admin
+        .from("instagram_accounts")
+        .update({
+          instagram_account_id: resolvedInstagramAccountId,
+          instagram_app_user_id: resolvedInstagramAppUserId,
+          username: resolvedUsername ?? account.username,
+          account_type: resolvedAccountType,
+          updated_at: nowIso,
+        } as never)
+        .eq("id", account.id);
+
+      if (accountUpdate.error) {
+        throw new Error(accountUpdate.error.message);
+      }
+
+      await persistInstagramAccountIdentifiers({
+        admin,
+        accountId: account.id,
+        identifiers: [
+          {
+            identifier: account.instagram_user_id,
+            identifierType: "instagram_user_id",
+          },
+          {
+            identifier: resolvedInstagramAccountId,
+            identifierType: "instagram_account_id",
+          },
+          {
+            identifier: resolvedInstagramAppUserId,
+            identifierType: "instagram_app_user_id",
+          },
+        ],
+      });
+
+      account.instagram_account_id = resolvedInstagramAccountId;
+      account.instagram_app_user_id = resolvedInstagramAppUserId;
+      account.username = resolvedUsername;
+      account.account_type = resolvedAccountType;
+
+      logInstagramMessage("info", "account identifiers reconciled", {
+        userId: user.id,
+        conversationId: conversation.id,
+        accountId: account.id,
+        instagramAccountId: resolvedInstagramAccountId,
+        instagramAppUserId: resolvedInstagramAppUserId,
+      });
+    }
 
     const metaResponse = await sendInstagramMessage({
       accessToken: managedToken.accessToken,
-      instagramAccountId: account.instagram_account_id,
+      instagramAccountId: resolvedInstagramAccountId,
       recipientId: conversation.contact_igsid,
       text,
       messageType: messageType === "audio" ? "audio" : undefined,
@@ -202,7 +297,7 @@ export async function POST(request: Request) {
       message_type: messageType,
       text_content: text ?? null,
       media_url: mediaUrl ?? null,
-      sender_igsid: account.instagram_account_id,
+      sender_igsid: resolvedInstagramAppUserId ?? resolvedInstagramAccountId,
       recipient_igsid: conversation.contact_igsid,
       raw_payload: metaResponse,
       sent_at: createdAt,

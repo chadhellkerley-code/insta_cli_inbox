@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { exchangeCodeForShortLivedToken } from "@/lib/meta/client";
+import {
+  exchangeCodeForShortLivedToken,
+  fetchInstagramLoginAccountIdentity,
+} from "@/lib/meta/client";
 import {
   getMetaCanonicalRedirectConfig,
   getMetaOauthConfig,
@@ -32,6 +35,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
+  instagram_user_id: string | null;
+  instagram_account_id: string;
   page_id: string | null;
   instagram_app_user_id: string | null;
   username: string | null;
@@ -39,6 +44,41 @@ type ExistingAccountLookup = {
   account_type: string | null;
   profile_picture_url: string | null;
 };
+
+function pickExistingInstagramAccount(
+  accounts: ExistingAccountLookup[],
+  options: {
+    instagramAccountId: string;
+    instagramUserId: string;
+    instagramAppUserId: string | null;
+  },
+) {
+  const exactAccountIdMatch = accounts.find(
+    (account) => account.instagram_account_id === options.instagramAccountId,
+  );
+
+  if (exactAccountIdMatch) {
+    return exactAccountIdMatch;
+  }
+
+  const exactUserIdMatch = accounts.find(
+    (account) => account.instagram_user_id === options.instagramUserId,
+  );
+
+  if (exactUserIdMatch) {
+    return exactUserIdMatch;
+  }
+
+  if (!options.instagramAppUserId) {
+    return null;
+  }
+
+  return (
+    accounts.find(
+      (account) => account.instagram_app_user_id === options.instagramAppUserId,
+    ) ?? null
+  );
+}
 
 export function buildMetaOauthCompletionUrl(
   origin: string,
@@ -205,20 +245,43 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       redirectUriComparison,
     });
     const managedToken = await resolveInitialInstagramToken(shortLivedToken);
-    const instagramUserId = shortLivedToken.user_id ?? null;
+    const tokenExchangeUserId = shortLivedToken.user_id ?? null;
+    const remoteIdentity = await fetchInstagramLoginAccountIdentity({
+      accessToken: managedToken.accessToken,
+    }).catch((error) => {
+      console.warn("[meta-oauth] instagram login identity fetch skipped", {
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-    if (!instagramUserId) {
+      return null;
+    });
+    const instagramUserId = tokenExchangeUserId ?? remoteIdentity?.appScopedUserId ?? null;
+    const resolvedInstagramAccountId =
+      remoteIdentity?.instagramAccountId ?? tokenExchangeUserId;
+
+    if (!instagramUserId || !resolvedInstagramAccountId) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
+    const lookupFilters = [
+      `instagram_account_id.eq.${resolvedInstagramAccountId}`,
+      `instagram_user_id.eq.${instagramUserId}`,
+      remoteIdentity?.appScopedUserId
+        ? `instagram_app_user_id.eq.${remoteIdentity.appScopedUserId}`
+        : null,
+    ].filter(Boolean) as string[];
     const existingResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
+        "id, owner_id, instagram_user_id, instagram_account_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
       )
-      .eq("instagram_account_id", instagramUserId)
-      .maybeSingle();
-    const existing = existingResult.data as ExistingAccountLookup | null;
+      .or(lookupFilters.join(","));
+    const existingAccounts = (existingResult.data as ExistingAccountLookup[] | null) ?? [];
+    const existing = pickExistingInstagramAccount(existingAccounts, {
+      instagramAccountId: resolvedInstagramAccountId,
+      instagramUserId,
+      instagramAppUserId: remoteIdentity?.appScopedUserId ?? null,
+    });
 
     if (existingResult.error) {
       throw new Error(existingResult.error.message);
@@ -228,51 +291,61 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Esta cuenta de Instagram ya esta conectada a otro usuario del CRM.");
     }
 
-    const resolvedInstagramAccountId = instagramUserId;
-    const resolvedInstagramAppUserId = existing?.instagram_app_user_id ?? null;
+    const resolvedInstagramAppUserId =
+      remoteIdentity?.appScopedUserId ?? existing?.instagram_app_user_id ?? null;
     const existingUsername = existing?.username?.trim() ?? null;
     const resolvedUsername =
-      existingUsername && !isFallbackInstagramUsername(existingUsername)
+      remoteIdentity?.username?.trim() ||
+      (existingUsername && !isFallbackInstagramUsername(existingUsername)
         ? existingUsername
-        : buildFallbackInstagramUsername(instagramUserId);
+        : buildFallbackInstagramUsername(resolvedInstagramAccountId));
 
-    const upsertResult = await admin
-      .from("instagram_accounts")
-      .upsert(
-        {
-          owner_id: oauthState.userId,
-          instagram_user_id: instagramUserId,
-          instagram_account_id: resolvedInstagramAccountId,
-          instagram_app_user_id: resolvedInstagramAppUserId,
-          page_id: existing?.page_id ?? null,
-          username: resolvedUsername,
-          name: existing?.name ?? null,
-          account_type: existing?.account_type ?? null,
-          profile_picture_url: existing?.profile_picture_url ?? null,
-          access_token: managedToken.accessToken,
-          token_obtained_at: managedToken.obtainedAt,
-          expires_in: managedToken.expiresIn,
-          expires_at: managedToken.expiresAt,
-          token_expires_at: managedToken.expiresAt,
-          token_lifecycle: managedToken.lifecycle,
-          last_token_refresh_at: managedToken.obtainedAt,
-          status: "oauth_connected",
-          webhook_subscribed_at: null,
-          webhook_status: "pending",
-          messaging_status: "pending",
-          last_webhook_check_at: null,
-          webhook_subscription_error: null,
-          connected_at: managedToken.obtainedAt,
-          last_oauth_at: managedToken.obtainedAt,
-          scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
-          updated_at: managedToken.obtainedAt,
-        } as never,
-        {
-          onConflict: "instagram_account_id",
-        },
-      )
-      .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
-      .maybeSingle();
+    const mutation = {
+      owner_id: oauthState.userId,
+      instagram_user_id: instagramUserId,
+      instagram_account_id: resolvedInstagramAccountId,
+      instagram_app_user_id: resolvedInstagramAppUserId,
+      page_id: existing?.page_id ?? null,
+      username: resolvedUsername,
+      name: existing?.name ?? null,
+      account_type:
+        remoteIdentity?.accountType?.trim() || existing?.account_type || null,
+      profile_picture_url: existing?.profile_picture_url ?? null,
+      access_token: managedToken.accessToken,
+      token_obtained_at: managedToken.obtainedAt,
+      expires_in: managedToken.expiresIn,
+      expires_at: managedToken.expiresAt,
+      token_expires_at: managedToken.expiresAt,
+      token_lifecycle: managedToken.lifecycle,
+      last_token_refresh_at: managedToken.obtainedAt,
+      status: "oauth_connected",
+      webhook_subscribed_at: null,
+      webhook_status: "pending",
+      messaging_status: "pending",
+      last_webhook_check_at: null,
+      webhook_subscription_error: null,
+      last_oauth_at: managedToken.obtainedAt,
+      scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
+      updated_at: managedToken.obtainedAt,
+    };
+    const updateMutation = mutation;
+    const insertMutation = {
+      ...mutation,
+      connected_at: managedToken.obtainedAt,
+    };
+
+    const upsertResult = existing
+      ? await admin
+          .from("instagram_accounts")
+          .update(updateMutation as never)
+          .eq("id", existing.id)
+          .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
+          .maybeSingle()
+      : await admin
+          .from("instagram_accounts")
+          .insert(insertMutation as never)
+          .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
+          .maybeSingle();
     const upsertedAccount = upsertResult.data as {
       id: string;
       owner_id: string;

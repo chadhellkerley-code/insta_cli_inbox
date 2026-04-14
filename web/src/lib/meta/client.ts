@@ -29,7 +29,9 @@ type RawShortLivedTokenResponse = ShortLivedTokenPayload & {
 
 type InstagramProfilePayload = {
   id?: string | number;
+  user_id?: string | number;
   username?: string;
+  account_type?: string;
   name?: string;
   profile_picture_url?: string;
   profile_pic?: string;
@@ -268,6 +270,30 @@ export async function fetchInstagramAccountProfile(options: { accessToken: strin
     username: normalizeOptionalString(payload?.username),
     name: normalizeOptionalString(payload?.name),
     profilePictureUrl: normalizeOptionalString(payload?.profile_picture_url),
+  };
+}
+
+export async function fetchInstagramLoginAccountIdentity(options: {
+  accessToken: string;
+}) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
+  url.searchParams.set("fields", "id,user_id,username,account_type");
+  url.searchParams.set("access_token", options.accessToken);
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as InstagramProfilePayload | null;
+
+  assertMetaResponseOk(response, payload, "Instagram login identity fetch failed");
+
+  return {
+    appScopedUserId: normalizeMetaIdentifier(payload?.id),
+    instagramAccountId: normalizeMetaIdentifier(payload?.user_id),
+    username: normalizeOptionalString(payload?.username),
+    accountType: normalizeOptionalString(payload?.account_type),
   };
 }
 
