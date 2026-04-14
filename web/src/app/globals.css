@@ -685,14 +685,45 @@ main {
 }
 
 .automation-page {
-  width: min(1180px, 100%);
+  width: min(1280px, 100%);
   margin: 0 auto;
+}
+
+.automation-blueprint {
+  gap: 22px;
+}
+
+.automation-page-header {
+  align-items: flex-end;
+}
+
+.automation-page-header .page-copy {
+  margin-top: 8px;
+  max-width: 58ch;
 }
 
 .automation-toolbar {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.automation-workspace {
+  position: relative;
+  overflow: hidden;
+  padding: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(124, 58, 237, 0.14), transparent 22%),
+    linear-gradient(180deg, rgba(15, 16, 24, 0.98), rgba(10, 11, 18, 0.98));
+}
+
+.automation-workspace-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 18px;
 }
 
 .automation-intro,
@@ -708,10 +739,19 @@ main {
 }
 
 .automation-intro {
-  padding: 18px;
+  flex: 1;
+  min-width: 0;
+  padding: 18px 20px;
   display: flex;
   gap: 14px;
   align-items: flex-start;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.automation-intro strong {
+  display: block;
+  font-size: 1.02rem;
+  letter-spacing: -0.03em;
 }
 
 .automation-intro p {
@@ -720,22 +760,126 @@ main {
   line-height: 1.55;
 }
 
-.agent-grid {
+.automation-stats {
   display: grid;
+  grid-auto-flow: column;
+  gap: 12px;
+}
+
+.automation-stat {
+  min-width: 120px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.automation-stat strong {
+  font-size: 1.9rem;
+  line-height: 1;
+  letter-spacing: -0.08em;
+}
+
+.automation-stat span {
+  color: var(--muted);
+}
+
+.automation-workspace .feedback {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.automation-empty-canvas {
+  min-height: 470px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
   gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  padding: 48px 24px;
+  border-radius: 30px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top, rgba(124, 58, 237, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(15, 16, 24, 0.9), rgba(10, 11, 18, 0.96));
+  text-align: center;
+}
+
+.automation-empty-icon {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  border: 1px solid rgba(124, 58, 237, 0.28);
+  background: rgba(124, 58, 237, 0.14);
+  color: #d8b4fe;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+}
+
+.automation-empty-canvas h2,
+.automation-pane-header h2,
+.automation-editor-empty h2 {
+  font-size: clamp(1.8rem, 2vw, 2.25rem);
+  letter-spacing: -0.05em;
+}
+
+.automation-empty-canvas p,
+.automation-pane-header p,
+.automation-editor-empty p {
+  max-width: 44ch;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.automation-workspace-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  min-height: 620px;
+}
+
+.automation-agents-pane {
+  min-height: 100%;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-radius: 28px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.automation-pane-header h2 {
+  font-size: 1.5rem;
+}
+
+.agent-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .agent-card {
   padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  background: rgba(13, 14, 22, 0.88);
 }
 
 .agent-card.selected {
   border-color: rgba(124, 58, 237, 0.42);
-  background: linear-gradient(145deg, rgba(124, 58, 237, 0.16), rgba(16, 17, 24, 0.92));
+  background: linear-gradient(145deg, rgba(124, 58, 237, 0.18), rgba(16, 17, 24, 0.96));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
 }
 
 .agent-card-top,
@@ -798,6 +942,15 @@ main {
   flex-wrap: wrap;
 }
 
+.agent-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-card-actions > * {
+  width: 100%;
+}
+
 .agent-toggle {
   display: inline-flex;
   align-items: center;
@@ -822,10 +975,36 @@ main {
 }
 
 .automation-flow-shell {
-  padding: 18px;
+  min-height: 100%;
+  padding: 22px;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(13, 14, 22, 0.92), rgba(10, 11, 18, 0.98));
+}
+
+.automation-flow-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.automation-editor-empty {
+  min-height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 24px;
+  border-radius: 24px;
+  border: 1px dashed var(--line-strong);
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
 }
 
 .stage-stack,
@@ -840,6 +1019,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .stage-card-top > div,
@@ -856,6 +1036,7 @@ main {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .audio-builder,
@@ -1245,11 +1426,33 @@ code {
     text-align: left;
   }
 
+  .automation-page-header,
+  .automation-workspace-top,
+  .automation-flow-header {
+    flex-direction: column;
+  }
+
+  .automation-workspace-body {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .automation-stats {
+    width: 100%;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .automation-toolbar,
-  .agent-card-actions,
   .stage-footer-actions,
   .audio-builder-actions {
     width: 100%;
+  }
+
+  .automation-flow-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .stage-followup-grid,
@@ -1301,13 +1504,28 @@ code {
     padding: 18px;
   }
 
+  .automation-workspace {
+    padding: 16px;
+  }
+
   .automation-modal-backdrop {
     align-items: flex-end;
     padding: 12px;
   }
 
+  .automation-empty-canvas {
+    min-height: 360px;
+    padding: 32px 18px;
+  }
+
+  .automation-stats,
+  .agent-card-actions {
+    grid-template-columns: 1fr;
+  }
+
   .automation-modal,
   .automation-flow-shell,
+  .automation-agents-pane,
   .automation-intro,
   .stage-card,
   .agent-card {

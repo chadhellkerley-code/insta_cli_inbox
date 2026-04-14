@@ -109,6 +109,7 @@ export function AutomationAgentsManager({
 
   const selectedAgent =
     agents.find((agent) => agent.id === selectedAgentId) ?? null;
+  const activeAgentsCount = agents.filter((agent) => agent.isActive).length;
 
   useEffect(() => {
     setLocalAiConfig(readLocalAiConfig());
@@ -546,8 +547,8 @@ export function AutomationAgentsManager({
   }
 
   return (
-    <div className="automation-page page-stack">
-      <section className="page-header">
+    <div className="automation-page automation-blueprint page-stack">
+      <section className="page-header automation-page-header">
         <div>
           <span className="eyebrow">Automatizaciones</span>
           <h1>Automatizaciones en respuestas y followup</h1>
@@ -567,430 +568,489 @@ export function AutomationAgentsManager({
         </div>
       </section>
 
-      <section className="automation-intro surface">
-        <div>
-          <strong>Un solo agente activo a la vez</strong>
-          <p>
-            Puedes crear todos los agentes que quieras, pero el backend solo deja uno
-            activo para evitar cruces, duplicados y mensajes fuera de flujo.
-          </p>
-        </div>
-      </section>
-
-      {feedback ? (
-        <div className={`feedback ${feedbackTone}`}>{feedback}</div>
-      ) : null}
-
-      <section className="agent-grid">
-        {agents.map((agent) => (
-          <article
-            key={agent.id}
-            className={selectedAgentId === agent.id ? "agent-card selected" : "agent-card"}
-          >
-            <div className="agent-card-top">
-              <div>
-                <h2>{agent.name || DEFAULT_AGENT_NAME}</h2>
-                <p>{getAgentCardSummary(agent)}</p>
-              </div>
-              <span className={agent.isActive ? "agent-status active" : "agent-status inactive"}>
-                {getAgentStatusLabel(agent)}
-              </span>
-            </div>
-
-            <p className="agent-card-copy">
-              {agent.personality || "Sin personalidad definida todavia."}
-            </p>
-
-            <div className="agent-card-actions">
-              <button
-                type="button"
-                className={agent.isActive ? "agent-toggle active" : "agent-toggle inactive"}
-                onClick={() => toggleAgent(agent)}
-              >
-                {agent.isActive ? "Desactivar" : "Activar"}
-              </button>
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => openEditModal(agent)}
-              >
-                Editar
-              </button>
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setSelectedAgentId(agent.id)}
-              >
-                Flujo
-              </button>
-              <button
-                type="button"
-                className="button button-danger"
-                onClick={() => removeAgent(agent)}
-                disabled={deletingAgentId === agent.id}
-              >
-                {deletingAgentId === agent.id ? "Eliminando..." : "Eliminar"}
-              </button>
+      <section className="automation-workspace surface">
+        <div className="automation-workspace-top">
+          <article className="automation-intro">
+            <div>
+              <strong>Un solo agente activo a la vez</strong>
+              <p>
+                Puedes crear todos los agentes que quieras, pero el backend solo deja uno
+                activo para evitar cruces, duplicados y mensajes fuera de flujo.
+              </p>
             </div>
           </article>
-        ))}
+
+          <div className="automation-stats">
+            <article className="automation-stat">
+              <strong>{agents.length}</strong>
+              <span>agentes</span>
+            </article>
+            <article className="automation-stat">
+              <strong>{activeAgentsCount}</strong>
+              <span>activos</span>
+            </article>
+          </div>
+        </div>
+
+        {feedback ? (
+          <div className={`feedback ${feedbackTone}`}>{feedback}</div>
+        ) : null}
 
         {agents.length === 0 ? (
-          <article className="empty-state">
-            <h2>Todavia no hay agentes</h2>
+          <div className="automation-empty-canvas">
+            <div className="automation-empty-icon" aria-hidden="true">
+              AI
+            </div>
+            <h2>Crea tu primer agente</h2>
             <p>
-              Crea el primero para definir personalidad, tiempos de respuesta,
-              contenido multimedia y el flujo por etapas.
+              Los agentes responden mensajes de Instagram automaticamente y siguen el
+              flujo que configures por etapas, tiempos y followups.
             </p>
-          </article>
-        ) : null}
-      </section>
-
-      <section className="automation-flow-shell surface">
-        {!selectedAgent || !flowDraft ? (
-          <div className="empty-state compact">
-            <h2>Selecciona un agente</h2>
-            <p>Abre el flujo de un agente para editar etapas, mensajes, audios y followups.</p>
+            <button type="button" className="button button-primary" onClick={openCreateModal}>
+              Crear agente
+            </button>
           </div>
         ) : (
-          <>
-            <div className="automation-flow-header">
-              <div>
-                <span className="eyebrow">Flujo</span>
-                <h2>{selectedAgent.name}</h2>
-                <p>
-                  Cada respuesta inbound entra a la siguiente etapa pendiente del agente
-                  activo y queda marcada para no repetir la misma etapa.
-                </p>
+          <div className="automation-workspace-body">
+            <aside className="automation-agents-pane">
+              <div className="automation-pane-header">
+                <div>
+                  <span className="eyebrow">Agentes</span>
+                  <h2>Selecciona un agente</h2>
+                  <p>Elige uno para editar su flujo, mensajes, audios y followups.</p>
+                </div>
               </div>
 
-              <button type="button" className="button button-primary" onClick={saveFlow}>
-                {savingFlow ? "Guardando..." : "Guardar flujo"}
-              </button>
-            </div>
-
-            <div className="stage-stack">
-              {flowDraft.stages.map((stage, stageIndex) => (
-                <article key={`${selectedAgent.id}-stage-${stageIndex}`} className="stage-card">
-                  <div className="stage-card-top">
-                    <div>
-                      <span className="eyebrow">Etapa {stageIndex + 1}</span>
-                      <input
-                        className="text-input"
-                        value={stage.name}
-                        onChange={(event) =>
-                          updateStage(stageIndex, (currentStage) => ({
-                            ...currentStage,
-                            name: event.target.value,
-                          }))
+              <div className="agent-grid">
+                {agents.map((agent) => (
+                  <article
+                    key={agent.id}
+                    className={selectedAgentId === agent.id ? "agent-card selected" : "agent-card"}
+                  >
+                    <div className="agent-card-top">
+                      <div>
+                        <h2>{agent.name || DEFAULT_AGENT_NAME}</h2>
+                        <p>{getAgentCardSummary(agent)}</p>
+                      </div>
+                      <span
+                        className={
+                          agent.isActive ? "agent-status active" : "agent-status inactive"
                         }
-                        placeholder={`Etapa ${stageIndex + 1}`}
-                      />
+                      >
+                        {getAgentStatusLabel(agent)}
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      className="button button-danger"
-                      onClick={() => removeStage(stageIndex)}
-                      disabled={flowDraft.stages.length === 1}
-                    >
-                      Quitar etapa
-                    </button>
+                    <p className="agent-card-copy">
+                      {agent.personality || "Sin personalidad definida todavia."}
+                    </p>
+
+                    <div className="agent-card-actions">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setSelectedAgentId(agent.id)}
+                      >
+                        Abrir flujo
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => openEditModal(agent)}
+                      >
+                        Ajustes
+                      </button>
+                      <button
+                        type="button"
+                        className={agent.isActive ? "agent-toggle active" : "agent-toggle inactive"}
+                        onClick={() => toggleAgent(agent)}
+                      >
+                        {agent.isActive ? "Desactivar" : "Activar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-danger"
+                        onClick={() => removeAgent(agent)}
+                        disabled={deletingAgentId === agent.id}
+                      >
+                        {deletingAgentId === agent.id ? "Eliminando..." : "Eliminar"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </aside>
+
+            <section className="automation-flow-shell">
+              {!selectedAgent || !flowDraft ? (
+                <div className="automation-editor-empty">
+                  <h2>Selecciona un agente</h2>
+                  <p>
+                    Abre el flujo de un agente para editar etapas, mensajes, audios y
+                    followups.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="automation-flow-header">
+                    <div>
+                      <span className="eyebrow">Flujo</span>
+                      <h2>{selectedAgent.name}</h2>
+                      <p>
+                        Cada respuesta inbound entra a la siguiente etapa pendiente del
+                        agente activo y queda marcada para no repetir la misma etapa.
+                      </p>
+                    </div>
+
+                    <div className="automation-flow-actions">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => openEditModal(selectedAgent)}
+                      >
+                        Ajustes del agente
+                      </button>
+                      <button type="button" className="button button-primary" onClick={saveFlow}>
+                        {savingFlow ? "Guardando..." : "Guardar flujo"}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="stage-message-stack">
-                    {stage.messages.map((message, messageIndex) => {
-                      const targetKey = `${stageIndex}-${messageIndex}`;
-                      const isRecording = recordingTargetKey === targetKey;
-                      const isUploading = uploadingTargetKey === targetKey;
-
-                      return (
-                        <article key={targetKey} className="stage-message-card">
-                          <div className="stage-message-head">
-                            <strong>Mensaje {messageIndex + 1}</strong>
-                            <button
-                              type="button"
-                              className="button button-secondary"
-                              onClick={() => removeMessage(stageIndex, messageIndex)}
-                              disabled={stage.messages.length === 1}
-                            >
-                              Quitar
-                            </button>
-                          </div>
-
-                          <div className="stage-message-options">
-                            <button
-                              type="button"
-                              className={
-                                message.messageType === "text" ? "chip active" : "chip"
-                              }
-                              onClick={() =>
-                                updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                  ...currentMessage,
-                                  messageType: "text",
-                                  mediaUrl: "",
-                                }))
-                              }
-                            >
-                              Texto
-                            </button>
-                            <button
-                              type="button"
-                              className={
-                                message.messageType === "audio" ? "chip active" : "chip"
-                              }
-                              onClick={() =>
-                                updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                  ...currentMessage,
-                                  messageType: "audio",
-                                  textContent: "",
-                                }))
-                              }
-                            >
-                              Audio
-                            </button>
-                          </div>
-
-                          {message.messageType === "text" ? (
-                            <textarea
-                              className="text-area"
-                              value={message.textContent}
-                              onChange={(event) =>
-                                updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                  ...currentMessage,
-                                  textContent: event.target.value,
-                                }))
-                              }
-                              placeholder="Escribe el mensaje de esta etapa"
-                            />
-                          ) : (
-                            <div className="audio-builder">
-                              <div className="audio-builder-actions">
-                                <button
-                                  type="button"
-                                  className="button button-secondary"
-                                  onClick={() =>
-                                    isRecording
-                                      ? stopRecording()
-                                      : startRecording(stageIndex, messageIndex)
-                                  }
-                                >
-                                  {isRecording ? "Detener grabacion" : "Grabar audio"}
-                                </button>
-                                <label className="button button-secondary">
-                                  Subir archivo
-                                  <input
-                                    type="file"
-                                    accept="audio/*"
-                                    className="visually-hidden"
-                                    onChange={async (event) => {
-                                      const file = event.target.files?.[0];
-
-                                      if (!file) {
-                                        return;
-                                      }
-
-                                      try {
-                                        const url = await uploadAudioFile(file, targetKey);
-                                        updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                          ...currentMessage,
-                                          messageType: "audio",
-                                          mediaUrl: url,
-                                          textContent: "",
-                                        }));
-                                        showFeedback("Audio subido.", "success");
-                                      } catch (error) {
-                                        showFeedback(
-                                          error instanceof Error
-                                            ? error.message
-                                            : "No pudimos subir el audio.",
-                                          "error",
-                                        );
-                                      } finally {
-                                        event.target.value = "";
-                                      }
-                                    }}
-                                  />
-                                </label>
-                              </div>
-
-                              <input
-                                className="text-input"
-                                value={message.mediaUrl}
-                                onChange={(event) =>
-                                  updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                    ...currentMessage,
-                                    mediaUrl: event.target.value,
-                                  }))
-                                }
-                                placeholder="URL del audio subido"
-                              />
-                              <p className="muted">
-                                {isUploading
-                                  ? "Subiendo audio..."
-                                  : message.mediaUrl
-                                    ? "Audio listo para enviarse en esta etapa."
-                                    : "Puedes grabar o subir un audio para esta etapa."}
-                              </p>
-                            </div>
-                          )}
-
-                          <div className="field">
-                            <span className="field-label">Delay despues de este mensaje (segundos)</span>
+                  <div className="stage-stack">
+                    {flowDraft.stages.map((stage, stageIndex) => (
+                      <article key={`${selectedAgent.id}-stage-${stageIndex}`} className="stage-card">
+                        <div className="stage-card-top">
+                          <div>
+                            <span className="eyebrow">Etapa {stageIndex + 1}</span>
                             <input
                               className="text-input"
-                              type="number"
-                              min={0}
-                              value={message.delaySeconds}
+                              value={stage.name}
                               onChange={(event) =>
-                                updateMessage(stageIndex, messageIndex, (currentMessage) => ({
-                                  ...currentMessage,
-                                  delaySeconds: Number(event.target.value || 0),
+                                updateStage(stageIndex, (currentStage) => ({
+                                  ...currentStage,
+                                  name: event.target.value,
                                 }))
                               }
+                              placeholder={`Etapa ${stageIndex + 1}`}
                             />
                           </div>
-                        </article>
-                      );
-                    })}
+
+                          <button
+                            type="button"
+                            className="button button-danger"
+                            onClick={() => removeStage(stageIndex)}
+                            disabled={flowDraft.stages.length === 1}
+                          >
+                            Quitar etapa
+                          </button>
+                        </div>
+
+                        <div className="stage-message-stack">
+                          {stage.messages.map((message, messageIndex) => {
+                            const targetKey = `${stageIndex}-${messageIndex}`;
+                            const isRecording = recordingTargetKey === targetKey;
+                            const isUploading = uploadingTargetKey === targetKey;
+
+                            return (
+                              <article key={targetKey} className="stage-message-card">
+                                <div className="stage-message-head">
+                                  <strong>Mensaje {messageIndex + 1}</strong>
+                                  <button
+                                    type="button"
+                                    className="button button-secondary"
+                                    onClick={() => removeMessage(stageIndex, messageIndex)}
+                                    disabled={stage.messages.length === 1}
+                                  >
+                                    Quitar
+                                  </button>
+                                </div>
+
+                                <div className="stage-message-options">
+                                  <button
+                                    type="button"
+                                    className={
+                                      message.messageType === "text" ? "chip active" : "chip"
+                                    }
+                                    onClick={() =>
+                                      updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                        ...currentMessage,
+                                        messageType: "text",
+                                        mediaUrl: "",
+                                      }))
+                                    }
+                                  >
+                                    Texto
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={
+                                      message.messageType === "audio" ? "chip active" : "chip"
+                                    }
+                                    onClick={() =>
+                                      updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                        ...currentMessage,
+                                        messageType: "audio",
+                                        textContent: "",
+                                      }))
+                                    }
+                                  >
+                                    Audio
+                                  </button>
+                                </div>
+
+                                {message.messageType === "text" ? (
+                                  <textarea
+                                    className="text-area"
+                                    value={message.textContent}
+                                    onChange={(event) =>
+                                      updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                        ...currentMessage,
+                                        textContent: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="Escribe el mensaje de esta etapa"
+                                  />
+                                ) : (
+                                  <div className="audio-builder">
+                                    <div className="audio-builder-actions">
+                                      <button
+                                        type="button"
+                                        className="button button-secondary"
+                                        onClick={() =>
+                                          isRecording
+                                            ? stopRecording()
+                                            : startRecording(stageIndex, messageIndex)
+                                        }
+                                      >
+                                        {isRecording ? "Detener grabacion" : "Grabar audio"}
+                                      </button>
+                                      <label className="button button-secondary">
+                                        Subir archivo
+                                        <input
+                                          type="file"
+                                          accept="audio/*"
+                                          className="visually-hidden"
+                                          onChange={async (event) => {
+                                            const file = event.target.files?.[0];
+
+                                            if (!file) {
+                                              return;
+                                            }
+
+                                            try {
+                                              const url = await uploadAudioFile(file, targetKey);
+                                              updateMessage(
+                                                stageIndex,
+                                                messageIndex,
+                                                (currentMessage) => ({
+                                                  ...currentMessage,
+                                                  messageType: "audio",
+                                                  mediaUrl: url,
+                                                  textContent: "",
+                                                }),
+                                              );
+                                              showFeedback("Audio subido.", "success");
+                                            } catch (error) {
+                                              showFeedback(
+                                                error instanceof Error
+                                                  ? error.message
+                                                  : "No pudimos subir el audio.",
+                                                "error",
+                                              );
+                                            } finally {
+                                              event.target.value = "";
+                                            }
+                                          }}
+                                        />
+                                      </label>
+                                    </div>
+
+                                    <input
+                                      className="text-input"
+                                      value={message.mediaUrl}
+                                      onChange={(event) =>
+                                        updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                          ...currentMessage,
+                                          mediaUrl: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="URL del audio subido"
+                                    />
+                                    <p className="muted">
+                                      {isUploading
+                                        ? "Subiendo audio..."
+                                        : message.mediaUrl
+                                          ? "Audio listo para enviarse en esta etapa."
+                                          : "Puedes grabar o subir un audio para esta etapa."}
+                                    </p>
+                                  </div>
+                                )}
+
+                                <div className="field">
+                                  <span className="field-label">
+                                    Delay despues de este mensaje (segundos)
+                                  </span>
+                                  <input
+                                    className="text-input"
+                                    type="number"
+                                    min={0}
+                                    value={message.delaySeconds}
+                                    onChange={(event) =>
+                                      updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                        ...currentMessage,
+                                        delaySeconds: Number(event.target.value || 0),
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+
+                        <div className="stage-footer-actions">
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            onClick={() => addMessage(stageIndex)}
+                          >
+                            Agregar mensaje
+                          </button>
+                        </div>
+
+                        <div className="stage-followup">
+                          <div className="stage-followup-top">
+                            <strong>Followup</strong>
+                            <button
+                              type="button"
+                              className={
+                                stage.followupEnabled ? "agent-toggle active" : "agent-toggle inactive"
+                              }
+                              onClick={() =>
+                                updateStage(stageIndex, (currentStage) => ({
+                                  ...currentStage,
+                                  followupEnabled: !currentStage.followupEnabled,
+                                }))
+                              }
+                            >
+                              {stage.followupEnabled ? "Activo" : "Inactivo"}
+                            </button>
+                          </div>
+
+                          <div className="stage-followup-grid">
+                            <div className="field">
+                              <span className="field-label">
+                                Enviar followup si pasan estos minutos sin respuesta
+                              </span>
+                              <input
+                                className="text-input"
+                                type="number"
+                                min={0}
+                                value={stage.followupDelayMinutes}
+                                onChange={(event) =>
+                                  updateStage(stageIndex, (currentStage) => ({
+                                    ...currentStage,
+                                    followupDelayMinutes: Number(event.target.value || 0),
+                                  }))
+                                }
+                              />
+                            </div>
+
+                            <div className="field">
+                              <span className="field-label">Mensaje de followup</span>
+                              <textarea
+                                className="text-area"
+                                value={stage.followupMessage}
+                                onChange={(event) =>
+                                  updateStage(stageIndex, (currentStage) => ({
+                                    ...currentStage,
+                                    followupMessage: event.target.value,
+                                  }))
+                                }
+                                placeholder="Mensaje de followup para esta etapa"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
                   </div>
 
                   <div className="stage-footer-actions">
-                    <button
-                      type="button"
-                      className="button button-secondary"
-                      onClick={() => addMessage(stageIndex)}
-                    >
-                      Agregar mensaje
+                    <button type="button" className="button button-secondary" onClick={addStage}>
+                      Agregar etapa
                     </button>
                   </div>
 
-                  <div className="stage-followup">
+                  <article className="ai-card">
                     <div className="stage-followup-top">
-                      <strong>Followup</strong>
+                      <div>
+                        <span className="eyebrow">Activar IA</span>
+                        <h3>Prompt y clave local por navegador</h3>
+                      </div>
                       <button
                         type="button"
-                        className={stage.followupEnabled ? "agent-toggle active" : "agent-toggle inactive"}
+                        className={
+                          flowDraft.aiEnabled ? "agent-toggle active" : "agent-toggle inactive"
+                        }
                         onClick={() =>
-                          updateStage(stageIndex, (currentStage) => ({
-                            ...currentStage,
-                            followupEnabled: !currentStage.followupEnabled,
+                          updateFlowDraft((current) => ({
+                            ...current,
+                            aiEnabled: !current.aiEnabled,
                           }))
                         }
                       >
-                        {stage.followupEnabled ? "Activo" : "Inactivo"}
+                        {flowDraft.aiEnabled ? "Activa" : "Inactiva"}
                       </button>
                     </div>
 
-                    <div className="stage-followup-grid">
-                      <div className="field">
-                        <span className="field-label">
-                          Enviar followup si pasan estos minutos sin respuesta
-                        </span>
-                        <input
-                          className="text-input"
-                          type="number"
-                          min={0}
-                          value={stage.followupDelayMinutes}
-                          onChange={(event) =>
-                            updateStage(stageIndex, (currentStage) => ({
-                              ...currentStage,
-                              followupDelayMinutes: Number(event.target.value || 0),
-                            }))
-                          }
-                        />
+                    {flowDraft.aiEnabled ? (
+                      <div className="stage-followup-grid">
+                        <div className="field">
+                          <span className="field-label">API key local</span>
+                          <input
+                            className="text-input"
+                            type="password"
+                            value={localAiConfig[selectedAgent.id]?.apiKey ?? ""}
+                            onChange={(event) =>
+                              persistLocalAi(selectedAgent.id, {
+                                apiKey: event.target.value,
+                              })
+                            }
+                            placeholder="Se guarda en este navegador"
+                          />
+                          <p className="muted">
+                            Esta clave queda guardada en el browser del usuario actual, no en
+                            la base de datos del proyecto.
+                          </p>
+                        </div>
+
+                        <div className="field">
+                          <span className="field-label">Prompt del agente</span>
+                          <textarea
+                            className="text-area"
+                            value={flowDraft.aiPrompt}
+                            onChange={(event) =>
+                              updateFlowDraft((current) => ({
+                                ...current,
+                                aiPrompt: event.target.value,
+                              }))
+                            }
+                            placeholder="Prompt para guiar las respuestas con IA"
+                          />
+                        </div>
                       </div>
-
-                      <div className="field">
-                        <span className="field-label">Mensaje de followup</span>
-                        <textarea
-                          className="text-area"
-                          value={stage.followupMessage}
-                          onChange={(event) =>
-                            updateStage(stageIndex, (currentStage) => ({
-                              ...currentStage,
-                              followupMessage: event.target.value,
-                            }))
-                          }
-                          placeholder="Mensaje de followup para esta etapa"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-
-            <div className="stage-footer-actions">
-              <button type="button" className="button button-secondary" onClick={addStage}>
-                Agregar etapa
-              </button>
-            </div>
-
-            <article className="ai-card">
-              <div className="stage-followup-top">
-                <div>
-                  <span className="eyebrow">Activar IA</span>
-                  <h3>Prompt y clave local por navegador</h3>
-                </div>
-                <button
-                  type="button"
-                  className={flowDraft.aiEnabled ? "agent-toggle active" : "agent-toggle inactive"}
-                  onClick={() =>
-                    updateFlowDraft((current) => ({
-                      ...current,
-                      aiEnabled: !current.aiEnabled,
-                    }))
-                  }
-                >
-                  {flowDraft.aiEnabled ? "Activa" : "Inactiva"}
-                </button>
-              </div>
-
-              {flowDraft.aiEnabled ? (
-                <div className="stage-followup-grid">
-                  <div className="field">
-                    <span className="field-label">API key local</span>
-                    <input
-                      className="text-input"
-                      type="password"
-                      value={localAiConfig[selectedAgent.id]?.apiKey ?? ""}
-                      onChange={(event) =>
-                        persistLocalAi(selectedAgent.id, {
-                          apiKey: event.target.value,
-                        })
-                      }
-                      placeholder="Se guarda en este navegador"
-                    />
-                    <p className="muted">
-                      Esta clave queda guardada en el browser del usuario actual, no en la
-                      base de datos del proyecto.
-                    </p>
-                  </div>
-
-                  <div className="field">
-                    <span className="field-label">Prompt del agente</span>
-                    <textarea
-                      className="text-area"
-                      value={flowDraft.aiPrompt}
-                      onChange={(event) =>
-                        updateFlowDraft((current) => ({
-                          ...current,
-                          aiPrompt: event.target.value,
-                        }))
-                      }
-                      placeholder="Prompt para guiar las respuestas con IA"
-                    />
-                  </div>
-                </div>
-              ) : (
-                <p className="muted">
-                  Activa IA si quieres dejar listo un prompt propio y una API key local
-                  para este navegador.
-                </p>
+                    ) : (
+                      <p className="muted">
+                        Activa IA si quieres dejar listo un prompt propio y una API key local
+                        para este navegador.
+                      </p>
+                    )}
+                  </article>
+                </>
               )}
-            </article>
-          </>
+            </section>
+          </div>
         )}
       </section>
 
