@@ -48,13 +48,25 @@ type InstagramContactRecord = {
   contact_name: string | null;
 };
 
+type InstagramAccountProfileSyncRecord = {
+  id: string;
+  instagram_account_id: string;
+  username: string;
+  name: string | null;
+  profile_picture_url: string | null;
+  access_token: string;
+  token_expires_at: string | null;
+};
+
 export async function selectOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
   const { data, error } = await supabase
     .from("instagram_accounts")
-    .select("*")
+    .select(
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, name, account_type, profile_picture_url, status, token_obtained_at, expires_in, expires_at, token_expires_at, token_lifecycle, last_token_refresh_at, connected_at, last_oauth_at, last_webhook_at, created_at, updated_at",
+    )
     .eq("owner_id", userId)
     .order("created_at", { ascending: false });
 
@@ -131,8 +143,23 @@ export async function loadOwnedAccounts(
   }
 
   const admin = createAdminClient();
+  const { data: syncAccountsData, error: syncAccountsError } = await admin
+    .from("instagram_accounts")
+    .select(
+      "id, instagram_account_id, username, name, profile_picture_url, access_token, token_expires_at",
+    )
+    .eq("owner_id", userId);
+
+  if (syncAccountsError) {
+    console.warn("[loadOwnedAccounts] account profile sync lookup failed", {
+      userId,
+      error: syncAccountsError.message,
+    });
+  }
+
+  const syncAccounts = castRows<InstagramAccountProfileSyncRecord>(syncAccountsData ?? []);
   const graphEnrichmentResults = await Promise.all(
-    accounts.map(async (account) => {
+    syncAccounts.map(async (account) => {
       const needsGraphEnrichment =
         !account.username ||
         account.username.startsWith("ig_") ||
