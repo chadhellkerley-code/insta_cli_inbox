@@ -34,8 +34,40 @@ import type {
   UserProfile,
 } from "@/lib/shared-data";
 
-const INSTAGRAM_ACCOUNT_SELECT =
-  "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, name, account_type, profile_picture_url, status, token_obtained_at, expires_in, expires_at, token_expires_at, token_lifecycle, last_token_refresh_at, connected_at, last_oauth_at, last_webhook_at, created_at, updated_at";
+const INSTAGRAM_ACCOUNT_REQUIRED_COLUMNS = [
+  "id",
+  "owner_id",
+  "instagram_user_id",
+  "instagram_account_id",
+  "instagram_app_user_id",
+  "username",
+  "name",
+  "account_type",
+  "profile_picture_url",
+  "status",
+  "token_obtained_at",
+  "expires_in",
+  "expires_at",
+  "token_expires_at",
+  "token_lifecycle",
+  "last_token_refresh_at",
+  "connected_at",
+  "last_oauth_at",
+  "last_webhook_at",
+  "created_at",
+  "updated_at",
+] as const;
+
+const INSTAGRAM_ACCOUNT_OPTIONAL_COLUMNS = [
+  "page_id",
+] as const;
+
+const INSTAGRAM_ACCOUNT_SELECT = [
+  ...INSTAGRAM_ACCOUNT_REQUIRED_COLUMNS,
+  ...INSTAGRAM_ACCOUNT_OPTIONAL_COLUMNS,
+].join(", ");
+
+const INSTAGRAM_ACCOUNT_SELECT_FALLBACK = INSTAGRAM_ACCOUNT_REQUIRED_COLUMNS.join(", ");
 
 function castRow<T>(value: unknown) {
   return value as T;
@@ -61,6 +93,13 @@ type InstagramAccountProfileSyncRecord = {
   token_expires_at: string | null;
 };
 
+type QueryErrorShape = {
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+};
+
 function getSupabaseProjectHost() {
   try {
     return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").host || "unknown";
@@ -69,20 +108,96 @@ function getSupabaseProjectHost() {
   }
 }
 
-export async function selectOwnedAccounts(
-  supabase: SupabaseClient,
+function getMissingInstagramAccountOptionalColumns(error: QueryErrorShape | null | undefined) {
+  const haystack = [error?.message, error?.details, error?.hint]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ");
+
+  if (!haystack) {
+    return [];
+  }
+
+  return INSTAGRAM_ACCOUNT_OPTIONAL_COLUMNS.filter((column) => haystack.includes(column));
+}
+
+function withInstagramAccountOptionalDefaults(account: Partial<InstagramAccountRecord>) {
+  return {
+    page_id: null,
+    ...account,
+  } as InstagramAccountRecord;
+}
+
+async function selectInstagramAccountsForOwner(
+  client: Pick<SupabaseClient, "from">,
   userId: string,
-): Promise<InstagramAccountRecord[]> {
-  const { data, error } = await supabase
+  options: {
+    queryLabel: string;
+  },
+) {
+  const primaryResult = await client
     .from("instagram_accounts")
     .select(INSTAGRAM_ACCOUNT_SELECT)
     .eq("owner_id", userId)
     .order("created_at", { ascending: false });
+  const primaryError = primaryResult.error as QueryErrorShape | null;
+  const missingOptionalColumns = getMissingInstagramAccountOptionalColumns(primaryError);
+
+  if (primaryError && missingOptionalColumns.length > 0) {
+    console.warn(`[${options.queryLabel}] retrying instagram_accounts query without optional columns`, {
+      userId,
+      projectHost: getSupabaseProjectHost(),
+      missingOptionalColumns,
+      error: primaryError.message,
+      details: primaryError.details,
+      hint: primaryError.hint,
+      code: primaryError.code,
+    });
+
+    const fallbackResult = await client
+      .from("instagram_accounts")
+      .select(INSTAGRAM_ACCOUNT_SELECT_FALLBACK)
+      .eq("owner_id", userId)
+      .order("created_at", { ascending: false });
+
+    return {
+      data: castRows<InstagramAccountRecord>(
+        (fallbackResult.data ?? []).map((account) =>
+          withInstagramAccountOptionalDefaults(account as Partial<InstagramAccountRecord>),
+        ),
+      ),
+      error: fallbackResult.error,
+      missingOptionalColumns,
+    };
+  }
+
+  return {
+    data: castRows<InstagramAccountRecord>(
+      (primaryResult.data ?? []).map((account) =>
+        withInstagramAccountOptionalDefaults(account as Partial<InstagramAccountRecord>),
+      ),
+    ),
+    error: primaryResult.error,
+    missingOptionalColumns,
+  };
+}
+
+export async function selectOwnedAccounts(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<InstagramAccountRecord[]> {
+  const { data, error, missingOptionalColumns } = await selectInstagramAccountsForOwner(
+    supabase,
+    userId,
+    {
+      queryLabel: "selectOwnedAccounts",
+    },
+  );
 
   if (error || !data) {
     console.error("[selectOwnedAccounts] failed", {
       userId,
       projectHost: getSupabaseProjectHost(),
+      missingOptionalColumns,
       error: error?.message,
       details: error?.details,
       hint: error?.hint,
@@ -107,16 +222,19 @@ async function selectOwnedAccountsWithAdmin(
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("instagram_accounts")
-    .select(INSTAGRAM_ACCOUNT_SELECT)
-    .eq("owner_id", userId)
-    .order("created_at", { ascending: false });
+  const { data, error, missingOptionalColumns } = await selectInstagramAccountsForOwner(
+    admin,
+    userId,
+    {
+      queryLabel: "selectOwnedAccountsWithAdmin",
+    },
+  );
 
   if (error || !data) {
     console.error("[selectOwnedAccountsWithAdmin] failed", {
       userId,
       projectHost: getSupabaseProjectHost(),
+      missingOptionalColumns,
       error: error?.message,
       details: error?.details,
       hint: error?.hint,
