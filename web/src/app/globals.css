@@ -684,6 +684,230 @@ main {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.automation-page {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.automation-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.automation-intro,
+.automation-flow-shell,
+.ai-card,
+.agent-card,
+.stage-card,
+.stage-message-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.automation-intro {
+  padding: 18px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.automation-intro p {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.agent-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.agent-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agent-card.selected {
+  border-color: rgba(124, 58, 237, 0.42);
+  background: linear-gradient(145deg, rgba(124, 58, 237, 0.16), rgba(16, 17, 24, 0.92));
+}
+
+.agent-card-top,
+.stage-card-top,
+.automation-flow-header,
+.stage-followup-top,
+.automation-modal-header,
+.automation-modal-actions,
+.stage-message-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.agent-card-top h2,
+.automation-flow-header h2,
+.ai-card h3,
+.automation-modal h2 {
+  letter-spacing: -0.04em;
+}
+
+.agent-card-top p,
+.agent-card-copy,
+.automation-flow-header p,
+.ai-card p,
+.stage-card p,
+.stage-message-card p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.agent-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.84rem;
+}
+
+.agent-status.active {
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.32);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.agent-status.inactive {
+  color: var(--muted-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.agent-card-actions,
+.stage-footer-actions,
+.audio-builder-actions,
+.stage-message-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.agent-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--text);
+}
+
+.agent-toggle.active {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(34, 197, 94, 0.18);
+  color: #dcfce7;
+}
+
+.agent-toggle.inactive {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted-strong);
+}
+
+.automation-flow-shell {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.stage-stack,
+.stage-message-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stage-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stage-card-top > div,
+.automation-flow-header > div,
+.stage-followup-top > div,
+.automation-modal-header > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-message-card,
+.ai-card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.audio-builder,
+.stage-followup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stage-followup {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.stage-followup-grid,
+.automation-modal-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.automation-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(5, 5, 8, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.automation-modal {
+  width: min(780px, 100%);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .feature-card ul {
   margin-top: 12px;
   padding-left: 18px;
@@ -1020,6 +1244,18 @@ code {
     align-items: flex-start;
     text-align: left;
   }
+
+  .automation-toolbar,
+  .agent-card-actions,
+  .stage-footer-actions,
+  .audio-builder-actions {
+    width: 100%;
+  }
+
+  .stage-followup-grid,
+  .automation-modal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1063,5 +1299,18 @@ code {
 
   .accounts-page .list-card {
     padding: 18px;
+  }
+
+  .automation-modal-backdrop {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .automation-modal,
+  .automation-flow-shell,
+  .automation-intro,
+  .stage-card,
+  .agent-card {
+    padding: 16px;
   }
 }
