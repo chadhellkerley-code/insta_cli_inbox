@@ -1,4 +1,6 @@
+import { getMetaOauthConfig, META_OAUTH_FLOW } from "@/lib/meta/config";
 import {
+  buildInstagramProfileEnrichmentDiagnostic,
   fetchInstagramAccountProfile,
   fetchInstagramUserProfile,
 } from "@/lib/meta/client";
@@ -112,6 +114,21 @@ export async function syncInstagramAccountProfile(options: {
   admin: AdminClient;
   account: InstagramAccountProfileTarget;
 }) {
+  const oauthConfig = getMetaOauthConfig();
+
+  if (oauthConfig.flow === META_OAUTH_FLOW) {
+    return {
+      username: normalizeUsername(options.account.username),
+      name: normalizeString(options.account.name),
+      profilePictureUrl: normalizeString(options.account.profile_picture_url),
+      updated: false,
+      diagnostic: buildInstagramProfileEnrichmentDiagnostic({
+        instagramUserId: options.account.instagram_account_id,
+        tokenLifecycle: "oauth",
+      }),
+    };
+  }
+
   const managedToken = await ensureInstagramAccessToken({
     accessToken: options.account.access_token,
     expiresAt: options.account.token_expires_at ?? null,

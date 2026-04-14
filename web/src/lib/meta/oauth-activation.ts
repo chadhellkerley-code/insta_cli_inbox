@@ -9,6 +9,7 @@ import {
   INSTAGRAM_WEBHOOK_STATUS_PENDING,
   INSTAGRAM_WEBHOOK_STATUS_READY,
 } from "@/lib/meta/account-status";
+import { getMetaOauthConfig, META_OAUTH_FLOW } from "@/lib/meta/config";
 import {
   activateInstagramAccountWebhooks,
   InstagramWebhookActivationError,
@@ -110,10 +111,33 @@ function buildSuccessReadinessResult(options: {
   };
 }
 
+function buildInstagramLoginReadinessResult(options: {
+  checkedAt: string;
+  pageId?: string | null;
+}): InstagramAccountReadinessResult {
+  return {
+    status: INSTAGRAM_ACCOUNT_STATUS_OAUTH_CONNECTED,
+    pageId: options.pageId ?? null,
+    webhookSubscribedAt: null,
+    webhookStatus: INSTAGRAM_WEBHOOK_STATUS_PENDING,
+    messagingStatus: INSTAGRAM_MESSAGING_STATUS_PENDING,
+    lastWebhookCheckAt: options.checkedAt,
+    webhookSubscriptionError: null,
+  };
+}
+
 export async function runInstagramPostOauthActivation(
   account: InstagramOauthActivationTarget,
 ): Promise<InstagramAccountReadinessResult> {
   const checkedAt = new Date().toISOString();
+  const oauthConfig = getMetaOauthConfig();
+
+  if (oauthConfig.flow === META_OAUTH_FLOW) {
+    return buildInstagramLoginReadinessResult({
+      checkedAt,
+      pageId: account.page_id ?? null,
+    });
+  }
 
   try {
     const managedToken = await ensureInstagramAccessToken({
