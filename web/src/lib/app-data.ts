@@ -105,6 +105,26 @@ type QueryErrorShape = {
   code?: string | null;
 };
 
+function isMissingInstagramContactsTableError(
+  error: QueryErrorShape | null | undefined,
+) {
+  const haystack = [error?.message, error?.details, error?.hint]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (!haystack) {
+    return false;
+  }
+
+  return (
+    haystack.includes("instagram_contacts") &&
+    (haystack.includes("schema cache") ||
+      haystack.includes("does not exist") ||
+      haystack.includes("could not find the table"))
+  );
+}
+
 function getSupabaseProjectHost() {
   try {
     return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").host || "unknown";
@@ -456,6 +476,17 @@ export async function loadConversations(
     .in("contact_igsid", contactIds);
 
   if (contactsError || !contactsData) {
+    if (isMissingInstagramContactsTableError(contactsError as QueryErrorShape | null)) {
+      console.warn("[loadConversations] instagram_contacts table missing; returning base conversation rows", {
+        userId,
+        projectHost: getSupabaseProjectHost(),
+        error: contactsError?.message,
+        details: contactsError?.details,
+        hint: contactsError?.hint,
+        code: contactsError?.code,
+      });
+    }
+
     return conversations;
   }
 

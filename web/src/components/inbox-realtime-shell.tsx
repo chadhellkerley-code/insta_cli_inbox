@@ -30,6 +30,8 @@ type InboxRealtimeShellProps = {
 
 type SendMode = "text" | "audio";
 
+const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
+
 function sortConversations(conversations: ConversationRecord[]) {
   return [...conversations].sort((left, right) => {
     const rightTimestamp =
@@ -72,6 +74,39 @@ function upsertById<T extends { id: string }>(items: T[], nextItem: T) {
 
 function removeById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((item) => item.id !== id);
+}
+
+async function loadConversationRows(client: ReturnType<typeof createClient>, userId: string) {
+  const result = await client
+    .from("instagram_conversations")
+    .select("*")
+    .eq("owner_id", userId)
+    .order("last_message_at", { ascending: false, nullsFirst: false })
+    .limit(200);
+
+  if (result.error || !result.data) {
+    return null;
+  }
+
+  return sortConversations(result.data as ConversationRecord[]);
+}
+
+async function loadMessageRows(
+  client: ReturnType<typeof createClient>,
+  conversationId: string,
+) {
+  const result = await client
+    .from("instagram_messages")
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+    .limit(300);
+
+  if (result.error || !result.data) {
+    return null;
+  }
+
+  return sortMessages(result.data as MessageRecord[]);
 }
 
 export function InboxRealtimeShell({
@@ -157,13 +192,7 @@ export function InboxRealtimeShell({
 
     async function loadMessages() {
       setLoadingMessages(true);
-
-      const result = await supabase
-        .from("instagram_messages")
-        .select("*")
-        .eq("conversation_id", selectedConversationId)
-        .order("created_at", { ascending: true })
-        .limit(300);
+      const nextMessages = await loadMessageRows(supabase, selectedConversationId);
 
       if (cancelled) {
         return;
@@ -171,8 +200,8 @@ export function InboxRealtimeShell({
 
       setLoadingMessages(false);
 
-      if (!result.error && result.data) {
-        setMessages(sortMessages(result.data as MessageRecord[]));
+      if (nextMessages) {
+        setMessages(nextMessages);
       }
     }
 
@@ -182,6 +211,75 @@ export function InboxRealtimeShell({
       cancelled = true;
     };
   }, [initialMessages, initialSelectedConversationId, selectedConversationId]);
+
+  useEffect(() => {
+    const supabase = clientRef.current!;
+    let cancelled = false;
+
+    async function refreshInboxData() {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+
+      const nextConversations = await loadConversationRows(supabase, userId);
+
+      if (cancelled || !nextConversations) {
+        return;
+      }
+
+      setConversations(nextConversations);
+
+      const selectedId = selectedConversationRef.current;
+
+      if (selectedId && !nextConversations.some((conversation) => conversation.id === selectedId)) {
+        const fallbackConversationId = nextConversations[0]?.id ?? null;
+        selectedConversationRef.current = fallbackConversationId;
+        setSelectedConversationId(fallbackConversationId);
+      }
+
+      const currentConversationId =
+        selectedConversationRef.current ?? nextConversations[0]?.id ?? null;
+
+      if (!currentConversationId) {
+        setMessages([]);
+        return;
+      }
+
+      const nextMessages = await loadMessageRows(supabase, currentConversationId);
+
+      if (cancelled || !nextMessages) {
+        return;
+      }
+
+      if (selectedConversationRef.current === currentConversationId) {
+        setMessages(nextMessages);
+      }
+    }
+
+    void refreshInboxData();
+
+    const interval = window.setInterval(() => {
+      void refreshInboxData();
+    }, BACKGROUND_REFRESH_INTERVAL_MS);
+    const handleFocus = () => {
+      void refreshInboxData();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshInboxData();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [userId]);
 
   useEffect(() => {
     if (!selectedConversationId && conversations.length > 0) {

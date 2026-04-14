@@ -44,6 +44,23 @@ type ResolvedInstagramContact = {
   profilePictureUrl: string | null;
 };
 
+function isMissingInstagramContactsTableError(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+        ? String((error as { message?: unknown }).message ?? "")
+        : String(error ?? "");
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("instagram_contacts") &&
+    (normalized.includes("schema cache") ||
+      normalized.includes("does not exist") ||
+      normalized.includes("could not find the table"))
+  );
+}
+
 function normalizeString(value: string | null | undefined) {
   if (typeof value !== "string") {
     return null;
@@ -219,9 +236,12 @@ export async function resolveInstagramContactProfile(options: {
     .eq("contact_igsid", options.contactIgsid)
     .maybeSingle();
   const existing = existingResult.data as InstagramContactCacheRecord | null;
+  const canUseContactsCache = !existingResult.error;
 
   if (existingResult.error) {
-    throw new Error(existingResult.error.message);
+    if (!isMissingInstagramContactsTableError(existingResult.error)) {
+      throw new Error(existingResult.error.message);
+    }
   }
 
   if (existing && hasKnownContactIdentity(existing)) {
@@ -257,6 +277,10 @@ export async function resolveInstagramContactProfile(options: {
       profilePictureUrl: normalizeString(profile.profilePictureUrl),
     } satisfies ResolvedInstagramContact;
 
+    if (!canUseContactsCache) {
+      return resolved;
+    }
+
     const upsertResult = await options.admin.from("instagram_contacts").upsert(
       {
         owner_id: options.account.owner_id,
@@ -275,12 +299,27 @@ export async function resolveInstagramContactProfile(options: {
     );
 
     if (upsertResult.error) {
+      if (isMissingInstagramContactsTableError(upsertResult.error)) {
+        return resolved;
+      }
+
       throw new Error(upsertResult.error.message);
     }
 
     return resolved;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    if (!canUseContactsCache) {
+      return existing
+        ? getInstagramContactDisplayProfile(existing)
+        : {
+            contactUsername: null,
+            contactName: null,
+            profilePictureUrl: null,
+          };
+    }
+
     const upsertResult = await options.admin.from("instagram_contacts").upsert(
       {
         owner_id: options.account.owner_id,
@@ -298,6 +337,16 @@ export async function resolveInstagramContactProfile(options: {
     );
 
     if (upsertResult.error) {
+      if (isMissingInstagramContactsTableError(upsertResult.error)) {
+        return existing
+          ? getInstagramContactDisplayProfile(existing)
+          : {
+              contactUsername: null,
+              contactName: null,
+              profilePictureUrl: null,
+            };
+      }
+
       throw new Error(upsertResult.error.message);
     }
 
