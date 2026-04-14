@@ -21,6 +21,10 @@ import {
   buildFallbackInstagramUsername,
   isFallbackInstagramUsername,
 } from "@/lib/meta/instagram-username";
+import {
+  persistInstagramAccountReadiness,
+  runInstagramPostOauthActivation,
+} from "@/lib/meta/oauth-activation";
 import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { resolveInitialInstagramToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -28,6 +32,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 type ExistingAccountLookup = {
   id: string;
   owner_id: string;
+  page_id: string | null;
   instagram_app_user_id: string | null;
   username: string | null;
   name: string | null;
@@ -209,7 +214,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const existingResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
+        "id, owner_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
       )
       .eq("instagram_account_id", instagramUserId)
       .maybeSingle();
@@ -239,6 +244,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
           instagram_user_id: instagramUserId,
           instagram_account_id: resolvedInstagramAccountId,
           instagram_app_user_id: resolvedInstagramAppUserId,
+          page_id: existing?.page_id ?? null,
           username: resolvedUsername,
           name: existing?.name ?? null,
           account_type: existing?.account_type ?? null,
@@ -250,7 +256,12 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
           token_expires_at: managedToken.expiresAt,
           token_lifecycle: managedToken.lifecycle,
           last_token_refresh_at: managedToken.obtainedAt,
-          status: "connected",
+          status: "oauth_connected",
+          webhook_subscribed_at: null,
+          webhook_status: "pending",
+          messaging_status: "pending",
+          last_webhook_check_at: null,
+          webhook_subscription_error: null,
           connected_at: managedToken.obtainedAt,
           last_oauth_at: managedToken.obtainedAt,
           scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
@@ -330,13 +341,44 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       ],
     });
 
+    const readiness = await runInstagramPostOauthActivation({
+      instagram_account_id: upsertedAccount.instagram_account_id,
+      page_id: existing?.page_id ?? null,
+      access_token: managedToken.accessToken,
+      token_expires_at: managedToken.expiresAt,
+      scopes: shortLivedToken.permissions ?? Array.from(META_LOGIN_SCOPES),
+    });
+
+    await persistInstagramAccountReadiness({
+      admin,
+      accountId: upsertedAccount.id,
+      readiness,
+    });
+
+    console.info("[meta-oauth] account readiness persisted", {
+      accountId: upsertedAccount.id,
+      instagramAccountId: upsertedAccount.instagram_account_id,
+      pageId: readiness.pageId,
+      status: readiness.status,
+      webhookStatus: readiness.webhookStatus,
+      messagingStatus: readiness.messagingStatus,
+      activationError: readiness.webhookSubscriptionError,
+    });
+
+    const readinessMessage =
+      readiness.status === "messaging_ready"
+        ? "Ready for inbox."
+        : readiness.webhookStatus === "failed"
+          ? "La cuenta quedo conectada, pero la activacion del webhook fallo. Revisa el estado en /cuentas."
+          : "La cuenta quedo conectada y el webhook esta activo, pero todavia falta confirmar mensajeria completa.";
+
     return createMetaOauthCompletionResponse(
       origin,
       {
         status: "success",
         message: enrichedUsername
-          ? `Cuenta conectada correctamente como @${enrichedUsername}.`
-          : "Cuenta conectada correctamente. Si el username todavia no aparece, lo vamos a reintentar con el token conectado.",
+          ? `Cuenta conectada correctamente como @${enrichedUsername}. ${readinessMessage}`
+          : `Cuenta conectada correctamente. ${readinessMessage} Si el username todavia no aparece, lo vamos a reintentar con el token conectado.`,
         username: enrichedUsername ?? undefined,
       },
       { code },

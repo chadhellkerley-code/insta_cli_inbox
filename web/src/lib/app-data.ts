@@ -60,6 +60,11 @@ const INSTAGRAM_ACCOUNT_REQUIRED_COLUMNS = [
 
 const INSTAGRAM_ACCOUNT_OPTIONAL_COLUMNS = [
   "page_id",
+  "webhook_subscribed_at",
+  "webhook_status",
+  "messaging_status",
+  "last_webhook_check_at",
+  "webhook_subscription_error",
 ] as const;
 
 const INSTAGRAM_ACCOUNT_SELECT = [
@@ -123,6 +128,11 @@ function getMissingInstagramAccountOptionalColumns(error: QueryErrorShape | null
 function withInstagramAccountOptionalDefaults(account: Partial<InstagramAccountRecord>) {
   return {
     page_id: null,
+    webhook_subscribed_at: null,
+    webhook_status: null,
+    messaging_status: null,
+    last_webhook_check_at: null,
+    webhook_subscription_error: null,
     ...account,
   } as InstagramAccountRecord;
 }

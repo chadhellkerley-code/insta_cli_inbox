@@ -35,12 +35,45 @@ type InstagramProfilePayload = {
   profile_pic?: string;
 };
 
+type MetaPageAccountPayload = {
+  id?: string | number;
+  name?: string;
+  instagram_business_account?: {
+    id?: string | number;
+    username?: string;
+  } | null;
+  connected_instagram_account?: {
+    id?: string | number;
+    username?: string;
+  } | null;
+};
+
+type MetaPageAccountsResponse = {
+  data?: MetaPageAccountPayload[];
+};
+
 type ShortLivedTokenResponse = {
   access_token: string;
   user_id?: string;
   permissions?: string[];
   expires_in?: number;
 };
+
+export type InstagramWebhookActivationResult = {
+  pageId: string;
+  pageName: string | null;
+  matchedBy: "connected_instagram_account" | "instagram_business_account" | "stored_page_id";
+};
+
+export class InstagramWebhookActivationError extends Error {
+  pageId: string | null;
+
+  constructor(message: string, options?: { pageId?: string | null }) {
+    super(message);
+    this.name = "InstagramWebhookActivationError";
+    this.pageId = options?.pageId ?? null;
+  }
+}
 
 export type InstagramProfileEnrichmentDiagnostic = {
   status: "pending";
@@ -260,6 +293,147 @@ export async function fetchInstagramUserProfile(options: {
     name: normalizeOptionalString(payload?.name),
     profilePictureUrl: normalizeOptionalString(payload?.profile_pic),
   };
+}
+
+export async function findFacebookPageForInstagramAccount(options: {
+  accessToken: string;
+  instagramUserId: string;
+}): Promise<InstagramWebhookActivationResult> {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.facebookGraphBaseUrl}/me/accounts`);
+  url.searchParams.set(
+    "fields",
+    "id,name,connected_instagram_account{id,username},instagram_business_account{id,username}",
+  );
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+    },
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as MetaPageAccountsResponse | null;
+
+  assertMetaResponseOk(response, payload, "Facebook Page lookup failed");
+
+  const candidates = Array.isArray(payload?.data) ? payload.data : [];
+  const normalizedInstagramUserId = normalizeMetaIdentifier(options.instagramUserId);
+
+  for (const page of candidates) {
+    const connectedInstagramAccountId = normalizeMetaIdentifier(
+      page.connected_instagram_account?.id,
+    );
+
+    if (
+      connectedInstagramAccountId &&
+      connectedInstagramAccountId === normalizedInstagramUserId
+    ) {
+      const pageId = normalizeMetaIdentifier(page.id);
+
+      if (!pageId) {
+        continue;
+      }
+
+      return {
+        pageId,
+        pageName: normalizeOptionalString(page.name),
+        matchedBy: "connected_instagram_account" as const,
+      };
+    }
+
+    const instagramBusinessAccountId = normalizeMetaIdentifier(
+      page.instagram_business_account?.id,
+    );
+
+    if (
+      instagramBusinessAccountId &&
+      instagramBusinessAccountId === normalizedInstagramUserId
+    ) {
+      const pageId = normalizeMetaIdentifier(page.id);
+
+      if (!pageId) {
+        continue;
+      }
+
+      return {
+        pageId,
+        pageName: normalizeOptionalString(page.name),
+        matchedBy: "instagram_business_account" as const,
+      };
+    }
+  }
+
+  throw new Error(
+    "No encontramos la Facebook Page asociada a esta cuenta de Instagram para activar el webhook.",
+  );
+}
+
+export async function subscribeAppToFacebookPage(options: {
+  accessToken: string;
+  pageId: string;
+}) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.facebookGraphBaseUrl}/${options.pageId}/subscribed_apps`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${options.accessToken}`,
+      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+    },
+    body: new URLSearchParams(),
+    cache: "no-store",
+  });
+  const payload = await readMetaJson(response);
+
+  assertMetaResponseOk(response, payload, "Webhook subscription failed");
+}
+
+export async function activateInstagramAccountWebhooks(options: {
+  accessToken: string;
+  instagramUserId: string;
+  fallbackPageId?: string | null;
+}): Promise<InstagramWebhookActivationResult> {
+  let resolvedPage = null as InstagramWebhookActivationResult | null;
+
+  try {
+    const page = await findFacebookPageForInstagramAccount({
+      accessToken: options.accessToken,
+      instagramUserId: options.instagramUserId,
+    });
+
+    if (!page.pageId) {
+      throw new Error("Meta no devolvio un page_id valido para esta cuenta.");
+    }
+
+    resolvedPage = page;
+  } catch (error) {
+    if (!options.fallbackPageId) {
+      throw error;
+    }
+
+    resolvedPage = {
+      pageId: options.fallbackPageId,
+      pageName: null,
+      matchedBy: "stored_page_id",
+    };
+  }
+
+  try {
+    await subscribeAppToFacebookPage({
+      accessToken: options.accessToken,
+      pageId: resolvedPage.pageId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    throw new InstagramWebhookActivationError(message, {
+      pageId: resolvedPage.pageId,
+    });
+  }
+
+  return resolvedPage;
 }
 
 export async function sendInstagramMessage(options: {

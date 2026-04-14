@@ -11,6 +11,11 @@ import {
   resolveInstagramUsernameCandidateFromMessagingEvent,
   syncInstagramUsername,
 } from "@/lib/meta/instagram-username";
+import {
+  INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
+  INSTAGRAM_MESSAGING_STATUS_READY,
+  INSTAGRAM_WEBHOOK_STATUS_READY,
+} from "@/lib/meta/account-status";
 import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -351,8 +356,7 @@ async function findBootstrapAccountForEvent(
     .from("instagram_accounts")
     .select(
       "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
-    )
-    .eq("status", "connected");
+    );
   const accounts = (result.data as AccountLookup[] | null) ?? [];
 
   if (result.error) {
@@ -788,6 +792,11 @@ async function persistMessagingEvent(
     .from("instagram_accounts")
     .update({
       last_webhook_at: new Date().toISOString(),
+      last_webhook_check_at: new Date().toISOString(),
+      webhook_status: INSTAGRAM_WEBHOOK_STATUS_READY,
+      messaging_status: INSTAGRAM_MESSAGING_STATUS_READY,
+      webhook_subscription_error: null,
+      status: INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", account.id);

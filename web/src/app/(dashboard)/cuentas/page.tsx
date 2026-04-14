@@ -80,7 +80,7 @@ export default async function CuentasPage({
         <article className="metric-card">
           <span>Cuentas conectadas</span>
           <strong>{accounts.length}</strong>
-          <p>Disponibles para inbox y automatizaciones.</p>
+          <p>Con OAuth guardado y visibles desde el CRM.</p>
         </article>
         <article className="metric-card">
           <span>Webhook reciente</span>
@@ -108,13 +108,13 @@ export default async function CuentasPage({
             <div className="list-row">
               <div>
                 <strong>2. Validacion completa</strong>
-                <p>El backend intercambia el code, valida el token y el identificador devuelto por Meta, y guarda la cuenta conectada.</p>
+                <p>El backend intercambia el code, valida el token, guarda la cuenta y enriquece el perfil de Instagram.</p>
               </div>
             </div>
             <div className="list-row">
               <div>
-                <strong>3. Inbox persistente</strong>
-                <p>Los mensajes entran por el webhook global ya configurado en Meta, llegan a <code>/api/webhook/instagram</code>, se validan con firma SHA256 y se guardan para historial.</p>
+                <strong>3. Activacion para inbox</strong>
+                <p>Despues de OAuth activamos la suscripcion necesaria para que los mensajes entren por el webhook global ya configurado en Meta y queden listos para el inbox.</p>
               </div>
             </div>
           </div>
@@ -155,7 +155,7 @@ export default async function CuentasPage({
                 : account.name || `ID de Instagram: ${account.instagram_account_id}`;
               const accountStatusLabel = usernamePending
                 ? "Conectada · username pendiente"
-                : getInstagramAccountStatusLabel(account.status);
+                : getInstagramAccountStatusLabel(account);
 
               return (
                 <div key={account.id} className="account-row">
@@ -202,6 +202,7 @@ export default async function CuentasPage({
                     <span className="pill">{accountStatusLabel}</span>
                     <span className="status-copy">
                       {getInstagramAccountStatusCopy({
+                        account,
                         lastWebhookAt: account.last_webhook_at,
                         formatRelativeTime,
                       })}
