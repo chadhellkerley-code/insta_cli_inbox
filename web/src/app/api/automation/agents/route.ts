@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import type { AutomationAgentInput } from "@/lib/automation/types";
 import { loadAutomationAgents, saveAutomationAgent } from "@/lib/automation/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
@@ -36,8 +35,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const admin = createAdminClient();
-    const agent = await saveAutomationAgent(admin, user.id, body);
+    const agent = await saveAutomationAgent(supabase, user.id, body);
 
     return NextResponse.json({ agent });
   } catch (error) {

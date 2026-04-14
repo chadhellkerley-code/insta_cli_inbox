@@ -6,7 +6,6 @@ import {
   loadAutomationAgents,
   saveAutomationAgent,
 } from "@/lib/automation/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 type Params = {
@@ -52,8 +51,7 @@ export async function PUT(request: Request, { params }: Params) {
   }
 
   try {
-    const admin = createAdminClient();
-    const agent = await saveAutomationAgent(admin, user.id, {
+    const agent = await saveAutomationAgent(supabase, user.id, {
       ...body,
       id: params.agentId,
     });
@@ -78,8 +76,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   }
 
   try {
-    const admin = createAdminClient();
-    await deleteAutomationAgent(admin, user.id, params.agentId);
+    await deleteAutomationAgent(supabase, user.id, params.agentId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

@@ -37,6 +37,8 @@ La forma prolija de desplegar este repo en Vercel es:
    - `META_OAUTH_REDIRECT_URI`
    - `META_OAUTH_STATE_SECRET`
 
+`SUPABASE_SERVICE_ROLE_KEY` ya no es necesaria para que un usuario autenticado cree, edite o borre sus agentes desde la UI. Sigue siendo obligatoria para ejecuciones server-to-server como cron, webhooks y procesos globales sin sesion de usuario.
+
 ## Supabase schema requerido
 
 El flujo productivo actual asume que existen estas dos tablas auxiliares:

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { processDueAutomationJobs } from "@/lib/automation/runtime";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -6,12 +7,23 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-async function isAuthorized(request: Request) {
+type DispatchClient = Pick<SupabaseClient, "from">;
+
+async function resolveDispatchClient(
+  request: Request,
+): Promise<
+  | { mode: "cron"; client: DispatchClient }
+  | { mode: "user"; client: DispatchClient }
+  | { mode: "unauthorized" }
+> {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET ?? process.env.AUTOMATION_DISPATCH_SECRET;
 
   if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
-    return true;
+    return {
+      mode: "cron",
+      client: createAdminClient(),
+    };
   }
 
   const supabase = createClient();
@@ -19,21 +31,30 @@ async function isAuthorized(request: Request) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  return Boolean(user);
+  if (!user) {
+    return { mode: "unauthorized" };
+  }
+
+  return {
+    mode: "user",
+    client: supabase,
+  };
 }
 
 async function handleDispatch(request: Request) {
-  if (!(await isAuthorized(request))) {
-    return NextResponse.json({ error: "No autorizado." }, { status: 401 });
-  }
-
   try {
-    const admin = createAdminClient();
-    const summary = await processDueAutomationJobs(admin, { limit: 25 });
+    const dispatchClient = await resolveDispatchClient(request);
+
+    if (dispatchClient.mode === "unauthorized") {
+      return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+    }
+
+    const summary = await processDueAutomationJobs(dispatchClient.client, { limit: 25 });
 
     return NextResponse.json({
       ok: true,
       summary,
+      mode: dispatchClient.mode,
       processedAt: new Date().toISOString(),
     });
   } catch (error) {

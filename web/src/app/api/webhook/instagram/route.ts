@@ -16,7 +16,10 @@ import {
   INSTAGRAM_MESSAGING_STATUS_READY,
   INSTAGRAM_WEBHOOK_STATUS_READY,
 } from "@/lib/meta/account-status";
-import { scheduleAutomationForInboundMessage } from "@/lib/automation/runtime";
+import {
+  processDueAutomationJobs,
+  scheduleAutomationForInboundMessage,
+} from "@/lib/automation/runtime";
 import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -806,13 +809,20 @@ async function persistMessagingEvent(
 
   if (isInbound) {
     try {
-      await scheduleAutomationForInboundMessage(admin, {
+      const scheduleResult = await scheduleAutomationForInboundMessage(admin, {
         ownerId: account.owner_id,
         accountId: account.id,
         conversationId,
         createdAt,
         isInbound,
       });
+
+      if (scheduleResult.scheduled > 0) {
+        await processDueAutomationJobs(admin, {
+          limit: 25,
+          ownerId: account.owner_id,
+        });
+      }
     } catch (error) {
       console.warn("[instagram-webhook] automation schedule skipped", {
         accountId: account.id,

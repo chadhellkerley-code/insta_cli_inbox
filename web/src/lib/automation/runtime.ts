@@ -728,17 +728,22 @@ export async function processDueAutomationJobs(
   client: QueryClient,
   options?: {
     limit?: number;
+    ownerId?: string;
   },
 ) {
   const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
   const nowIso = new Date().toISOString();
-  const jobsResult = await client
+  let jobsQuery = client
     .from("automation_jobs")
     .select("*")
     .eq("status", "pending")
-    .lte("scheduled_for", nowIso)
-    .order("scheduled_for", { ascending: true })
-    .limit(limit);
+    .lte("scheduled_for", nowIso);
+
+  if (options?.ownerId) {
+    jobsQuery = jobsQuery.eq("owner_id", options.ownerId);
+  }
+
+  const jobsResult = await jobsQuery.order("scheduled_for", { ascending: true }).limit(limit);
   const jobs = castRows<AutomationJobRow>(jobsResult.data);
 
   if (jobsResult.error) {
