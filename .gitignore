@@ -1,6 +1,5 @@
 node_modules/
 tmp/
-.DS_Store
 db/*.sqlite
 .env
 .env.local
