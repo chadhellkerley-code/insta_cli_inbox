@@ -111,6 +111,8 @@ main {
   position: sticky;
   top: 0;
   height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
   padding: 28px 20px;
   display: flex;
   flex-direction: column;
@@ -268,6 +270,7 @@ main {
 
 .dashboard-content {
   padding: 28px;
+  min-width: 0;
 }
 
 .accounts-page {
@@ -715,11 +718,23 @@ main {
   color: var(--muted);
 }
 
+.inbox-page {
+  height: calc(100vh - 56px);
+  min-height: 0;
+  overflow: hidden;
+}
+
 .inbox-shell {
   display: grid;
   gap: 16px;
-  min-height: calc(100vh - 176px);
-  grid-template-columns: 320px minmax(0, 1fr) 320px;
+  flex: 1;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+  grid-template-columns:
+    clamp(260px, 22vw, 320px)
+    minmax(0, 1fr)
+    clamp(272px, 23vw, 320px);
 }
 
 .reminder-banner {
@@ -746,6 +761,7 @@ main {
 
 .inbox-column {
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -755,8 +771,17 @@ main {
   padding: 18px;
 }
 
+.inbox-column-list {
+  overflow: hidden;
+}
+
 .inbox-column-thread {
   padding: 18px 18px 16px;
+  overflow: hidden;
+}
+
+.inbox-column-tags {
+  overflow-y: auto;
 }
 
 .inbox-toolbar {
@@ -771,7 +796,16 @@ main {
   flex-direction: column;
   gap: 10px;
   margin-top: 16px;
+  min-height: 0;
+}
+
+.thread-list {
+  flex: 1;
   overflow-y: auto;
+}
+
+.inbox-column-tags .tag-stack {
+  overflow: visible;
 }
 
 .thread-card,
@@ -837,7 +871,7 @@ main {
 
 .message-list {
   flex: 1;
-  min-height: 320px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -923,14 +957,32 @@ code {
 }
 
 @media (max-width: 1200px) {
+  .inbox-page {
+    height: auto;
+    overflow: visible;
+  }
+
   .inbox-shell {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .inbox-column-list,
   .inbox-column-thread,
   .inbox-column-tags {
     min-height: 320px;
+  }
+
+  .inbox-column-list,
+  .inbox-column-thread,
+  .inbox-column-tags {
+    overflow: visible;
+  }
+
+  .thread-list,
+  .message-list,
+  .inbox-column-tags {
+    overflow: visible;
   }
 }
 

@@ -570,7 +570,7 @@ export function InboxRealtimeShell({
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack inbox-page">
       <section className="page-header">
         <div>
           <span className="eyebrow">Inbox</span>
