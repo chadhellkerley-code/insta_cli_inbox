@@ -1,13 +1,7 @@
 import { redirect } from "next/navigation";
 
-import { RealtimeStatus } from "@/components/realtime-status";
 import { SidebarNav } from "@/components/sidebar-nav";
-import {
-  getDisplayName,
-  loadDueReminders,
-  loadOwnedAccounts,
-  requireUserContext,
-} from "@/lib/app-data";
+import { getDisplayName, requireUserContext } from "@/lib/app-data";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -15,19 +9,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, profile, supabase } = await requireUserContext();
-  const [accounts, dueReminders] = await Promise.all([
-    loadOwnedAccounts(supabase, user.id),
-    loadDueReminders(supabase, user.id),
-  ]);
-
-  const recentWebhookAt =
-    accounts
-      .map((account) => account.last_webhook_at)
-      .filter(Boolean)
-      .sort((left, right) => {
-        return new Date(right as string).getTime() - new Date(left as string).getTime();
-      })[0] ?? null;
+  const { user, profile } = await requireUserContext();
 
   async function logoutAction() {
     "use server";
@@ -42,16 +24,9 @@ export default async function DashboardLayout({
       <aside className="dashboard-sidebar">
         <div className="sidebar-brand">
           <span>Insta CLI Inbox</span>
-          <strong>Instagram Graph CRM</strong>
-          <p>Inbox unificado en tiempo real con Meta y Supabase.</p>
+          <strong>Inbox oficial de meta</strong>
         </div>
 
-        <RealtimeStatus
-          userId={user.id}
-          initialConnectedAccounts={accounts.length}
-          initialDueReminders={dueReminders.length}
-          initialRecentWebhookAt={recentWebhookAt}
-        />
         <SidebarNav />
 
         <div className="sidebar-user">
