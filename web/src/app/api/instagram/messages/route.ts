@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { sendInstagramMessage } from "@/lib/meta/client";
+import {
+  INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
+  INSTAGRAM_MESSAGING_STATUS_READY,
+} from "@/lib/meta/account-status";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -222,6 +226,20 @@ export async function POST(request: Request) {
 
     if (conversationUpdate.error) {
       throw new Error(conversationUpdate.error.message);
+    }
+
+    const readinessUpdate = await admin
+      .from("instagram_accounts")
+      .update({
+        messaging_status: INSTAGRAM_MESSAGING_STATUS_READY,
+        status: INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
+        webhook_subscription_error: null,
+        updated_at: createdAt,
+      } as never)
+      .eq("id", account.id);
+
+    if (readinessUpdate.error) {
+      throw new Error(readinessUpdate.error.message);
     }
 
     logInstagramMessage("info", "message persisted", {

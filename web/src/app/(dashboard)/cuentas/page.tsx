@@ -113,8 +113,8 @@ export default async function CuentasPage({
             </div>
             <div className="list-row">
               <div>
-                <strong>3. Activacion para inbox</strong>
-                <p>Despues de OAuth activamos la suscripcion necesaria para que los mensajes entren por el webhook global ya configurado en Meta y queden listos para el inbox.</p>
+                <strong>3. Prueba operativa</strong>
+                <p>Despues de OAuth la cuenta queda conectada en el CRM. Solo pasa a lista para inbox cuando entra el primer webhook real o confirmamos una operacion real de mensajeria.</p>
               </div>
             </div>
           </div>
@@ -181,7 +181,7 @@ export default async function CuentasPage({
                     </p>
                     {usernamePending ? (
                       <p className="status-copy">
-                        La cuenta ya esta operativa. Si el username sigue pendiente, lo reintentamos usando el token conectado.
+                        El username sigue pendiente. La readiness real depende de webhook o mensajeria, no del username.
                       </p>
                     ) : null}
                     <p>

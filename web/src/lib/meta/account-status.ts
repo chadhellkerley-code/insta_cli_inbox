@@ -37,21 +37,21 @@ export function getInstagramAccountStatusLabel(account: AccountReadinessStatus) 
   }
 
   if (account.webhook_status === INSTAGRAM_WEBHOOK_STATUS_FAILED) {
-    return "Connected · webhook failed";
+    return "Connected · review required";
   }
 
   if (
     account.webhook_status === INSTAGRAM_WEBHOOK_STATUS_PENDING ||
     account.status === INSTAGRAM_ACCOUNT_STATUS_OAUTH_CONNECTED
   ) {
-    return "Connected · webhook pending";
+    return "Connected · waiting for proof";
   }
 
   if (
     account.webhook_status === INSTAGRAM_WEBHOOK_STATUS_READY ||
     account.status === INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_READY
   ) {
-    return "Connected";
+    return "Connected · webhook proven";
   }
 
   if (!account.status || account.status === "connected") {
@@ -86,21 +86,17 @@ export function getInstagramAccountStatusCopy(options: {
     }
 
     if (options.account.last_webhook_check_at) {
-      return `La activacion del webhook fallo ${options.formatRelativeTime(options.account.last_webhook_check_at)}.`;
+      return `Se registro un error de configuracion ${options.formatRelativeTime(options.account.last_webhook_check_at)}. La cuenta sigue conectada, pero sin prueba operativa.`;
     }
 
-    return "La activacion del webhook fallo. La cuenta no esta lista para inbox.";
+    return "La cuenta esta conectada, pero sigue sin prueba operativa para inbox.";
   }
 
   if (
     options.account.webhook_status === INSTAGRAM_WEBHOOK_STATUS_PENDING ||
     options.account.status === INSTAGRAM_ACCOUNT_STATUS_OAUTH_CONNECTED
   ) {
-    if (options.account.last_webhook_check_at) {
-      return `Estamos terminando de activar el webhook. Ultimo chequeo ${options.formatRelativeTime(options.account.last_webhook_check_at)}.`;
-    }
-
-    return "Estamos terminando de activar el webhook para dejar la cuenta lista.";
+    return "OAuth completo. Esperando el primer webhook real o una operacion real de mensajeria.";
   }
 
   if (
@@ -108,15 +104,15 @@ export function getInstagramAccountStatusCopy(options: {
     options.account.status === INSTAGRAM_ACCOUNT_STATUS_WEBHOOK_READY
   ) {
     if (options.lastWebhookAt) {
-      return `Webhook activo ${options.formatRelativeTime(options.lastWebhookAt)}.`;
+      return `Primer webhook real recibido ${options.formatRelativeTime(options.lastWebhookAt)}.`;
     }
 
-    return "Webhook activado. Falta confirmar mensajeria con trafico real.";
+    return "Recibimos evidencia de webhook. Falta confirmar mensajeria real.";
   }
 
   if (options.lastWebhookAt) {
     return `Webhook ${options.formatRelativeTime(options.lastWebhookAt)}`;
   }
 
-  return "Esperando el primer evento del webhook.";
+  return "Esperando el primer webhook real.";
 }

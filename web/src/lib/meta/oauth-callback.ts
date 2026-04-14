@@ -368,11 +368,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     const readinessMessage =
       readiness.status === "messaging_ready"
         ? "Ready for inbox."
-        : readiness.webhookStatus === "failed"
-          ? "La cuenta quedo conectada, pero la activacion del webhook fallo. Revisa el estado en /cuentas."
-          : readiness.webhookStatus === "ready"
-            ? "La cuenta quedo conectada y el webhook esta activo, pero todavia falta confirmar mensajeria completa."
-            : "La cuenta quedo conectada y visible en el CRM. El inbox quedara listo cuando entren eventos del webhook.";
+        : "La cuenta quedo conectada y visible en el CRM. La vamos a marcar lista solo cuando recibamos un webhook real o confirmemos una operacion real de mensajeria.";
 
     return createMetaOauthCompletionResponse(
       origin,

@@ -23,7 +23,7 @@ function mapStatus(
     return {
       label: "Sin cuentas conectadas",
       tone: "offline" as StatusTone,
-      detail: "Conecta una cuenta Professional para activar el inbox.",
+      detail: "Conecta una cuenta Professional para usar el inbox.",
     };
   }
 
@@ -46,7 +46,7 @@ function mapStatus(
     detail:
       dueReminders > 0
         ? `${dueReminders} recordatorio(s) vencido(s) dentro de la app.`
-        : `${connectedAccounts} cuenta(s) listas. Esperando nuevos mensajes de Meta.`,
+        : `${connectedAccounts} cuenta(s) conectada(s) por OAuth. Esperando trafico real de Meta.`,
   };
 }
 

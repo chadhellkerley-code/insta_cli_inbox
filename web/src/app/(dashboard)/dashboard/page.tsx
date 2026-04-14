@@ -58,7 +58,7 @@ export default async function DashboardPage() {
         <article className="metric-card">
           <span>Cuentas conectadas</span>
           <strong>{formatCompactNumber(metrics.activeAccounts)}</strong>
-          <p>Perfiles Professional listos para operar.</p>
+          <p>Perfiles Professional conectados por OAuth.</p>
         </article>
         <article className="metric-card">
           <span>Recordatorios vencidos</span>
@@ -124,7 +124,7 @@ export default async function DashboardPage() {
             <div className="list-row">
               <div>
                 <strong>{accounts.filter((account) => account.last_webhook_at).length}</strong>
-                <p>cuentas con webhook ya activo</p>
+                <p>cuentas con al menos un webhook real</p>
               </div>
               <span className="pill">Webhook</span>
             </div>
@@ -139,7 +139,7 @@ export default async function DashboardPage() {
           {enrichedConversations.length === 0 ? (
             <div className="empty-state compact">
               <strong>No hay conversaciones aun</strong>
-              <p>Cuando Meta entregue mensajes por webhook, el dashboard se llena solo.</p>
+              <p>Cuando llegue el primer mensaje real por webhook, el dashboard se llena solo.</p>
             </div>
           ) : (
             <div className="stack-list">
