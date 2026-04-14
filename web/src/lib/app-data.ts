@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { syncInstagramUsernamesFromStoredRuntimeMetadata } from "@/lib/meta/instagram-username";
+import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 export type {
@@ -22,6 +23,7 @@ export {
   getConversationLabels,
   getConversationPreview,
   getDisplayName,
+  getInstagramAccountDisplayName,
   getMessagePreview,
 } from "@/lib/shared-data";
 import type {
@@ -39,6 +41,12 @@ function castRow<T>(value: unknown) {
 function castRows<T>(value: unknown) {
   return value as T[];
 }
+
+type InstagramContactRecord = {
+  contact_igsid: string;
+  contact_username: string | null;
+  contact_name: string | null;
+};
 
 export async function selectOwnedAccounts(
   supabase: SupabaseClient,
@@ -122,13 +130,46 @@ export async function loadOwnedAccounts(
     return accounts;
   }
 
+  const admin = createAdminClient();
+  const graphEnrichmentResults = await Promise.all(
+    accounts.map(async (account) => {
+      const needsGraphEnrichment =
+        !account.username ||
+        account.username.startsWith("ig_") ||
+        !account.name ||
+        !account.profile_picture_url;
+
+      if (!needsGraphEnrichment) {
+        return false;
+      }
+
+      try {
+        const result = await syncInstagramAccountProfile({
+          admin,
+          account,
+        });
+
+        return result.updated;
+      } catch (error) {
+        console.warn("[loadOwnedAccounts] graph profile enrichment skipped", {
+          userId,
+          accountId: account.id,
+          instagramAccountId: account.instagram_account_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    }),
+  );
+  const graphEnrichmentCount = graphEnrichmentResults.filter(Boolean).length;
+
   const updatedAccounts = await syncInstagramUsernamesFromStoredRuntimeMetadata({
-    admin: createAdminClient(),
+    admin,
     ownerId: userId,
     accounts,
   });
 
-  if (updatedAccounts === 0) {
+  if (updatedAccounts === 0 && graphEnrichmentCount === 0) {
     return accounts;
   }
 
@@ -159,7 +200,46 @@ export async function loadConversations(
     return [];
   }
 
-  return castRows<ConversationRecord>(data);
+  const conversations = castRows<ConversationRecord>(data);
+
+  if (conversations.length === 0) {
+    return conversations;
+  }
+
+  const contactIds = Array.from(
+    new Set(conversations.map((conversation) => conversation.contact_igsid).filter(Boolean)),
+  );
+
+  if (contactIds.length === 0) {
+    return conversations;
+  }
+
+  const { data: contactsData, error: contactsError } = await supabase
+    .from("instagram_contacts")
+    .select("contact_igsid, contact_username, contact_name")
+    .eq("owner_id", userId)
+    .in("contact_igsid", contactIds);
+
+  if (contactsError || !contactsData) {
+    return conversations;
+  }
+
+  const contacts = castRows<InstagramContactRecord>(contactsData);
+  const contactMap = new Map(contacts.map((contact) => [contact.contact_igsid, contact]));
+
+  return conversations.map((conversation) => {
+    const contact = contactMap.get(conversation.contact_igsid);
+
+    if (!contact) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      contact_username: contact.contact_username ?? conversation.contact_username,
+      contact_name: contact.contact_name ?? conversation.contact_name,
+    };
+  });
 }
 
 export async function loadConversationMessages(

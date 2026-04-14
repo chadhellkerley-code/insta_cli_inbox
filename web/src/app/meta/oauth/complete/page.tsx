@@ -17,7 +17,7 @@ function MetaOauthCompleteContent({
   const message =
     searchParams?.message ??
     (status === "success"
-      ? "Cuenta conectada correctamente. El username real se sincronizara cuando llegue metadata confiable."
+      ? "Cuenta conectada correctamente."
       : "No pudimos completar la conexion.");
 
   return (

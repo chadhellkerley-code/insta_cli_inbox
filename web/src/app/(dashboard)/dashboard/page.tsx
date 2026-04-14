@@ -6,6 +6,7 @@ import {
   formatRelativeTime,
   getConversationDisplayName,
   getConversationPreview,
+  getInstagramAccountDisplayName,
   loadConversations,
   loadDueReminders,
   loadOwnedAccounts,
@@ -147,7 +148,8 @@ export default async function DashboardPage() {
                   <div>
                     <strong>{getConversationDisplayName(conversation)}</strong>
                     <p>
-                      @{conversation.account_username} - {getConversationPreview(conversation)}
+                      {getInstagramAccountDisplayName(conversation.account_username)} -{" "}
+                      {getConversationPreview(conversation)}
                     </p>
                   </div>
                   <span className="muted">{formatRelativeTime(conversation.last_message_at)}</span>

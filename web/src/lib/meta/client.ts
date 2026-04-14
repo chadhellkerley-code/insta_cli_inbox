@@ -27,6 +27,14 @@ type RawShortLivedTokenResponse = ShortLivedTokenPayload & {
   data?: ShortLivedTokenPayload[];
 };
 
+type InstagramProfilePayload = {
+  id?: string | number;
+  username?: string;
+  name?: string;
+  profile_picture_url?: string;
+  profile_pic?: string;
+};
+
 type ShortLivedTokenResponse = {
   access_token: string;
   user_id?: string;
@@ -93,6 +101,15 @@ function getMetaErrorMessage(payload: unknown) {
 
 async function readMetaJson(response: Response) {
   return (await response.json().catch(() => null)) as unknown;
+}
+
+function normalizeOptionalString(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 function assertMetaResponseOk(response: Response, payload: unknown, context: string) {
@@ -196,6 +213,52 @@ export function buildInstagramProfileEnrichmentDiagnostic(options: {
       "Instagram Login tokens from api.instagram.com/oauth/access_token are not valid for the profile read paths observed during callback diagnostics.",
     nextAction:
       `Run profile enrichment later with a supported endpoint for this token type. Current token lifecycle: ${options.tokenLifecycle ?? "unknown"}.`,
+  };
+}
+
+export async function fetchInstagramAccountProfile(options: { accessToken: string }) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me`);
+  url.searchParams.set("fields", "id,username,name,profile_picture_url");
+  url.searchParams.set("access_token", options.accessToken);
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as InstagramProfilePayload | null;
+
+  assertMetaResponseOk(response, payload, "Instagram account profile fetch failed");
+
+  return {
+    id: normalizeMetaIdentifier(payload?.id),
+    username: normalizeOptionalString(payload?.username),
+    name: normalizeOptionalString(payload?.name),
+    profilePictureUrl: normalizeOptionalString(payload?.profile_picture_url),
+  };
+}
+
+export async function fetchInstagramUserProfile(options: {
+  accessToken: string;
+  igScopedId: string;
+}) {
+  const oauthConfig = getMetaOauthConfig();
+  const url = new URL(`${oauthConfig.graphBaseUrl}/${options.igScopedId}`);
+  url.searchParams.set("fields", "username,name,profile_pic");
+  url.searchParams.set("access_token", options.accessToken);
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as InstagramProfilePayload | null;
+
+  assertMetaResponseOk(response, payload, "Instagram user profile fetch failed");
+
+  return {
+    username: normalizeOptionalString(payload?.username),
+    name: normalizeOptionalString(payload?.name),
+    profilePictureUrl: normalizeOptionalString(payload?.profile_pic),
   };
 }
 

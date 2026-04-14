@@ -14,6 +14,7 @@ import {
   getConversationDisplayName,
   getConversationLabels,
   getConversationPreview,
+  getInstagramAccountDisplayName,
   getMessagePreview,
 } from "@/lib/shared-data";
 import { createClient } from "@/lib/supabase/client";
@@ -324,10 +325,8 @@ export function InboxRealtimeShell({
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
       const displayName = getConversationDisplayName(conversation).toLowerCase();
-      const accountUsername = (
-        accountUsernameMap.get(conversation.account_id) ??
-        conversation.account_username ??
-        ""
+      const accountUsername = getInstagramAccountDisplayName(
+        accountUsernameMap.get(conversation.account_id) ?? conversation.account_username,
       ).toLowerCase();
       const preview = getConversationPreview(conversation).toLowerCase();
       const searchTerm = search.trim().toLowerCase();
@@ -691,11 +690,10 @@ export function InboxRealtimeShell({
                   <span>{formatRelativeTime(conversation.last_message_at)}</span>
                 </div>
                 <span className="thread-account">
-                  @{
+                  {getInstagramAccountDisplayName(
                     accountUsernameMap.get(conversation.account_id) ??
-                    conversation.account_username ??
-                    "cuenta"
-                  }
+                      conversation.account_username,
+                  )}
                 </span>
                 <p>{getConversationPreview(conversation)}</p>
                 <div className="thread-meta">
@@ -720,11 +718,10 @@ export function InboxRealtimeShell({
               </h2>
               <p className="page-copy">
                 {selectedConversation
-                  ? `Cuenta @${
+                  ? `${getInstagramAccountDisplayName(
                       accountUsernameMap.get(selectedConversation.account_id) ??
-                      selectedConversation.account_username ??
-                      "cuenta"
-                    } - ${selectedConversation.last_message_type || "texto"}`
+                        selectedConversation.account_username,
+                    )} - ${selectedConversation.last_message_type || "texto"}`
                   : "Elige una conversacion para ver el historial y responder."}
               </p>
             </div>

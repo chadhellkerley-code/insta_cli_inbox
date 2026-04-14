@@ -181,7 +181,7 @@ export default async function CuentasPage({
                     </p>
                     {usernamePending ? (
                       <p className="status-copy">
-                        La cuenta ya esta operativa. El username real se mostrara cuando llegue metadata confiable.
+                        La cuenta ya esta operativa. Si el username sigue pendiente, lo reintentamos usando el token conectado.
                       </p>
                     ) : null}
                     <p>

@@ -11,6 +11,7 @@ import {
   resolveInstagramUsernameCandidateFromMessagingEvent,
   syncInstagramUsername,
 } from "@/lib/meta/instagram-username";
+import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -51,12 +52,18 @@ type AccountLookup = {
   instagram_account_id: string;
   instagram_app_user_id: string | null;
   username: string | null;
+  access_token: string;
+  token_expires_at: string | null;
+  last_oauth_at: string | null;
+  name?: string | null;
+  profile_picture_url?: string | null;
   status?: string | null;
 };
 
 type ConversationLookup = {
   id: string;
   contact_username: string | null;
+  contact_name: string | null;
   unread_count: number | null;
 };
 
@@ -195,7 +202,7 @@ async function loadAccountById(
   const result = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username",
+      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
     )
     .eq("id", accountId)
     .maybeSingle();
@@ -270,7 +277,7 @@ async function findAccountForEvent(
       const result = await admin
         .from("instagram_accounts")
         .select(
-          "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username",
+          "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
         )
         .eq(column, candidateId)
         .maybeSingle();
@@ -294,7 +301,7 @@ async function findAccountForEvent(
     const usernameResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username",
+        "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
       )
       .in("username", candidateUsernames)
       .limit(candidateUsernames.length);
@@ -343,7 +350,7 @@ async function findBootstrapAccountForEvent(
   const result = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, status",
+      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
     )
     .eq("status", "connected");
   const accounts = (result.data as AccountLookup[] | null) ?? [];
@@ -528,6 +535,7 @@ async function upsertConversationForMessage(
     ownerId: string;
     contactIgsid: string;
     contactUsername: string | null;
+    contactName: string | null;
     preview: string;
     messageType: string;
     createdAt: string;
@@ -536,7 +544,7 @@ async function upsertConversationForMessage(
 ) {
   const existingResult = await admin
     .from("instagram_conversations")
-    .select("id, contact_username, unread_count")
+    .select("id, contact_username, contact_name, unread_count")
     .eq("account_id", options.accountId)
     .eq("contact_igsid", options.contactIgsid)
     .maybeSingle();
@@ -551,6 +559,7 @@ async function upsertConversationForMessage(
       .from("instagram_conversations")
       .update({
         contact_username: options.contactUsername ?? existing.contact_username,
+        contact_name: options.contactName ?? existing.contact_name,
         last_message_text: options.preview,
         last_message_type: options.messageType,
         last_message_at: options.createdAt,
@@ -576,6 +585,7 @@ async function upsertConversationForMessage(
       account_id: options.accountId,
       contact_igsid: options.contactIgsid,
       contact_username: options.contactUsername,
+      contact_name: options.contactName,
       last_message_text: options.preview,
       last_message_type: options.messageType,
       last_message_at: options.createdAt,
@@ -612,6 +622,42 @@ function resolveConversationContactUsername(
   return null;
 }
 
+async function resolveConversationContactProfile(
+  admin: ReturnType<typeof createAdminClient>,
+  account: AccountLookup,
+  contactIgsid: string,
+  event: MessagingEvent,
+  isInbound: boolean,
+) {
+  const webhookUsername = normalizeInstagramUsername(
+    resolveConversationContactUsername(account, event, isInbound),
+  );
+
+  try {
+    const cachedProfile = await resolveInstagramContactProfile({
+      admin,
+      account,
+      contactIgsid,
+    });
+
+    return {
+      contactUsername: cachedProfile.contactUsername ?? webhookUsername,
+      contactName: cachedProfile.contactName,
+    };
+  } catch (error) {
+    console.warn("[instagram-webhook] contact profile enrichment skipped", {
+      accountId: account.id,
+      contactIgsid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return {
+    contactUsername: webhookUsername,
+    contactName: null,
+  };
+}
+
 async function enrichAccountUsernameFromEvent(
   admin: ReturnType<typeof createAdminClient>,
   account: AccountLookup,
@@ -637,7 +683,7 @@ async function persistMessagingEvent(
   entryId: string | null,
   match: AccountMatchResult,
   event: MessagingEvent,
-) : Promise<PersistMessagingEventResult> {
+): Promise<PersistMessagingEventResult> {
   if (!event.message) {
     return {
       status: "skipped",
@@ -693,11 +739,19 @@ async function persistMessagingEvent(
     : mapAttachmentType(attachment?.type);
   const createdAt = resolveWebhookTimestampToIso(event.timestamp);
   const preview = getMessagePreview(event.message.text ?? null, messageType);
+  const contactProfile = await resolveConversationContactProfile(
+    admin,
+    account,
+    contactIgsid,
+    event,
+    isInbound,
+  );
   const conversationId = await upsertConversationForMessage(admin, {
     accountId: account.id,
     ownerId: account.owner_id,
     contactIgsid,
-    contactUsername: resolveConversationContactUsername(account, event, isInbound),
+    contactUsername: contactProfile.contactUsername,
+    contactName: contactProfile.contactName,
     preview,
     messageType,
     createdAt,

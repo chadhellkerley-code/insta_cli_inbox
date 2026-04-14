@@ -1,5 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 
+import { isFallbackInstagramUsername } from "@/lib/meta/instagram-username";
+
 export type UserProfile = {
   id: string;
   role: string | null;
@@ -111,12 +113,33 @@ export function enrichConversationsWithAccounts(
   }));
 }
 
+export function getInstagramAccountDisplayName(username?: string | null) {
+  const normalized = username?.trim().replace(/^@+/, "") ?? null;
+
+  if (!normalized || isFallbackInstagramUsername(normalized)) {
+    return "Cuenta conectada";
+  }
+
+  return `@${normalized}`;
+}
+
 export function getConversationDisplayName(conversation: ConversationRecord) {
-  return (
-    conversation.contact_username ||
-    conversation.contact_name ||
-    `Usuario ${conversation.contact_igsid.slice(-6)}`
-  );
+  const username = conversation.contact_username?.trim().replace(/^@+/, "") ?? null;
+  const name = conversation.contact_name?.trim() ?? null;
+
+  if (username && !isFallbackInstagramUsername(username)) {
+    return `@${username}`;
+  }
+
+  if (name) {
+    return name;
+  }
+
+  if (conversation.contact_igsid) {
+    return `Contacto ${conversation.contact_igsid.slice(-6)}`;
+  }
+
+  return "Contacto";
 }
 
 export function getMessagePreview(message: MessageRecord) {

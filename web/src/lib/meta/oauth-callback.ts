@@ -17,7 +17,11 @@ import {
 } from "@/lib/meta/oauth-observability";
 import { persistInstagramAccountIdentifiers } from "@/lib/meta/account-identifiers";
 import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
-import { buildFallbackInstagramUsername } from "@/lib/meta/instagram-username";
+import {
+  buildFallbackInstagramUsername,
+  isFallbackInstagramUsername,
+} from "@/lib/meta/instagram-username";
+import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { resolveInitialInstagramToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -202,13 +206,6 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error("Meta no devolvio el identificador de la cuenta de Instagram.");
     }
 
-    console.info("[meta-oauth] username enrichment deferred", {
-      instagramUserId,
-      fallbackUsername: buildFallbackInstagramUsername(instagramUserId),
-      tokenLifecycle: managedToken.lifecycle,
-      reason: "callback-persists-token-only-and-defers-username-resolution",
-    });
-
     const existingResult = await admin
       .from("instagram_accounts")
       .select(
@@ -228,8 +225,11 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
 
     const resolvedInstagramAccountId = instagramUserId;
     const resolvedInstagramAppUserId = existing?.instagram_app_user_id ?? null;
+    const existingUsername = existing?.username?.trim() ?? null;
     const resolvedUsername =
-      existing?.username?.trim() || buildFallbackInstagramUsername(instagramUserId);
+      existingUsername && !isFallbackInstagramUsername(existingUsername)
+        ? existingUsername
+        : buildFallbackInstagramUsername(instagramUserId);
 
     const upsertResult = await admin
       .from("instagram_accounts")
@@ -273,6 +273,35 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       throw new Error(upsertResult.error?.message ?? "No pudimos guardar la cuenta de Instagram.");
     }
 
+    let enrichedUsername =
+      resolvedUsername && !isFallbackInstagramUsername(resolvedUsername)
+        ? resolvedUsername
+        : null;
+
+    try {
+      const enrichedProfile = await syncInstagramAccountProfile({
+        admin,
+        account: {
+          id: upsertedAccount.id,
+          instagram_account_id: upsertedAccount.instagram_account_id,
+          access_token: managedToken.accessToken,
+          token_expires_at: managedToken.expiresAt,
+          username: resolvedUsername,
+          name: existing?.name ?? null,
+          profile_picture_url: existing?.profile_picture_url ?? null,
+        },
+      });
+
+      enrichedUsername = enrichedProfile.username;
+    } catch (profileError) {
+      console.warn("[meta-oauth] account profile enrichment failed", {
+        instagramUserId,
+        accountId: upsertedAccount.id,
+        error:
+          profileError instanceof Error ? profileError.message : String(profileError),
+      });
+    }
+
     await persistInstagramAccountIdentifiers({
       admin,
       accountId: upsertedAccount.id,
@@ -296,9 +325,10 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       origin,
       {
         status: "success",
-        message:
-          "Cuenta conectada correctamente. El username real se sincronizara cuando llegue metadata confiable.",
-        username: undefined,
+        message: enrichedUsername
+          ? `Cuenta conectada correctamente como @${enrichedUsername}.`
+          : "Cuenta conectada correctamente. Si el username todavia no aparece, lo vamos a reintentar con el token conectado.",
+        username: enrichedUsername ?? undefined,
       },
       { code },
     );
