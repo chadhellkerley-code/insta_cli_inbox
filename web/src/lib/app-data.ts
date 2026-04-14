@@ -34,6 +34,9 @@ import type {
   UserProfile,
 } from "@/lib/shared-data";
 
+const INSTAGRAM_ACCOUNT_SELECT =
+  "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, name, account_type, profile_picture_url, status, token_obtained_at, expires_in, expires_at, token_expires_at, token_lifecycle, last_token_refresh_at, connected_at, last_oauth_at, last_webhook_at, created_at, updated_at";
+
 function castRow<T>(value: unknown) {
   return value as T;
 }
@@ -58,21 +61,28 @@ type InstagramAccountProfileSyncRecord = {
   token_expires_at: string | null;
 };
 
+function getSupabaseProjectHost() {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").host || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function selectOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
   const { data, error } = await supabase
     .from("instagram_accounts")
-    .select(
-      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, name, account_type, profile_picture_url, status, token_obtained_at, expires_in, expires_at, token_expires_at, token_lifecycle, last_token_refresh_at, connected_at, last_oauth_at, last_webhook_at, created_at, updated_at",
-    )
+    .select(INSTAGRAM_ACCOUNT_SELECT)
     .eq("owner_id", userId)
     .order("created_at", { ascending: false });
 
   if (error || !data) {
     console.error("[selectOwnedAccounts] failed", {
       userId,
+      projectHost: getSupabaseProjectHost(),
       error: error?.message,
       details: error?.details,
       hint: error?.hint,
@@ -83,7 +93,41 @@ export async function selectOwnedAccounts(
 
   console.log("[selectOwnedAccounts] raw rows", {
     userId,
+    projectHost: getSupabaseProjectHost(),
     count: data.length,
+    rows: data,
+  });
+
+  return castRows<InstagramAccountRecord>(data);
+}
+
+async function selectOwnedAccountsWithAdmin(
+  userId: string,
+): Promise<InstagramAccountRecord[]> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("instagram_accounts")
+    .select(INSTAGRAM_ACCOUNT_SELECT)
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error || !data) {
+    console.error("[selectOwnedAccountsWithAdmin] failed", {
+      userId,
+      projectHost: getSupabaseProjectHost(),
+      error: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      code: error?.code,
+    });
+    return [];
+  }
+
+  console.log("[selectOwnedAccountsWithAdmin] raw rows", {
+    userId,
+    projectHost: getSupabaseProjectHost(),
+    count: data.length,
+    ownerIds: data.map((account) => account.owner_id),
     rows: data,
   });
 
@@ -130,10 +174,26 @@ export async function loadOwnedAccounts(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<InstagramAccountRecord[]> {
-  const accounts = await selectOwnedAccounts(supabase, userId);
+  let accounts = await selectOwnedAccounts(supabase, userId);
+
+  if (accounts.length === 0) {
+    const adminAccounts = await selectOwnedAccountsWithAdmin(userId);
+
+    if (adminAccounts.length > 0) {
+      console.warn("[loadOwnedAccounts] user-scoped query returned 0 but admin query found rows", {
+        userId,
+        projectHost: getSupabaseProjectHost(),
+        adminCount: adminAccounts.length,
+        ownerIds: adminAccounts.map((account) => account.owner_id),
+        accountIds: adminAccounts.map((account) => account.instagram_account_id),
+      });
+      accounts = adminAccounts;
+    }
+  }
 
   console.log("[loadOwnedAccounts] mapped accounts", {
     userId,
+    projectHost: getSupabaseProjectHost(),
     count: accounts.length,
     accounts,
   });
@@ -202,8 +262,24 @@ export async function loadOwnedAccounts(
 
   const refreshedAccounts = await selectOwnedAccounts(supabase, userId);
 
+  if (refreshedAccounts.length === 0) {
+    const adminAccounts = await selectOwnedAccountsWithAdmin(userId);
+
+    if (adminAccounts.length > 0) {
+      console.warn("[loadOwnedAccounts] refreshed user-scoped query returned 0 but admin query found rows", {
+        userId,
+        projectHost: getSupabaseProjectHost(),
+        adminCount: adminAccounts.length,
+        ownerIds: adminAccounts.map((account) => account.owner_id),
+        accountIds: adminAccounts.map((account) => account.instagram_account_id),
+      });
+      return adminAccounts;
+    }
+  }
+
   console.log("[loadOwnedAccounts] mapped accounts", {
     userId,
+    projectHost: getSupabaseProjectHost(),
     count: refreshedAccounts.length,
     accounts: refreshedAccounts,
   });

@@ -260,10 +260,11 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
           onConflict: "instagram_account_id",
         },
       )
-      .select("id, instagram_user_id, instagram_account_id, instagram_app_user_id")
+      .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
       .maybeSingle();
     const upsertedAccount = upsertResult.data as {
       id: string;
+      owner_id: string;
       instagram_user_id: string | null;
       instagram_account_id: string;
       instagram_app_user_id: string | null;
@@ -272,6 +273,14 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     if (upsertResult.error || !upsertedAccount) {
       throw new Error(upsertResult.error?.message ?? "No pudimos guardar la cuenta de Instagram.");
     }
+
+    console.info("[meta-oauth] instagram account persisted", {
+      userIdFromState: oauthState.userId,
+      persistedOwnerId: upsertedAccount.owner_id,
+      accountId: upsertedAccount.id,
+      instagramAccountId: upsertedAccount.instagram_account_id,
+      instagramUserId: upsertedAccount.instagram_user_id,
+    });
 
     let enrichedUsername =
       resolvedUsername && !isFallbackInstagramUsername(resolvedUsername)
