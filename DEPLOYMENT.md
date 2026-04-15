@@ -94,6 +94,7 @@ https://insta-cli-inbox.vercel.app/api/webhook/instagram
 ```
 
 4. En `Verify token`, usar exactamente el mismo valor que `META_WEBHOOK_VERIFY_TOKEN`.
+   Para esta configuracion, el valor esperado es `meta_inbox_state_secret_2023`.
 5. Verificar y guardar el endpoint.
 6. Suscribir la app a los fields del objeto `Instagram` que usa este proyecto:
    - `messages`

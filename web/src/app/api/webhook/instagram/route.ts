@@ -859,6 +859,12 @@ export async function GET(request: Request) {
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
   const requestUrl = new URL(request.url);
+  const verificationFailedResponse = new Response("Webhook verification failed.", {
+    status: 403,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+    },
+  });
 
   logWebhook("info", "verification request received", {
     method: request.method,
@@ -881,17 +887,22 @@ export async function GET(request: Request) {
     });
 
     if (verified && challenge) {
-      return new Response(challenge, { status: 200 });
+      return new Response(challenge, {
+        status: 200,
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+        },
+      });
     }
   } catch (error) {
     logWebhook("error", "verification failed", {
       mode,
       error: error instanceof Error ? error.message : String(error),
     });
-    return NextResponse.json({ error: "Webhook verification failed." }, { status: 500 });
+    return verificationFailedResponse;
   }
 
-  return NextResponse.json({ error: "Webhook verification failed." }, { status: 403 });
+  return verificationFailedResponse;
 }
 
 export async function POST(request: Request) {
