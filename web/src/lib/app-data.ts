@@ -127,7 +127,11 @@ function isMissingInstagramContactsTableError(
 
 function getSupabaseProjectHost() {
   try {
-    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").host || "unknown";
+    return (
+      new URL(
+        process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "",
+      ).host || "unknown"
+    );
   } catch {
     return "unknown";
   }

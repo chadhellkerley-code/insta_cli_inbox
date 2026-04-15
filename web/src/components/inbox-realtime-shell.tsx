@@ -183,8 +183,10 @@ export function InboxRealtimeShell({
       return;
     }
 
+    const currentConversationId = selectedConversationId;
+
     if (
-      selectedConversationId === initialSelectedConversationId &&
+      currentConversationId === initialSelectedConversationId &&
       initialMessages.length > 0
     ) {
       setMessages(sortMessages(initialMessages));
@@ -196,7 +198,7 @@ export function InboxRealtimeShell({
 
     async function loadMessages() {
       setLoadingMessages(true);
-      const nextMessages = await loadMessageRows(supabase, selectedConversationId);
+      const nextMessages = await loadMessageRows(supabase, currentConversationId);
 
       if (cancelled) {
         return;
