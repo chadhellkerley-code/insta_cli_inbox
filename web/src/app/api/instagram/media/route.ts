@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  INSTAGRAM_AUDIO_ALLOWED_MIME_TYPES,
+  INSTAGRAM_AUDIO_MAX_FILE_SIZE_BYTES,
+  resolveInstagramAudioUpload,
+} from "@/lib/meta/audio";
 import { META_MEDIA_BUCKET } from "@/lib/meta/config";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -12,15 +17,40 @@ async function ensureBucket() {
     throw new Error(buckets.error.message);
   }
 
-  if (!buckets.data.some((bucket) => bucket.name === META_MEDIA_BUCKET)) {
+  const existingBucket = buckets.data.find((bucket) => bucket.name === META_MEDIA_BUCKET);
+  const desiredConfig = {
+    public: true,
+    fileSizeLimit: INSTAGRAM_AUDIO_MAX_FILE_SIZE_BYTES,
+    allowedMimeTypes: [...INSTAGRAM_AUDIO_ALLOWED_MIME_TYPES],
+  };
+
+  if (!existingBucket) {
     const created = await admin.storage.createBucket(META_MEDIA_BUCKET, {
-      public: true,
-      fileSizeLimit: "25MB",
-      allowedMimeTypes: ["audio/mpeg", "audio/mp4", "audio/wav", "audio/x-wav"],
+      public: desiredConfig.public,
+      fileSizeLimit: desiredConfig.fileSizeLimit,
+      allowedMimeTypes: desiredConfig.allowedMimeTypes,
     });
 
     if (created.error && !created.error.message.includes("already exists")) {
       throw new Error(created.error.message);
+    }
+
+    return;
+  }
+
+  const currentMimeTypes = [...(existingBucket.allowed_mime_types ?? [])].sort();
+  const expectedMimeTypes = [...desiredConfig.allowedMimeTypes].sort();
+  const needsUpdate =
+    existingBucket.public !== desiredConfig.public ||
+    existingBucket.file_size_limit !== desiredConfig.fileSizeLimit ||
+    currentMimeTypes.length !== expectedMimeTypes.length ||
+    currentMimeTypes.some((mimeType, index) => mimeType !== expectedMimeTypes[index]);
+
+  if (needsUpdate) {
+    const updated = await admin.storage.updateBucket(META_MEDIA_BUCKET, desiredConfig);
+
+    if (updated.error) {
+      throw new Error(updated.error.message);
     }
   }
 }
@@ -42,14 +72,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No recibimos un archivo." }, { status: 400 });
   }
 
-  if (!file.type.startsWith("audio/")) {
+  const normalizedAudio = resolveInstagramAudioUpload({
+    name: file.name,
+    type: file.type,
+  });
+
+  if (!normalizedAudio) {
     return NextResponse.json(
-      { error: "Solo se admiten archivos de audio." },
+      { error: "Solo se admiten audios MP3, M4A/MP4 o WAV." },
       { status: 400 },
     );
   }
 
-  if (file.size > 25 * 1024 * 1024) {
+  if (file.size > INSTAGRAM_AUDIO_MAX_FILE_SIZE_BYTES) {
     return NextResponse.json(
       { error: "Meta admite audios de hasta 25 MB." },
       { status: 400 },
@@ -60,12 +95,11 @@ export async function POST(request: Request) {
     await ensureBucket();
 
     const admin = createAdminClient();
-    const extension = file.name.includes(".") ? file.name.split(".").pop() : "m4a";
-    const path = `${user.id}/${crypto.randomUUID()}.${extension}`;
+    const path = `${user.id}/${crypto.randomUUID()}.${normalizedAudio.extension}`;
     const upload = await admin.storage
       .from(META_MEDIA_BUCKET)
       .upload(path, file, {
-        contentType: file.type,
+        contentType: normalizedAudio.contentType,
         upsert: false,
       });
 

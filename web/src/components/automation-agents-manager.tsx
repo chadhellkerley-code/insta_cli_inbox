@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import {
+  INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
+  INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT,
+} from "@/lib/meta/audio";
 import type {
   AutomationAgent,
   AutomationAgentInput,
@@ -828,7 +832,7 @@ export function AutomationAgentsManager({
                                         Subir archivo
                                         <input
                                           type="file"
-                                          accept="audio/*"
+                                          accept={INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE}
                                           className="visually-hidden"
                                           onChange={async (event) => {
                                             const file = event.target.files?.[0];
@@ -881,7 +885,7 @@ export function AutomationAgentsManager({
                                         ? "Subiendo audio..."
                                         : message.mediaUrl
                                           ? "Audio listo para enviarse en esta etapa."
-                                          : "Puedes grabar o subir un audio para esta etapa."}
+                                          : `Puedes grabar o subir un audio para esta etapa. ${INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT}.`}
                                     </p>
                                   </div>
                                 )}

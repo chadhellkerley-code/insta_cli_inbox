@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
+  INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT,
+} from "@/lib/meta/audio";
 import type {
   ConversationRecord,
   InstagramAccountRecord,
@@ -911,14 +915,14 @@ export function InboxRealtimeShell({
                 <span className="field-label">Adjuntar audio</span>
                 <input
                   type="file"
-                  accept="audio/*"
+                  accept={INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE}
                   onChange={(event) =>
                     setAudioFile(event.target.files?.[0] ?? null)
                   }
                   disabled={!selectedConversation || sendingMessage}
                 />
                 <span className="status-copy">
-                  {audioFile ? audioFile.name : "Acepta audio/mpeg, mp4, wav o m4a"}
+                  {audioFile ? audioFile.name : INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT}
                 </span>
               </label>
             )}
