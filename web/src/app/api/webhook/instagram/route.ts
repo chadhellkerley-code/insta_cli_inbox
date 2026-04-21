@@ -7,6 +7,7 @@ import {
   persistInstagramAccountIdentifiers,
 } from "@/lib/meta/account-identifiers";
 import { getMetaServerEnv } from "@/lib/meta/config";
+import { fetchInstagramLoginAccountIdentity } from "@/lib/meta/client";
 import {
   resolveInstagramUsernameCandidateFromMessagingEvent,
   syncInstagramUsername,
@@ -404,6 +405,91 @@ async function findBootstrapAccountForEvent(
     matchedBy: "bootstrap:recipient_id",
     matchedValue: recipientId,
   } satisfies AccountMatchResult;
+}
+
+async function findAccountByRemoteIdentityForEvent(
+  admin: ReturnType<typeof createAdminClient>,
+  options: {
+    entryId: string | null;
+    recipientId: string | null;
+  },
+) {
+  const candidateIds = new Set(
+    [options.recipientId, options.entryId]
+      .map((value) => normalizeInstagramIdentifier(value))
+      .filter(Boolean) as string[],
+  );
+
+  if (candidateIds.size === 0) {
+    return null;
+  }
+
+  const accountsResult = await admin
+    .from("instagram_accounts")
+    .select(
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+    );
+  const accounts = (accountsResult.data as AccountLookup[] | null) ?? [];
+
+  if (accountsResult.error) {
+    throw new Error(accountsResult.error.message);
+  }
+
+  const matches: AccountMatchResult[] = [];
+
+  for (const account of accounts) {
+    if (!account.access_token?.trim()) {
+      continue;
+    }
+
+    try {
+      const remoteIdentity = await fetchInstagramLoginAccountIdentity({
+        accessToken: account.access_token,
+      });
+      const remoteCandidates = [
+        normalizeInstagramIdentifier(remoteIdentity.instagramAccountId),
+        normalizeInstagramIdentifier(remoteIdentity.appScopedUserId),
+      ].filter(Boolean) as string[];
+      const matchedValue = remoteCandidates.find((value) => candidateIds.has(value));
+
+      if (!matchedValue) {
+        continue;
+      }
+
+      matches.push({
+        account,
+        matchedBy: "remote_identity",
+        matchedValue,
+      });
+    } catch (error) {
+      logWebhook("warn", "remote identity lookup skipped", {
+        accountId: account.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (matches.length !== 1) {
+    return null;
+  }
+
+  const match = matches[0];
+  await persistInstagramAccountIdentifiers({
+    admin,
+    accountId: match.account.id,
+    identifiers: [
+      {
+        identifier: options.entryId,
+        identifierType: "webhook_entry_id",
+      },
+      {
+        identifier: options.recipientId,
+        identifierType: "webhook_recipient_id",
+      },
+    ],
+  });
+
+  return match;
 }
 
 function resolveOwnedIdentifierCandidates(
@@ -1042,6 +1128,13 @@ export async function POST(request: Request) {
         if (!match) {
           match = await findBootstrapAccountForEvent(admin, {
             senderId,
+            recipientId,
+          });
+        }
+
+        if (!match) {
+          match = await findAccountByRemoteIdentityForEvent(admin, {
+            entryId,
             recipientId,
           });
         }

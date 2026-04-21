@@ -4,16 +4,20 @@ import { useState } from "react";
 
 type MetaConnectButtonProps = {
   buttonLabel?: string;
+  startPath?: string;
+  redirectingLabel?: string;
 };
 
 export function MetaConnectButton({
-  buttonLabel = "Conectar cuenta de Instagram",
+  buttonLabel = "Conectar con Instagram (token 60 dias)",
+  startPath = "/api/instagram/oauth/start",
+  redirectingLabel = "Redirigiendo...",
 }: MetaConnectButtonProps) {
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   function startOauth() {
     setIsRedirecting(true);
-    window.location.assign("/api/meta/oauth/start");
+    window.location.assign(startPath);
   }
 
   return (
@@ -23,7 +27,7 @@ export function MetaConnectButton({
       onClick={startOauth}
       disabled={isRedirecting}
     >
-      {isRedirecting ? "Redirigiendo a Instagram..." : buttonLabel}
+      {isRedirecting ? `${redirectingLabel} a Instagram...` : buttonLabel}
     </button>
   );
 }
