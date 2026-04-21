@@ -9,15 +9,12 @@ import {
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 
 type QueryClient = Pick<SupabaseClient, "from">;
-
 const STAGE_MESSAGE_PART_GAP_MS = 1_000;
 
 type AutomationAgentRuntimeRow = {
   id: string;
   owner_id: string;
   name: string;
-  min_reply_delay_seconds: number;
-  max_reply_delay_seconds: number;
   max_media_per_chat: number;
   is_active: boolean;
 };
@@ -28,7 +25,7 @@ type AutomationStageRuntimeRow = {
   stage_order: number;
   name: string;
   followup_enabled: boolean;
-  followup_delay_minutes: number;
+  followup_delay_hours: number;
   followup_message: string | null;
 };
 
@@ -72,6 +69,8 @@ type AutomationJobRow = {
   attempt_count: number;
   last_error: string | null;
   payload: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 type ConversationRuntimeRow = {
@@ -113,15 +112,6 @@ function toMillis(value: string | null | undefined) {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function randomInteger(min: number, max: number) {
-  if (max <= min) {
-    return min;
-  }
-
-  const delta = max - min + 1;
-  return min + Math.floor(Math.random() * delta);
-}
-
 function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
   const textContent = normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
@@ -143,10 +133,18 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
   }> = [];
 
   if (textContent) {
-    parts.push({ messageType: "text", textContent, mediaUrl: null });
+    parts.push({
+      messageType: "text",
+      textContent,
+      mediaUrl: null,
+    });
   }
 
-  parts.push({ messageType: "audio", textContent: null, mediaUrl });
+  parts.push({
+    messageType: "audio",
+    textContent: null,
+    mediaUrl,
+  });
 
   return parts;
 }
@@ -154,7 +152,7 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
 async function loadActiveAgent(client: QueryClient, ownerId: string) {
   const result = await client
     .from("automation_agents")
-    .select("id, owner_id, name, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active")
+    .select("id, owner_id, name, max_media_per_chat, is_active")
     .eq("owner_id", ownerId)
     .eq("is_active", true)
     .maybeSingle();
@@ -169,7 +167,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
 async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const stagesResult = await client
     .from("automation_agent_stages")
-    .select("id, agent_id, stage_order, name, followup_enabled, followup_delay_minutes, followup_message")
+    .select("id, agent_id, stage_order, name, followup_enabled, followup_delay_hours, followup_message")
     .eq("agent_id", agentId)
     .order("stage_order", { ascending: true });
   const stages = castRows<AutomationStageRuntimeRow>(stagesResult.data);
@@ -356,21 +354,20 @@ export async function scheduleAutomationForInboundMessage(
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
-  const startAtMs =
-    new Date(options.createdAt).getTime() +
-    randomInteger(agent.min_reply_delay_seconds, agent.max_reply_delay_seconds) * 1000;
+  const startAtMs = Date.now();
   let scheduledAtMs = startAtMs;
   let insertedCount = 0;
   let usedAudio = sentAudioJobs;
   let lastScheduledIso = new Date(startAtMs).toISOString();
+  let lastInsertedDelaySeconds = 0;
 
   for (const stageMessage of stageMessages) {
-    if (insertedCount > 0) {
-      scheduledAtMs += stageMessage.delay_seconds * 1000;
-    }
-
     if (stageMessage.message_type === "audio" && usedAudio >= agent.max_media_per_chat) {
       continue;
+    }
+
+    if (insertedCount > 0) {
+      scheduledAtMs += lastInsertedDelaySeconds * 1000;
     }
 
     lastScheduledIso = new Date(scheduledAtMs).toISOString();
@@ -421,7 +418,10 @@ export async function scheduleAutomationForInboundMessage(
       usedAudio += 1;
     }
 
-    scheduledAtMs = lastPartScheduledAtMs;
+    scheduledAtMs =
+      lastPartScheduledAtMs + (jobPayloads.length > 1 ? STAGE_MESSAGE_PART_GAP_MS : 0);
+
+    lastInsertedDelaySeconds = stageMessage.delay_seconds;
   }
 
   if (insertedCount === 0) {
@@ -430,7 +430,7 @@ export async function scheduleAutomationForInboundMessage(
 
   if (nextStage.followup_enabled && normalizeOptionalString(nextStage.followup_message)) {
     const followupScheduledFor = new Date(
-      scheduledAtMs + nextStage.followup_delay_minutes * 60 * 1000,
+      scheduledAtMs + nextStage.followup_delay_hours * 60 * 60 * 1000,
     ).toISOString();
     const insertFollowup = await client.from("automation_jobs").insert({
       owner_id: options.ownerId,
@@ -735,15 +735,15 @@ async function sendAutomationJob(
   return { sent: true };
 }
 
-function shouldSkipFollowup(run: AutomationRunRow) {
+function shouldSkipFollowup(run: AutomationRunRow, job: AutomationJobRow) {
   const lastInboundMs = toMillis(run.last_inbound_at);
-  const lastStageCompletedMs = toMillis(run.last_stage_completed_at);
+  const followupCreatedMs = toMillis(job.created_at) ?? toMillis(job.scheduled_for);
 
-  if (lastInboundMs === null || lastStageCompletedMs === null) {
+  if (lastInboundMs === null || followupCreatedMs === null) {
     return false;
   }
 
-  return lastInboundMs > lastStageCompletedMs;
+  return lastInboundMs > followupCreatedMs;
 }
 
 async function handleJob(client: QueryClient, job: AutomationJobRow) {
@@ -770,7 +770,7 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
     return "cancelled_inactive_agent" as const;
   }
 
-  if (job.job_type === "followup" && shouldSkipFollowup(run)) {
+  if (job.job_type === "followup" && shouldSkipFollowup(run, job)) {
     await markJob(client, job.id, {
       status: "skipped",
       last_error: "El cliente respondio antes del followup.",

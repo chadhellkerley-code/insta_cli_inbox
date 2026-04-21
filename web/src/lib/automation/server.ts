@@ -107,12 +107,12 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
   const minReplyDelaySeconds = clampInteger(input.minReplyDelaySeconds, {
     min: 0,
     max: 3600,
-    fallback: 30,
+    fallback: 0,
   });
   const maxReplyDelaySeconds = clampInteger(input.maxReplyDelaySeconds, {
     min: minReplyDelaySeconds,
     max: 7200,
-    fallback: Math.max(minReplyDelaySeconds, 90),
+    fallback: minReplyDelaySeconds,
   });
   const maxMediaPerChat = clampInteger(input.maxMediaPerChat, {
     min: 0,
@@ -144,10 +144,10 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
 
       const followupEnabled = Boolean(stage.followupEnabled);
       const followupMessage = normalizeString(stage.followupMessage);
-      const followupDelayMinutes = clampInteger(stage.followupDelayMinutes, {
+      const followupDelayHours = clampInteger(stage.followupDelayHours, {
         min: 0,
-        max: 60 * 24 * 30,
-        fallback: 120,
+        max: 24 * 30,
+        fallback: 2,
       });
 
       if (followupEnabled && !followupMessage) {
@@ -158,7 +158,7 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         id: normalizeString(stage.id) || undefined,
         name: ensureStageName(stage.name, stageIndex),
         followupEnabled,
-        followupDelayMinutes,
+        followupDelayHours,
         followupMessage,
         messages: messages.map((message) => {
           const messageType = message.messageType === "audio" ? "audio" : "text";
@@ -228,7 +228,7 @@ function mapAutomationAgents(
         name: stage.name,
         order: stage.stage_order,
         followupEnabled: stage.followup_enabled,
-        followupDelayMinutes: stage.followup_delay_minutes,
+        followupDelayHours: stage.followup_delay_hours,
         followupMessage: stage.followup_message ?? "",
         messages: (messagesByStage.get(stage.id) ?? [])
           .sort((left, right) => left.message_order - right.message_order)
@@ -438,7 +438,7 @@ export async function saveAutomationAgent(
         stage_order: stageIndex + 1,
         name: stage.name,
         followup_enabled: stage.followupEnabled,
-        followup_delay_minutes: stage.followupDelayMinutes,
+        followup_delay_hours: stage.followupDelayHours,
         followup_message: normalizeOptionalString(stage.followupMessage),
       } as never)
       .select("id")

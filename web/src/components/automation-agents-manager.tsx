@@ -41,7 +41,7 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
       id: stage.id,
       name: stage.name,
       followupEnabled: stage.followupEnabled,
-      followupDelayMinutes: stage.followupDelayMinutes,
+      followupDelayHours: stage.followupDelayHours,
       followupMessage: stage.followupMessage,
       messages: stage.messages.map((message) => ({
         id: message.id,
@@ -407,7 +407,7 @@ export function AutomationAgentsManager({
         {
           name: `Etapa ${current.stages.length + 1}`,
           followupEnabled: false,
-          followupDelayMinutes: 120,
+          followupDelayHours: 2,
           followupMessage: "",
           messages: [
             {
@@ -683,8 +683,9 @@ export function AutomationAgentsManager({
                       <span className="eyebrow">Flujo</span>
                       <h2>{selectedAgent.name}</h2>
                       <p>
-                        Cada respuesta inbound entra a la siguiente etapa pendiente del
-                        agente activo y queda marcada para no repetir la misma etapa.
+                        Cada inbound entra a la siguiente etapa pendiente. El primer
+                        mensaje de esa etapa sale inmediato y los delays se aplican
+                        solo entre mensajes y followups.
                       </p>
                     </div>
 
@@ -761,7 +762,6 @@ export function AutomationAgentsManager({
                                       updateMessage(stageIndex, messageIndex, (currentMessage) => ({
                                         ...currentMessage,
                                         messageType: "text",
-                                        mediaUrl: "",
                                       }))
                                     }
                                   >
@@ -892,7 +892,7 @@ export function AutomationAgentsManager({
 
                                 <div className="field">
                                   <span className="field-label">
-                                    Delay despues de este mensaje (segundos)
+                                    Delay antes del siguiente mensaje (segundos)
                                   </span>
                                   <input
                                     className="text-input"
@@ -906,6 +906,10 @@ export function AutomationAgentsManager({
                                       }))
                                     }
                                   />
+                                  <p className="muted">
+                                    El primer mensaje de la etapa sale inmediato. Este
+                                    delay espera antes del proximo mensaje del mismo flujo.
+                                  </p>
                                 </div>
                               </article>
                             );
@@ -944,17 +948,17 @@ export function AutomationAgentsManager({
                           <div className="stage-followup-grid">
                             <div className="field">
                               <span className="field-label">
-                                Enviar followup si pasan estos minutos sin respuesta
+                                Enviar followup si pasan estas horas sin respuesta
                               </span>
                               <input
                                 className="text-input"
                                 type="number"
                                 min={0}
-                                value={stage.followupDelayMinutes}
+                                value={stage.followupDelayHours}
                                 onChange={(event) =>
                                   updateStage(stageIndex, (currentStage) => ({
                                     ...currentStage,
-                                    followupDelayMinutes: Number(event.target.value || 0),
+                                    followupDelayHours: Number(event.target.value || 0),
                                   }))
                                 }
                               />
@@ -1106,38 +1110,6 @@ export function AutomationAgentsManager({
               </div>
 
               <div className="field">
-                <span className="field-label">Retraso minimo de respuesta (segundos)</span>
-                <input
-                  className="text-input"
-                  type="number"
-                  min={0}
-                  value={modalDraft.minReplyDelaySeconds}
-                  onChange={(event) =>
-                    setModalDraft((current) => ({
-                      ...current,
-                      minReplyDelaySeconds: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </div>
-
-              <div className="field">
-                <span className="field-label">Retraso maximo de respuesta (segundos)</span>
-                <input
-                  className="text-input"
-                  type="number"
-                  min={0}
-                  value={modalDraft.maxReplyDelaySeconds}
-                  onChange={(event) =>
-                    setModalDraft((current) => ({
-                      ...current,
-                      maxReplyDelaySeconds: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </div>
-
-              <div className="field">
                 <span className="field-label">Maximo de contenido multimedia por chat</span>
                 <input
                   className="text-input"
@@ -1153,6 +1125,11 @@ export function AutomationAgentsManager({
                 />
               </div>
             </div>
+
+            <p className="muted">
+              El agente responde apenas entra un inbound. Los tiempos se controlan
+              dentro de cada etapa y en sus followups.
+            </p>
 
             <div className="automation-modal-actions">
               <button type="button" className="button button-secondary" onClick={closeModal}>

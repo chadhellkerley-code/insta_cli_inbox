@@ -20,7 +20,7 @@ export type AutomationStageRecord = {
   stage_order: number;
   name: string;
   followup_enabled: boolean;
-  followup_delay_minutes: number;
+  followup_delay_hours: number;
   followup_message: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -51,7 +51,7 @@ export type AutomationStageInput = {
   id?: string;
   name: string;
   followupEnabled: boolean;
-  followupDelayMinutes: number;
+  followupDelayHours: number;
   followupMessage: string;
   messages: AutomationStageMessageInput[];
 };
@@ -86,7 +86,7 @@ export type AutomationAgent = {
     name: string;
     order: number;
     followupEnabled: boolean;
-    followupDelayMinutes: number;
+    followupDelayHours: number;
     followupMessage: string;
     messages: Array<{
       id: string;
@@ -109,8 +109,8 @@ export function createEmptyAgentDraft(): AutomationAgentInput {
   return {
     name: DEFAULT_AGENT_NAME,
     personality: "",
-    minReplyDelaySeconds: 30,
-    maxReplyDelaySeconds: 90,
+    minReplyDelaySeconds: 0,
+    maxReplyDelaySeconds: 0,
     maxMediaPerChat: 1,
     isActive: false,
     aiEnabled: false,
@@ -119,7 +119,7 @@ export function createEmptyAgentDraft(): AutomationAgentInput {
       {
         name: "Etapa 1",
         followupEnabled: false,
-        followupDelayMinutes: 120,
+        followupDelayHours: 2,
         followupMessage: "",
         messages: [
           {
