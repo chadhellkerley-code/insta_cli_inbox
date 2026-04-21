@@ -1,7 +1,6 @@
 import { DeleteInstagramAccountButton } from "@/components/delete-instagram-account-button";
 import Link from "next/link";
 
-import { ManualInstagramAccountForm } from "@/components/manual-instagram-account-form";
 import { MetaConnectButton } from "@/components/meta-connect-button";
 import {
   getInstagramAccountStatusCopy,
@@ -165,7 +164,6 @@ export default async function CuentasPage({
         )}
       </section>
 
-      <ManualInstagramAccountForm />
     </div>
   );
 }
