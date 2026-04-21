@@ -85,6 +85,7 @@ type AccountRuntimeRow = {
   instagram_app_user_id: string | null;
   access_token: string;
   token_expires_at: string | null;
+  token_lifecycle: string | null;
 };
 
 function castRows<T>(value: unknown) {
@@ -484,7 +485,9 @@ async function loadConversation(client: QueryClient, conversationId: string) {
 async function loadAccount(client: QueryClient, accountId: string) {
   const result = await client
     .from("instagram_accounts")
-    .select("id, owner_id, instagram_account_id, instagram_app_user_id, access_token, token_expires_at")
+    .select(
+      "id, owner_id, instagram_account_id, instagram_app_user_id, access_token, token_expires_at, token_lifecycle",
+    )
     .eq("id", accountId)
     .maybeSingle();
 
@@ -568,6 +571,30 @@ async function sendAutomationJob(
   const managedToken = await ensureInstagramAccessToken({
     accessToken: account.access_token,
     expiresAt: account.token_expires_at,
+    lifecycle: account.token_lifecycle,
+    onTokenUpdate: async (nextToken) => {
+      const updateTokenResult = await client
+        .from("instagram_accounts")
+        .update({
+          access_token: nextToken.accessToken,
+          expires_in: nextToken.expiresIn,
+          expires_at: nextToken.expiresAt,
+          token_expires_at: nextToken.expiresAt,
+          token_obtained_at: nextToken.obtainedAt,
+          token_lifecycle: nextToken.lifecycle,
+          last_token_refresh_at: nextToken.obtainedAt,
+          updated_at: nextToken.obtainedAt,
+        } as never)
+        .eq("id", account.id);
+
+      if (updateTokenResult.error) {
+        throw new Error(updateTokenResult.error.message);
+      }
+
+      account.access_token = nextToken.accessToken;
+      account.token_expires_at = nextToken.expiresAt;
+      account.token_lifecycle = nextToken.lifecycle;
+    },
   });
   const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
   const textContent = normalizeOptionalString(

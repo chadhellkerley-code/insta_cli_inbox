@@ -86,6 +86,7 @@ type InstagramContactRecord = {
   contact_igsid: string;
   contact_username: string | null;
   contact_name: string | null;
+  profile_picture_url: string | null;
 };
 
 type InstagramAccountProfileSyncRecord = {
@@ -475,7 +476,7 @@ export async function loadConversations(
 
   const { data: contactsData, error: contactsError } = await supabase
     .from("instagram_contacts")
-    .select("contact_igsid, contact_username, contact_name")
+    .select("contact_igsid, contact_username, contact_name, profile_picture_url")
     .eq("owner_id", userId)
     .in("contact_igsid", contactIds);
 
@@ -508,6 +509,8 @@ export async function loadConversations(
       ...conversation,
       contact_username: contact.contact_username ?? conversation.contact_username,
       contact_name: contact.contact_name ?? conversation.contact_name,
+      contact_profile_picture_url:
+        contact.profile_picture_url ?? conversation.contact_profile_picture_url ?? null,
     };
   });
 }

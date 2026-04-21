@@ -1264,6 +1264,35 @@ main {
   margin: 8px 0 6px;
 }
 
+.thread-contact-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.thread-contact-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.thread-contact-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.74rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.thread-contact-subtitle {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .thread-card p {
   color: var(--muted-strong);
   line-height: 1.45;

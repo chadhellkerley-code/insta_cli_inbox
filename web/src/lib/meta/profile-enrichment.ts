@@ -14,6 +14,7 @@ type InstagramAccountProfileTarget = {
   instagram_account_id: string;
   access_token: string;
   token_expires_at?: string | null;
+  token_lifecycle?: string | null;
   username?: string | null;
   name?: string | null;
   profile_picture_url?: string | null;
@@ -35,6 +36,7 @@ type InstagramContactProfileTarget = {
   owner_id: string;
   access_token: string;
   token_expires_at?: string | null;
+  token_lifecycle?: string | null;
   last_oauth_at?: string | null;
 };
 
@@ -149,6 +151,30 @@ export async function syncInstagramAccountProfile(options: {
   const managedToken = await ensureInstagramAccessToken({
     accessToken: options.account.access_token,
     expiresAt: options.account.token_expires_at ?? null,
+    lifecycle: options.account.token_lifecycle ?? null,
+    onTokenUpdate: async (nextToken) => {
+      const updateTokenResult = await options.admin
+        .from("instagram_accounts")
+        .update({
+          access_token: nextToken.accessToken,
+          expires_in: nextToken.expiresIn,
+          expires_at: nextToken.expiresAt,
+          token_expires_at: nextToken.expiresAt,
+          token_obtained_at: nextToken.obtainedAt,
+          token_lifecycle: nextToken.lifecycle,
+          last_token_refresh_at: nextToken.obtainedAt,
+          updated_at: nextToken.obtainedAt,
+        } as never)
+        .eq("id", options.account.id);
+
+      if (updateTokenResult.error) {
+        throw new Error(updateTokenResult.error.message);
+      }
+
+      options.account.access_token = nextToken.accessToken;
+      options.account.token_expires_at = nextToken.expiresAt;
+      options.account.token_lifecycle = nextToken.lifecycle;
+    },
   });
   const profile = await fetchInstagramAccountProfile({
     accessToken: managedToken.accessToken,
@@ -266,6 +292,30 @@ export async function resolveInstagramContactProfile(options: {
     const managedToken = await ensureInstagramAccessToken({
       accessToken: options.account.access_token,
       expiresAt: options.account.token_expires_at ?? null,
+      lifecycle: options.account.token_lifecycle ?? null,
+      onTokenUpdate: async (nextToken) => {
+        const updateTokenResult = await options.admin
+          .from("instagram_accounts")
+          .update({
+            access_token: nextToken.accessToken,
+            expires_in: nextToken.expiresIn,
+            expires_at: nextToken.expiresAt,
+            token_expires_at: nextToken.expiresAt,
+            token_obtained_at: nextToken.obtainedAt,
+            token_lifecycle: nextToken.lifecycle,
+            last_token_refresh_at: nextToken.obtainedAt,
+            updated_at: nextToken.obtainedAt,
+          } as never)
+          .eq("id", options.account.id);
+
+        if (updateTokenResult.error) {
+          throw new Error(updateTokenResult.error.message);
+        }
+
+        options.account.access_token = nextToken.accessToken;
+        options.account.token_expires_at = nextToken.expiresAt;
+        options.account.token_lifecycle = nextToken.lifecycle;
+      },
     });
     const profile = await fetchInstagramUserProfile({
       accessToken: managedToken.accessToken,

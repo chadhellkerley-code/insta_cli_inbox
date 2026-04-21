@@ -36,6 +36,34 @@ type SendMode = "text" | "audio";
 
 const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
 
+type InstagramContactLite = {
+  contact_igsid: string;
+  contact_username: string | null;
+  contact_name: string | null;
+  profile_picture_url: string | null;
+};
+
+function mergeConversationIdentity(
+  previous: ConversationRecord | undefined,
+  incoming: ConversationRecord,
+) {
+  return {
+    ...incoming,
+    contact_username:
+      incoming.contact_username ??
+      previous?.contact_username ??
+      null,
+    contact_name:
+      incoming.contact_name ??
+      previous?.contact_name ??
+      null,
+    contact_profile_picture_url:
+      incoming.contact_profile_picture_url ??
+      previous?.contact_profile_picture_url ??
+      null,
+  } satisfies ConversationRecord;
+}
+
 function sortConversations(conversations: ConversationRecord[]) {
   return [...conversations].sort((left, right) => {
     const rightTimestamp =
@@ -92,7 +120,44 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
     return null;
   }
 
-  return sortConversations(result.data as ConversationRecord[]);
+  const conversations = result.data as ConversationRecord[];
+  const contactIds = Array.from(
+    new Set(conversations.map((conversation) => conversation.contact_igsid).filter(Boolean)),
+  );
+
+  if (contactIds.length === 0) {
+    return sortConversations(conversations);
+  }
+
+  const contactsResult = await client
+    .from("instagram_contacts")
+    .select("contact_igsid, contact_username, contact_name, profile_picture_url")
+    .eq("owner_id", userId)
+    .in("contact_igsid", contactIds);
+
+  if (contactsResult.error || !contactsResult.data) {
+    return sortConversations(conversations);
+  }
+
+  const contacts = contactsResult.data as InstagramContactLite[];
+  const contactMap = new Map(contacts.map((contact) => [contact.contact_igsid, contact]));
+  const mergedConversations = conversations.map((conversation) => {
+    const contact = contactMap.get(conversation.contact_igsid);
+
+    if (!contact) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      contact_username: contact.contact_username ?? conversation.contact_username,
+      contact_name: contact.contact_name ?? conversation.contact_name,
+      contact_profile_picture_url:
+        contact.profile_picture_url ?? conversation.contact_profile_picture_url ?? null,
+    } satisfies ConversationRecord;
+  });
+
+  return sortConversations(mergedConversations);
 }
 
 async function loadMessageRows(
@@ -351,7 +416,11 @@ export function InboxRealtimeShell({
             return;
           }
 
-          setConversations((current) => sortConversations(upsertById(current, conversation)));
+          setConversations((current) => {
+            const previousConversation = current.find((item) => item.id === conversation.id);
+            const nextConversation = mergeConversationIdentity(previousConversation, conversation);
+            return sortConversations(upsertById(current, nextConversation));
+          });
         },
       )
       .subscribe();
@@ -793,6 +862,24 @@ export function InboxRealtimeShell({
                   <strong>{getConversationDisplayName(conversation)}</strong>
                   <span>{formatRelativeTime(conversation.last_message_at)}</span>
                 </div>
+                <span className="thread-contact-meta">
+                  {conversation.contact_profile_picture_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      className="thread-contact-avatar"
+                      src={conversation.contact_profile_picture_url}
+                      alt={getConversationDisplayName(conversation)}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="thread-contact-avatar thread-contact-avatar-fallback">
+                      {getConversationDisplayName(conversation).slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="thread-contact-subtitle">
+                    {conversation.contact_name ?? conversation.contact_username ?? "Contacto"}
+                  </span>
+                </span>
                 <span className="thread-account">
                   {getInstagramAccountDisplayName(
                     accountUsernameMap.get(conversation.account_id) ??

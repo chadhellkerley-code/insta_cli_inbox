@@ -45,6 +45,7 @@ export type ConversationRecord = {
   contact_igsid: string;
   contact_username: string | null;
   contact_name: string | null;
+  contact_profile_picture_url?: string | null;
   labels: string[] | null;
   notes: string | null;
   last_message_text: string | null;

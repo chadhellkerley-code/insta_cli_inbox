@@ -36,6 +36,7 @@ type AccountLookup = {
   account_type: string | null;
   access_token: string;
   token_expires_at: string | null;
+  token_lifecycle: string | null;
 };
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -168,7 +169,7 @@ export async function POST(request: Request) {
     const accountResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at",
+        "id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at, token_lifecycle",
       )
       .eq("id", conversation.account_id)
       .maybeSingle();
@@ -190,6 +191,30 @@ export async function POST(request: Request) {
     const managedToken = await ensureInstagramAccessToken({
       accessToken: account.access_token,
       expiresAt: account.token_expires_at,
+      lifecycle: account.token_lifecycle,
+      onTokenUpdate: async (nextToken) => {
+        const tokenUpdate = await admin
+          .from("instagram_accounts")
+          .update({
+            access_token: nextToken.accessToken,
+            expires_in: nextToken.expiresIn,
+            expires_at: nextToken.expiresAt,
+            token_expires_at: nextToken.expiresAt,
+            token_obtained_at: nextToken.obtainedAt,
+            token_lifecycle: nextToken.lifecycle,
+            last_token_refresh_at: nextToken.obtainedAt,
+            updated_at: nextToken.obtainedAt,
+          } as never)
+          .eq("id", account.id);
+
+        if (tokenUpdate.error) {
+          throw new Error(tokenUpdate.error.message);
+        }
+
+        account.access_token = nextToken.accessToken;
+        account.token_expires_at = nextToken.expiresAt;
+        account.token_lifecycle = nextToken.lifecycle;
+      },
     });
     const remoteIdentity = await fetchInstagramLoginAccountIdentity({
       accessToken: managedToken.accessToken,
@@ -345,7 +370,11 @@ export async function POST(request: Request) {
       createdAt,
     });
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      metaMessageId: metaResponse.message_id ?? null,
+      sentAt: createdAt,
+    });
   } catch (error) {
     logInstagramMessage("error", "request failed", {
       userId: user.id,

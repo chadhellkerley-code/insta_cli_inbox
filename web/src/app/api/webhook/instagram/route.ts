@@ -57,6 +57,7 @@ type WebhookPayload = {
 type AccountLookup = {
   id: string;
   owner_id: string;
+  page_id: string | null;
   instagram_user_id: string | null;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
@@ -211,7 +212,7 @@ async function loadAccountById(
   const result = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
     )
     .eq("id", accountId)
     .maybeSingle();
@@ -282,11 +283,12 @@ async function findAccountForEvent(
       "instagram_account_id",
       "instagram_app_user_id",
       "instagram_user_id",
+      "page_id",
     ] as const) {
       const result = await admin
         .from("instagram_accounts")
         .select(
-          "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+          "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
         )
         .eq(column, candidateId)
         .maybeSingle();
@@ -310,7 +312,7 @@ async function findAccountForEvent(
     const usernameResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+        "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
       )
       .in("username", candidateUsernames)
       .limit(candidateUsernames.length);
@@ -359,7 +361,7 @@ async function findBootstrapAccountForEvent(
   const result = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
     );
   const accounts = (result.data as AccountLookup[] | null) ?? [];
 
