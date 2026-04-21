@@ -17,6 +17,7 @@ import {
   DEFAULT_AGENT_NAME,
   getAgentStatusLabel,
 } from "@/lib/automation/types";
+import { AUTOMATION_PAGE_HEADER } from "@/lib/automation/ui";
 
 type AutomationAgentsManagerProps = {
   initialAgents: AutomationAgent[];
@@ -535,13 +536,12 @@ export function AutomationAgentsManager({
   return (
     <div className="automation-page automation-blueprint page-stack">
       <section className="page-header automation-page-header">
-        <div>
-          <span className="eyebrow">Automatizaciones</span>
-          <h1>Automatizaciones en respuestas y followup</h1>
-          <p className="page-copy">
-            genera respuestas en automatico y followups para generar conversaciones
-            reales con tus clientes.
-          </p>
+        <div className="automation-page-header-copy">
+          <span className="eyebrow">{AUTOMATION_PAGE_HEADER.eyebrow}</span>
+          <h1>{AUTOMATION_PAGE_HEADER.title}</h1>
+          {AUTOMATION_PAGE_HEADER.description ? (
+            <p className="page-copy">{AUTOMATION_PAGE_HEADER.description}</p>
+          ) : null}
         </div>
 
         <div className="automation-toolbar">

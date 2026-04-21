@@ -697,8 +697,17 @@ main {
   align-items: flex-end;
 }
 
+.automation-page-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.automation-page-header-copy .eyebrow {
+  margin-bottom: 0;
+}
+
 .automation-page-header .page-copy {
-  margin-top: 8px;
   max-width: 58ch;
 }
 
