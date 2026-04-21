@@ -6,6 +6,7 @@ import {
   INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
   INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT,
 } from "@/lib/meta/audio";
+import { startInstagramAudioRecording } from "@/lib/meta/audio-recorder";
 import type {
   AutomationAgent,
   AutomationAgentInput,
@@ -107,9 +108,9 @@ export function AutomationAgentsManager({
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null);
   const [recordingTargetKey, setRecordingTargetKey] = useState<string | null>(null);
   const [uploadingTargetKey, setUploadingTargetKey] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaChunksRef = useRef<Blob[]>([]);
+  const recordingSessionRef = useRef<Awaited<
+    ReturnType<typeof startInstagramAudioRecording>
+  > | null>(null);
 
   const selectedAgent =
     agents.find((agent) => agent.id === selectedAgentId) ?? null;
@@ -131,11 +132,7 @@ export function AutomationAgentsManager({
 
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      void recordingSessionRef.current?.cancel();
     };
   }, []);
 
@@ -492,50 +489,13 @@ export function AutomationAgentsManager({
     const targetKey = `${stageIndex}-${messageIndex}`;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      mediaChunksRef.current = [];
+      if (recordingSessionRef.current) {
+        throw new Error("Ya hay una grabacion en curso.");
+      }
 
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
+      const recordingSession = await startInstagramAudioRecording();
+      recordingSessionRef.current = recordingSession;
       setRecordingTargetKey(targetKey);
-
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) {
-          mediaChunksRef.current.push(event.data);
-        }
-      });
-
-      recorder.addEventListener("stop", async () => {
-        const blob = new Blob(mediaChunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        const file = new File([blob], `automation-${Date.now()}.webm`, {
-          type: blob.type || "audio/webm",
-        });
-
-        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-        setRecordingTargetKey(null);
-
-        try {
-          const url = await uploadAudioFile(file, targetKey);
-          updateMessage(stageIndex, messageIndex, (message) => ({
-            ...message,
-            messageType: "audio",
-            mediaUrl: url,
-            textContent: "",
-          }));
-          showFeedback("Audio grabado y subido.", "success");
-        } catch (error) {
-          showFeedback(
-            error instanceof Error ? error.message : "No pudimos grabar el audio.",
-            "error",
-          );
-        }
-      });
-
-      recorder.start();
     } catch (error) {
       showFeedback(
         error instanceof Error ? error.message : "No pudimos acceder al microfono.",
@@ -544,9 +504,31 @@ export function AutomationAgentsManager({
     }
   }
 
-  function stopRecording() {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+  async function stopRecording(stageIndex: number, messageIndex: number) {
+    const targetKey = `${stageIndex}-${messageIndex}`;
+    const recordingSession = recordingSessionRef.current;
+
+    if (!recordingSession) {
+      return;
+    }
+
+    recordingSessionRef.current = null;
+    setRecordingTargetKey(null);
+
+    try {
+      const file = await recordingSession.stop();
+      const url = await uploadAudioFile(file, targetKey);
+      updateMessage(stageIndex, messageIndex, (message) => ({
+        ...message,
+        messageType: "audio",
+        mediaUrl: url,
+      }));
+      showFeedback("Audio grabado y subido.", "success");
+    } catch (error) {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos grabar el audio.",
+        "error",
+      );
     }
   }
 
@@ -794,7 +776,6 @@ export function AutomationAgentsManager({
                                       updateMessage(stageIndex, messageIndex, (currentMessage) => ({
                                         ...currentMessage,
                                         messageType: "audio",
-                                        textContent: "",
                                       }))
                                     }
                                   >
@@ -822,7 +803,7 @@ export function AutomationAgentsManager({
                                         className="button button-secondary"
                                         onClick={() =>
                                           isRecording
-                                            ? stopRecording()
+                                            ? stopRecording(stageIndex, messageIndex)
                                             : startRecording(stageIndex, messageIndex)
                                         }
                                       >
@@ -850,7 +831,6 @@ export function AutomationAgentsManager({
                                                   ...currentMessage,
                                                   messageType: "audio",
                                                   mediaUrl: url,
-                                                  textContent: "",
                                                 }),
                                               );
                                               showFeedback("Audio subido.", "success");
@@ -880,11 +860,31 @@ export function AutomationAgentsManager({
                                       }
                                       placeholder="URL del audio subido"
                                     />
+                                    <textarea
+                                      className="text-area"
+                                      value={message.textContent}
+                                      onChange={(event) =>
+                                        updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                          ...currentMessage,
+                                          textContent: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="Mensaje opcional para enviar antes del audio"
+                                    />
+                                    {message.mediaUrl ? (
+                                      <audio
+                                        controls
+                                        src={message.mediaUrl}
+                                        className="message-audio"
+                                      />
+                                    ) : null}
                                     <p className="muted">
                                       {isUploading
                                         ? "Subiendo audio..."
                                         : message.mediaUrl
-                                          ? "Audio listo para enviarse en esta etapa."
+                                          ? message.textContent.trim()
+                                            ? "La etapa enviara primero el texto y despues el audio."
+                                            : "Audio listo para enviarse en esta etapa."
                                           : `Puedes grabar o subir un audio para esta etapa. ${INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT}.`}
                                     </p>
                                   </div>

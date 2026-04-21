@@ -5,6 +5,7 @@ import {
   fetchInstagramLoginAccountIdentity,
   sendInstagramMessage,
 } from "@/lib/meta/client";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import {
   INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
   INSTAGRAM_MESSAGING_STATUS_READY,
@@ -291,6 +292,10 @@ export async function POST(request: Request) {
         instagramAccountId: resolvedInstagramAccountId,
         instagramAppUserId: resolvedInstagramAppUserId,
       });
+    }
+
+    if (messageType === "audio" && mediaUrl) {
+      await assertInstagramAudioUrlAccessible(mediaUrl);
     }
 
     const metaResponse = await sendInstagramMessage({

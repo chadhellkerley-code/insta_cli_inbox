@@ -7,6 +7,7 @@ import type {
   AutomationStageMessageRecord,
   AutomationStageRecord,
 } from "@/lib/automation/types";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 
 type QueryClient = Pick<SupabaseClient, "from">;
 
@@ -58,10 +59,48 @@ function ensureAudioMessageUrl(value: unknown) {
   const normalized = normalizeString(value);
 
   if (!normalized) {
-    throw new Error("Cada audio necesita un archivo subido.");
+    throw new Error("Cada audio necesita un archivo o una URL publica.");
   }
 
   return normalized;
+}
+
+async function validateAutomationAudioMessages(input: AutomationAgentInput) {
+  const validationCache = new Map<string, Promise<unknown>>();
+  const validations: Promise<unknown>[] = [];
+
+  for (let stageIndex = 0; stageIndex < input.stages.length; stageIndex += 1) {
+    const stage = input.stages[stageIndex];
+
+    for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex += 1) {
+      const message = stage.messages[messageIndex];
+
+      if (message.messageType !== "audio") {
+        continue;
+      }
+
+      const mediaUrl = ensureAudioMessageUrl(message.mediaUrl);
+      let validation = validationCache.get(mediaUrl);
+
+      if (!validation) {
+        validation = assertInstagramAudioUrlAccessible(mediaUrl);
+        validationCache.set(mediaUrl, validation);
+      }
+
+      validations.push(
+        validation.catch((error) => {
+          const stageName = ensureStageName(stage.name, stageIndex);
+          const messageLabel = `mensaje ${messageIndex + 1}`;
+          const reason =
+            error instanceof Error ? error.message : "No pudimos validar el audio.";
+
+          throw new Error(`${stageName}: ${messageLabel}. ${reason}`);
+        }),
+      );
+    }
+  }
+
+  await Promise.all(validations);
 }
 
 export function sanitizeAutomationAgentInput(input: AutomationAgentInput): AutomationAgentInput {
@@ -128,7 +167,9 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
             id: normalizeString(message.id) || undefined,
             messageType,
             textContent:
-              messageType === "text" ? ensureTextMessageContent(message.textContent) : "",
+              messageType === "text"
+                ? ensureTextMessageContent(message.textContent)
+                : normalizeString(message.textContent),
             mediaUrl:
               messageType === "audio" ? ensureAudioMessageUrl(message.mediaUrl) : "",
             delaySeconds: clampInteger(message.delaySeconds, {
@@ -279,6 +320,7 @@ export async function saveAutomationAgent(
   input: AutomationAgentInput,
 ) {
   const payload = sanitizeAutomationAgentInput(input);
+  await validateAutomationAudioMessages(payload);
   const nowIso = new Date().toISOString();
   const isUpdate = Boolean(payload.id);
   let agentId = payload.id;

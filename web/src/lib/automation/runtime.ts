@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { sendInstagramMessage } from "@/lib/meta/client";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import {
   INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
   INSTAGRAM_MESSAGING_STATUS_READY,
@@ -8,6 +9,8 @@ import {
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 
 type QueryClient = Pick<SupabaseClient, "from">;
+
+const STAGE_MESSAGE_PART_GAP_MS = 1_000;
 
 type AutomationAgentRuntimeRow = {
   id: string;
@@ -117,6 +120,35 @@ function randomInteger(min: number, max: number) {
 
   const delta = max - min + 1;
   return min + Math.floor(Math.random() * delta);
+}
+
+function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
+  const textContent = normalizeOptionalString(stageMessage.text_content);
+  const mediaUrl = normalizeOptionalString(stageMessage.media_url);
+
+  if (stageMessage.message_type !== "audio") {
+    return [
+      {
+        messageType: "text" as const,
+        textContent,
+        mediaUrl: null,
+      },
+    ];
+  }
+
+  const parts: Array<{
+    messageType: "text" | "audio";
+    textContent: string | null;
+    mediaUrl: string | null;
+  }> = [];
+
+  if (textContent) {
+    parts.push({ messageType: "text", textContent, mediaUrl: null });
+  }
+
+  parts.push({ messageType: "audio", textContent: null, mediaUrl });
+
+  return parts;
 }
 
 async function loadActiveAgent(client: QueryClient, ownerId: string) {
@@ -343,36 +375,53 @@ export async function scheduleAutomationForInboundMessage(
 
     lastScheduledIso = new Date(scheduledAtMs).toISOString();
 
-    const insertResult = await client.from("automation_jobs").insert({
-      owner_id: options.ownerId,
-      agent_id: agent.id,
-      account_id: options.accountId,
-      conversation_id: options.conversationId,
-      run_id: run.id,
-      stage_id: nextStage.id,
-      stage_message_id: stageMessage.id,
-      job_type: "stage_message",
-      status: "pending",
-      scheduled_for: lastScheduledIso,
-      payload: {
-        stageOrder: nextStage.stage_order,
-        stageName: nextStage.name,
-        messageOrder: stageMessage.message_order,
-        messageType: stageMessage.message_type,
-        textContent: stageMessage.text_content,
-        mediaUrl: stageMessage.media_url,
-      },
-    } as never);
+    const jobPayloads = buildStageMessageJobPayloads(stageMessage);
+    let lastPartScheduledAtMs = scheduledAtMs;
 
-    if (insertResult.error) {
-      throw new Error(insertResult.error.message);
+    for (let payloadIndex = 0; payloadIndex < jobPayloads.length; payloadIndex += 1) {
+      const payload = jobPayloads[payloadIndex];
+      const partScheduledAtMs = scheduledAtMs + payloadIndex * STAGE_MESSAGE_PART_GAP_MS;
+      lastPartScheduledAtMs = partScheduledAtMs;
+      lastScheduledIso = new Date(partScheduledAtMs).toISOString();
+
+      const insertResult = await client.from("automation_jobs").insert({
+        owner_id: options.ownerId,
+        agent_id: agent.id,
+        account_id: options.accountId,
+        conversation_id: options.conversationId,
+        run_id: run.id,
+        stage_id: nextStage.id,
+        stage_message_id: stageMessage.id,
+        job_type: "stage_message",
+        status: "pending",
+        scheduled_for: lastScheduledIso,
+        payload: {
+          stageOrder: nextStage.stage_order,
+          stageName: nextStage.name,
+          messageOrder: stageMessage.message_order,
+          messageType: payload.messageType,
+          textContent: payload.textContent,
+          mediaUrl: payload.mediaUrl,
+          stageMessageType: stageMessage.message_type,
+          stageMessagePart:
+            payload.messageType === "text" && stageMessage.message_type === "audio"
+              ? "audio_text"
+              : payload.messageType,
+        },
+      } as never);
+
+      if (insertResult.error) {
+        throw new Error(insertResult.error.message);
+      }
+
+      insertedCount += 1;
     }
-
-    insertedCount += 1;
 
     if (stageMessage.message_type === "audio") {
       usedAudio += 1;
     }
+
+    scheduledAtMs = lastPartScheduledAtMs;
   }
 
   if (insertedCount === 0) {
@@ -610,6 +659,10 @@ async function sendAutomationJob(
 
   if (messageType === "audio" && !mediaUrl) {
     throw new Error("El job de audio no tiene media_url.");
+  }
+
+  if (messageType === "audio" && mediaUrl) {
+    await assertInstagramAudioUrlAccessible(mediaUrl);
   }
 
   const response = await sendInstagramMessage({
