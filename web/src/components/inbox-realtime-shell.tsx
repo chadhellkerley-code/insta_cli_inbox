@@ -108,6 +108,15 @@ function removeById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((item) => item.id !== id);
 }
 
+function normalizeSortableDate(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 async function loadConversationRows(client: ReturnType<typeof createClient>, userId: string) {
   const result = await client
     .from("instagram_conversations")
@@ -178,20 +187,6 @@ async function loadMessageRows(
   return sortMessages(result.data as MessageRecord[]);
 }
 
-function getConversationLabelSummary(conversation: ConversationRecord) {
-  const labels = getConversationLabels(conversation.labels);
-
-  if (labels.length === 0) {
-    return "Sin etiquetas";
-  }
-
-  if (labels.length === 1) {
-    return labels[0];
-  }
-
-  return `${labels[0]} +${labels.length - 1}`;
-}
-
 export function InboxRealtimeShell({
   userId,
   initialAccounts,
@@ -241,9 +236,30 @@ export function InboxRealtimeShell({
     conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const selectedAccount =
     accounts.find((account) => account.id === selectedConversation?.account_id) ?? null;
+  const accountOrdinalById = useMemo(() => {
+    const ordered = [...accounts].sort((left, right) => {
+      const leftTimestamp = normalizeSortableDate(left.connected_at ?? left.created_at);
+      const rightTimestamp = normalizeSortableDate(right.connected_at ?? right.created_at);
+      return leftTimestamp - rightTimestamp;
+    });
+
+    return new Map(ordered.map((account, index) => [account.id, index + 1]));
+  }, [accounts]);
   const accountUsernameMap = useMemo(() => {
     return new Map(accounts.map((account) => [account.id, account.username]));
   }, [accounts]);
+  const resolveConversationAccountLabel = (conversation: ConversationRecord) => {
+    const baseLabel = getInstagramAccountDisplayName(
+      accountUsernameMap.get(conversation.account_id) ?? conversation.account_username,
+    );
+
+    if (baseLabel !== "Cuenta conectada") {
+      return baseLabel;
+    }
+
+    const ordinal = accountOrdinalById.get(conversation.account_id);
+    return ordinal ? `Cuenta ${ordinal}` : baseLabel;
+  };
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -758,156 +774,169 @@ export function InboxRealtimeShell({
 
   return (
     <div className="page-stack inbox-page">
+      <section className="page-header">
+        <div>
+          <span className="eyebrow">Inbox</span>
+          <h1>Inbox unificado de Instagram</h1>
+          <p className="page-copy">
+            Conversaciones de todas las cuentas conectadas, en tiempo real, con
+            historial persistente en Supabase.
+          </p>
+        </div>
+        <div className="surface stat-pill">
+          <strong>{filteredConversations.length}</strong>
+          <span>conversaciones visibles</span>
+        </div>
+      </section>
+
+      {dueReminders.length > 0 ? (
+        <section className="surface reminder-banner">
+          <div>
+            <span className="eyebrow">Notificaciones</span>
+            <h2>{dueReminders.length} recordatorio(s) pendiente(s)</h2>
+            <p className="page-copy">
+              Estos seguimientos ya vencieron y estan visibles dentro de la app.
+            </p>
+          </div>
+          <div className="notice-list">
+            {dueReminders.slice(0, 4).map((reminder) => {
+              const reminderConversation = conversations.find(
+                (conversation) => conversation.id === reminder.conversation_id,
+              );
+
+              return (
+                <div key={reminder.id} className="notice-item">
+                  <div>
+                    <strong>{reminder.title}</strong>
+                    <p>
+                      {reminderConversation
+                        ? getConversationDisplayName(reminderConversation)
+                        : "Conversacion"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => void dismissReminder(reminder.id)}
+                  >
+                    Descartar
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {feedback ? (
+        <div className={feedbackTone === "success" ? "feedback success" : "feedback error"}>
+          {feedback}
+        </div>
+      ) : null}
+
       <section className="inbox-shell">
         <aside className="surface inbox-column inbox-column-list">
-          <div className="inbox-list-header">
-            <div>
-              <span className="eyebrow">Inbox</span>
-              <h1>Inbox</h1>
-            </div>
-            <div className="thread-count-badge">
-              <strong>{filteredConversations.length}</strong>
-              <span>visibles</span>
-            </div>
-          </div>
-
-          {dueReminders.length > 0 ? (
-            <div className="inbox-inline-alert danger">
-              <strong>{dueReminders.length} recordatorio(s) pendiente(s)</strong>
-              <span>Estan visibles en el panel derecho para seguimiento.</span>
-            </div>
-          ) : null}
-
-          {feedback ? (
-            <div
-              className={
-                feedbackTone === "success"
-                  ? "inbox-inline-alert success"
-                  : "inbox-inline-alert danger"
-              }
-            >
-              <strong>{feedbackTone === "success" ? "Actualizado" : "Atencion"}</strong>
-              <span>{feedback}</span>
-            </div>
-          ) : null}
-
           <div className="inbox-toolbar">
+            <label className="field-label" htmlFor="thread-search">
+              Buscar
+            </label>
             <input
               id="thread-search"
-              aria-label="Buscar conversaciones"
-              className="text-input inbox-search-input"
+              className="text-input"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar conversaciones..."
+              placeholder="Usuario, cuenta o mensaje"
             />
+          </div>
 
-            <div className="tag-row inbox-filter-row">
+          <div className="tag-row">
+            <button
+              type="button"
+              className={!activeLabel ? "chip active" : "chip"}
+              onClick={() => setActiveLabel(null)}
+            >
+              Todas
+            </button>
+            {allLabels.map((label) => (
               <button
+                key={label}
                 type="button"
-                className={!activeLabel ? "chip active" : "chip"}
-                onClick={() => setActiveLabel(null)}
+                className={activeLabel === label ? "chip active" : "chip"}
+                onClick={() => setActiveLabel(label)}
               >
-                Todas
+                {label}
               </button>
-              {allLabels.map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  className={activeLabel === label ? "chip active" : "chip"}
-                  onClick={() => setActiveLabel(label)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
 
           <div className="thread-list">
             {filteredConversations.length === 0 ? (
-              <div className="empty-state compact inbox-empty-list">
-                <strong>No hay conversaciones que coincidan con este filtro.</strong>
-                <p>Ajusta la busqueda o espera nuevos mensajes entrantes.</p>
+              <div className="empty-state compact">
+                <strong>Sin conversaciones</strong>
+                <p>Cuando lleguen mensajes por Meta, apareceran aqui al instante.</p>
               </div>
             ) : null}
 
-            {filteredConversations.map((conversation) => {
-              const displayName = getConversationDisplayName(conversation);
-              const accountName = getInstagramAccountDisplayName(
-                accountUsernameMap.get(conversation.account_id) ??
-                  conversation.account_username,
-              );
-              const unreadCount = conversation.unread_count ?? 0;
-
-              return (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  className={
-                    conversation.id === selectedConversationId
-                      ? "thread-card active"
-                      : "thread-card"
-                  }
-                  onClick={() => setSelectedConversationId(conversation.id)}
-                >
-                  <div className="thread-card-top">
-                    <span className="thread-contact-meta">
-                      {conversation.contact_profile_picture_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          className="thread-contact-avatar"
-                          src={conversation.contact_profile_picture_url}
-                          alt={displayName}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="thread-contact-avatar thread-contact-avatar-fallback">
-                          {displayName.slice(0, 1).toUpperCase()}
-                        </span>
-                      )}
-
-                      <span className="thread-contact-copy">
-                        <strong>{displayName}</strong>
-                        <span className="thread-contact-subtitle">
-                          {accountName}
-                        </span>
-                      </span>
+            {filteredConversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                className={
+                  conversation.id === selectedConversationId
+                    ? "thread-card active"
+                    : "thread-card"
+                }
+                onClick={() => setSelectedConversationId(conversation.id)}
+              >
+                <div className="thread-card-top">
+                  <strong>{getConversationDisplayName(conversation)}</strong>
+                  <span>{formatRelativeTime(conversation.last_message_at)}</span>
+                </div>
+                <span className="thread-contact-meta">
+                  {conversation.contact_profile_picture_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      className="thread-contact-avatar"
+                      src={conversation.contact_profile_picture_url}
+                      alt={getConversationDisplayName(conversation)}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="thread-contact-avatar thread-contact-avatar-fallback">
+                      {getConversationDisplayName(conversation).slice(0, 1).toUpperCase()}
                     </span>
-
-                    <span className="thread-card-time">
-                      {formatRelativeTime(conversation.last_message_at)}
-                    </span>
-                  </div>
-
-                  <p className="thread-preview">{getConversationPreview(conversation)}</p>
-
-                  <div className="thread-meta">
-                    <span className="thread-label-summary">
-                      {getConversationLabelSummary(conversation)}
-                    </span>
-                    <span className={unreadCount > 0 ? "thread-unread active" : "thread-unread"}>
-                      {unreadCount} sin leer
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
+                  )}
+                  <span className="thread-contact-subtitle">
+                    {conversation.contact_name ?? conversation.contact_username ?? "Contacto"}
+                  </span>
+                </span>
+                <span className="thread-account">
+                  {resolveConversationAccountLabel(conversation)}
+                </span>
+                <p>{getConversationPreview(conversation)}</p>
+                <div className="thread-meta">
+                  <span>
+                    {getConversationLabels(conversation.labels).join(", ") || "Sin etiquetas"}
+                  </span>
+                  <span>{conversation.unread_count ?? 0} sin leer</span>
+                </div>
+              </button>
+            ))}
           </div>
         </aside>
 
         <section className="surface inbox-column inbox-column-thread">
           <div className="conversation-header">
             <div>
+              <span className="eyebrow">Conversacion</span>
               <h2>
                 {selectedConversation
                   ? getConversationDisplayName(selectedConversation)
                   : "Selecciona un chat"}
               </h2>
-              <p className="conversation-subcopy">
+              <p className="page-copy">
                 {selectedConversation
-                  ? `${getInstagramAccountDisplayName(
-                      accountUsernameMap.get(selectedConversation.account_id) ??
-                        selectedConversation.account_username,
-                    )} - ${selectedConversation.last_message_type || "texto"}`
+                  ? `${resolveConversationAccountLabel(selectedConversation)} - ${selectedConversation.last_message_type || "texto"}`
                   : "Elige una conversacion para ver el historial y responder."}
               </p>
             </div>
@@ -920,23 +949,23 @@ export function InboxRealtimeShell({
 
           <div className="message-list">
             {loadingMessages ? (
-              <div className="empty-state compact inbox-thread-empty">
+              <div className="empty-state compact">
                 <strong>Cargando mensajes</strong>
                 <p>Sincronizando el historial guardado en Supabase.</p>
               </div>
             ) : null}
 
             {!loadingMessages && selectedConversation && messages.length === 0 ? (
-              <div className="empty-state compact inbox-thread-empty">
+              <div className="empty-state compact">
                 <strong>Sin historial todavia</strong>
                 <p>Cuando Meta entregue mensajes o respuestas, se van a persistir aqui.</p>
               </div>
             ) : null}
 
             {!loadingMessages && !selectedConversation ? (
-              <div className="empty-state compact inbox-thread-empty inbox-thread-empty-center">
+              <div className="empty-state compact">
                 <strong>Selecciona una conversacion</strong>
-                <p>Elige un chat de la columna izquierda para ver el historial y responder.</p>
+                <p>La columna izquierda agrupa los hilos de todas tus cuentas conectadas.</p>
               </div>
             ) : null}
 
@@ -1178,7 +1207,13 @@ export function InboxRealtimeShell({
                 <div className="detail-list">
                   <div className="detail-row">
                     <span>Cuenta</span>
-                    <strong>{selectedAccount ? `@${selectedAccount.username}` : "-"}</strong>
+                    <strong>
+                      {selectedConversation
+                        ? resolveConversationAccountLabel(selectedConversation)
+                        : selectedAccount
+                          ? `@${selectedAccount.username}`
+                          : "-"}
+                    </strong>
                   </div>
                   <div className="detail-row">
                     <span>IGSID</span>
