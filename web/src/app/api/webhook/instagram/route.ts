@@ -1123,14 +1123,14 @@ export async function POST(request: Request) {
   }
 
   const entries = Array.isArray(body.entry) ? body.entry : [];
+  const bodyObject = typeof body.object === "string" ? body.object : null;
 
   logWebhook("info", "payload received", {
-    bodyObject: typeof body.object === "string" ? body.object : null,
+    bodyObject,
     entryCount: entries.length,
   });
 
-  const normalizedBodyObject =
-    typeof body.object === "string" ? body.object.toLowerCase() : null;
+  const normalizedBodyObject = bodyObject?.toLowerCase() ?? null;
   const isSupportedWebhookObject =
     normalizedBodyObject === "instagram" || normalizedBodyObject === "page";
 
@@ -1150,7 +1150,7 @@ export async function POST(request: Request) {
     const messagingEvents = normalizeEntryMessagingEvents(entry);
 
     logWebhook("info", "entry received", {
-      bodyObject: body.object,
+      bodyObject,
       entryIndex,
       entryId: normalizeInstagramIdentifier(entry.id ?? null),
       eventCount: messagingEvents.length,
@@ -1164,7 +1164,7 @@ export async function POST(request: Request) {
       const messageId = normalizeInstagramIdentifier(event.message?.mid ?? null);
 
       logWebhook("info", "event received", {
-        bodyObject: body.object,
+        bodyObject,
         entryIndex,
         eventIndex,
         entryId,
@@ -1177,7 +1177,7 @@ export async function POST(request: Request) {
         if (!event.message) {
           logWebhook("info", "message skipped", {
             reason: "missing_message",
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1187,13 +1187,13 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: "missing_message",
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             payload: {
-              object: body.object,
+              object: bodyObject,
               entry: { id: entryId, entryIndex },
               event,
             },
@@ -1228,7 +1228,7 @@ export async function POST(request: Request) {
 
         if (!match) {
           logWebhook("warn", "account match failed", {
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1239,13 +1239,13 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: "account_match_failed",
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             payload: {
-              object: body.object,
+              object: bodyObject,
               entry: {
                 id: entryId,
               },
@@ -1256,7 +1256,7 @@ export async function POST(request: Request) {
         }
 
         logWebhook("info", "account matched", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1273,7 +1273,7 @@ export async function POST(request: Request) {
         if (persistence.status === "skipped") {
           logWebhook("warn", "message skipped", {
             reason: persistence.reason,
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1284,14 +1284,14 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: persistence.reason,
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             matchedAccountId: match.account.id,
             payload: {
-              object: body.object,
+              object: bodyObject,
               entry: { id: entryId, entryIndex },
               event,
             },
@@ -1300,7 +1300,7 @@ export async function POST(request: Request) {
         }
 
         logWebhook("info", "message persisted", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1316,7 +1316,7 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         logWebhook("error", "event failed", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1327,13 +1327,13 @@ export async function POST(request: Request) {
         });
         await persistWebhookDebugEvent(admin, {
           reason: "event_failed",
-          bodyObject: body.object,
+          bodyObject,
           entryId,
           senderId,
           recipientId,
           messageId,
           payload: {
-            object: body.object,
+            object: bodyObject,
             entry: { id: entryId, entryIndex },
             event,
             error: error instanceof Error ? error.message : String(error),
