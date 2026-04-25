@@ -46,6 +46,8 @@ type ResolvedInstagramContact = {
   profilePictureUrl: string | null;
 };
 
+const EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS = 60 * 60 * 1000;
+
 function isMissingInstagramContactsTableError(error: unknown) {
   const message =
     error instanceof Error
@@ -115,6 +117,20 @@ function hasNewerOauthThanLastFetch(options: {
   }
 
   return oauthMs > fetchMs;
+}
+
+function isOlderThan(value: string | null | undefined, ageMs: number) {
+  if (!value) {
+    return true;
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  if (Number.isNaN(timestamp)) {
+    return true;
+  }
+
+  return Date.now() - timestamp >= ageMs;
 }
 
 export function getInstagramContactDisplayProfile(contact: {
@@ -280,7 +296,11 @@ export async function resolveInstagramContactProfile(options: {
     hasNewerOauthThanLastFetch({
       lastOauthAt: options.account.last_oauth_at,
       lastProfileFetchAt: existing.last_profile_fetch_at,
-    });
+    }) ||
+    isOlderThan(
+      existing.last_profile_fetch_at,
+      EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS,
+    );
 
   if (!shouldRetryFetch && existing) {
     return getInstagramContactDisplayProfile(existing);
@@ -359,6 +379,13 @@ export async function resolveInstagramContactProfile(options: {
     return resolved;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    console.warn("[instagram-contact-profile] profile fetch failed", {
+      accountId: options.account.id,
+      ownerId: options.account.owner_id,
+      contactIgsid: options.contactIgsid,
+      error: message,
+    });
 
     if (!canUseContactsCache) {
       return existing

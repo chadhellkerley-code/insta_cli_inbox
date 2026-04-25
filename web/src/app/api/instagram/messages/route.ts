@@ -10,6 +10,7 @@ import {
   INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
   INSTAGRAM_MESSAGING_STATUS_READY,
 } from "@/lib/meta/account-status";
+import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -30,6 +31,7 @@ type ConversationLookup = {
 
 type AccountLookup = {
   id: string;
+  owner_id: string;
   instagram_user_id: string | null;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
@@ -38,6 +40,7 @@ type AccountLookup = {
   access_token: string;
   token_expires_at: string | null;
   token_lifecycle: string | null;
+  last_oauth_at: string | null;
 };
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -170,7 +173,7 @@ export async function POST(request: Request) {
     const accountResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at, token_lifecycle",
+        "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at, token_lifecycle, last_oauth_at",
       )
       .eq("id", conversation.account_id)
       .maybeSingle();
@@ -298,6 +301,22 @@ export async function POST(request: Request) {
       await assertInstagramAudioUrlAccessible(mediaUrl);
     }
 
+    const contactProfile = await resolveInstagramContactProfile({
+      admin,
+      account,
+      contactIgsid: conversation.contact_igsid,
+    }).catch((error) => {
+      logInstagramMessage("warn", "contact profile enrichment skipped", {
+        userId: user.id,
+        conversationId: conversation.id,
+        accountId: account.id,
+        contactIgsid: conversation.contact_igsid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return null;
+    });
+
     const metaResponse = await sendInstagramMessage({
       accessToken: managedToken.accessToken,
       recipientId: conversation.contact_igsid,
@@ -343,6 +362,10 @@ export async function POST(request: Request) {
     const conversationUpdate = await admin
       .from("instagram_conversations")
       .update({
+        ...(contactProfile?.contactUsername
+          ? { contact_username: contactProfile.contactUsername }
+          : {}),
+        ...(contactProfile?.contactName ? { contact_name: contactProfile.contactName } : {}),
         last_message_text: preview,
         last_message_type: messageType,
         last_message_at: createdAt,
