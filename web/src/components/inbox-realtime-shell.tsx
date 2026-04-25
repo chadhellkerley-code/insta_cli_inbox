@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
@@ -680,6 +680,10 @@ export function InboxRealtimeShell({
   }
 
   async function sendMessage() {
+    if (sendingMessage) {
+      return;
+    }
+
     if (!selectedConversation) {
       return;
     }
@@ -741,6 +745,15 @@ export function InboxRealtimeShell({
     } finally {
       setSendingMessage(false);
     }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    event.preventDefault();
+    void sendMessage();
   }
 
   return (
@@ -992,6 +1005,7 @@ export function InboxRealtimeShell({
                 }
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
                 disabled={!selectedConversation || sendingMessage}
               />
             ) : (
