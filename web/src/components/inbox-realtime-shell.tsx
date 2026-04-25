@@ -888,38 +888,44 @@ export function InboxRealtimeShell({
                 }
                 onClick={() => setSelectedConversationId(conversation.id)}
               >
-                <div className="thread-card-top">
-                  <strong>{getConversationDisplayName(conversation)}</strong>
-                  <span>{formatRelativeTime(conversation.last_message_at)}</span>
-                </div>
-                <span className="thread-contact-meta">
-                  {conversation.contact_profile_picture_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      className="thread-contact-avatar"
-                      src={conversation.contact_profile_picture_url}
-                      alt={getConversationDisplayName(conversation)}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <span className="thread-contact-avatar thread-contact-avatar-fallback">
-                      {getConversationDisplayName(conversation).slice(0, 1).toUpperCase()}
+                {conversation.contact_profile_picture_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    className="thread-contact-avatar"
+                    src={conversation.contact_profile_picture_url}
+                    alt={getConversationDisplayName(conversation)}
+                    loading="lazy"
+                  />
+                ) : (
+                  <span className="thread-contact-avatar thread-contact-avatar-fallback">
+                    {getConversationDisplayName(conversation).slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="thread-card-main">
+                  <span className="thread-card-top">
+                    <strong>{getConversationDisplayName(conversation)}</strong>
+                    <span className="thread-card-time">
+                      {formatRelativeTime(conversation.last_message_at)}
                     </span>
-                  )}
+                  </span>
                   <span className="thread-contact-subtitle">
-                    {conversation.contact_name ?? conversation.contact_username ?? "Contacto"}
+                    {conversation.contact_name ?? conversation.contact_username ?? "Contacto"} -{" "}
+                    {resolveConversationAccountLabel(conversation)}
+                  </span>
+                  <span className="thread-preview">
+                    {getConversationPreview(conversation)}
+                  </span>
+                  <span className="thread-meta">
+                    <span className="thread-label-summary">
+                      {getConversationLabels(conversation.labels).join(", ") || "Sin etiquetas"}
+                    </span>
+                    {(conversation.unread_count ?? 0) > 0 ? (
+                      <span className="thread-unread active">
+                        {conversation.unread_count}
+                      </span>
+                    ) : null}
                   </span>
                 </span>
-                <span className="thread-account">
-                  {resolveConversationAccountLabel(conversation)}
-                </span>
-                <p>{getConversationPreview(conversation)}</p>
-                <div className="thread-meta">
-                  <span>
-                    {getConversationLabels(conversation.labels).join(", ") || "Sin etiquetas"}
-                  </span>
-                  <span>{conversation.unread_count ?? 0} sin leer</span>
-                </div>
               </button>
             ))}
           </div>

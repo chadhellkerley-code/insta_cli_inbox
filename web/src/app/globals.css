@@ -1136,24 +1136,89 @@ main {
   color: var(--muted);
 }
 
+body:has(.inbox-page) {
+  background: #060608;
+}
+
+body:has(.inbox-page) .dashboard-shell {
+  grid-template-columns: 222px minmax(0, 1fr);
+}
+
+body:has(.inbox-page) .dashboard-sidebar {
+  padding: 20px 14px;
+  background: #101015;
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+body:has(.inbox-page) .sidebar-brand {
+  padding: 0 8px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+body:has(.inbox-page) .sidebar-brand span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+body:has(.inbox-page) .sidebar-brand strong {
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+body:has(.inbox-page) .nav-link {
+  min-height: 40px;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+body:has(.inbox-page) .nav-link.active {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(124, 58, 237, 0.46);
+  box-shadow: inset 3px 0 0 rgba(139, 92, 246, 0.92);
+}
+
+body:has(.inbox-page) .sidebar-user {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body:has(.inbox-page) .dashboard-content {
+  min-height: 100vh;
+  padding: 0;
+  background: #060608;
+}
+
 .inbox-page {
   gap: 0;
-  height: calc(100vh - 48px);
+  height: 100vh;
   min-height: 0;
   overflow: hidden;
 }
 
+.inbox-page > .page-header,
+.inbox-page > .reminder-banner,
+.inbox-page > .feedback {
+  margin: 16px 16px 0;
+}
+
+.inbox-page > .page-header {
+  display: none;
+}
+
 .inbox-shell {
   display: grid;
-  gap: 12px;
+  gap: 0;
   flex: 1;
   min-height: 0;
   max-width: 100%;
   overflow: hidden;
   grid-template-columns:
-    clamp(280px, 24vw, 340px)
+    clamp(300px, 28vw, 360px)
     minmax(0, 1fr)
-    clamp(250px, 21vw, 312px);
+    clamp(250px, 22vw, 300px);
 }
 
 .inbox-column {
@@ -1161,6 +1226,9 @@ main {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .inbox-column-list,
@@ -1170,24 +1238,21 @@ main {
 
 .inbox-column-list {
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(15, 17, 25, 0.98), rgba(12, 14, 22, 0.98)),
-    radial-gradient(circle at top left, rgba(124, 58, 237, 0.16), transparent 42%);
+  border-width: 0 1px 0 0;
+  background: #101015;
 }
 
 .inbox-column-thread {
   padding: 18px 18px 14px;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(12, 13, 20, 0.98), rgba(10, 12, 19, 0.98)),
-    radial-gradient(circle at top, rgba(124, 58, 237, 0.1), transparent 32%);
+  border-width: 0 1px 0 0;
+  background: #060608;
 }
 
 .inbox-column-tags {
   overflow-y: auto;
-  background:
-    linear-gradient(180deg, rgba(15, 16, 24, 0.98), rgba(12, 13, 20, 0.98)),
-    radial-gradient(circle at top right, rgba(124, 58, 237, 0.12), transparent 35%);
+  border-width: 0;
+  background: #101015;
 }
 
 .inbox-list-header {
@@ -1255,7 +1320,22 @@ main {
 .inbox-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inbox-toolbar .field-label {
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.inbox-column-list .text-input {
+  min-height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .inbox-search-input {
@@ -1272,14 +1352,14 @@ main {
 .tag-stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 4px;
+  margin-top: 12px;
   min-height: 0;
 }
 
 .thread-list {
   flex: 1;
-  padding-right: 4px;
+  padding-right: 2px;
   overflow-y: auto;
 }
 
@@ -1290,9 +1370,7 @@ main {
 .thread-card,
 .tag-card {
   width: 100%;
-  padding: 14px;
   text-align: left;
-  border-radius: 16px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
@@ -1305,33 +1383,47 @@ main {
 
 .thread-card:hover,
 .tag-card:hover {
-  transform: translateY(-1px);
+  transform: none;
   border-color: rgba(124, 58, 237, 0.34);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .thread-card.active {
   border-color: rgba(124, 58, 237, 0.52);
-  background:
-    linear-gradient(145deg, rgba(124, 58, 237, 0.24), rgba(17, 18, 28, 0.96)),
-    rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.1);
+  background: rgba(124, 58, 237, 0.2);
+  box-shadow: inset 3px 0 0 rgba(139, 92, 246, 0.96);
 }
 
 .thread-card {
-  min-height: 132px;
+  height: 86px;
+  min-height: 86px;
+  padding: 10px 12px;
+  border-radius: 12px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
   overflow: hidden;
+}
+
+.tag-card {
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.thread-card-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .thread-card-top,
 .thread-meta {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
 }
 
 .thread-meta,
@@ -1362,8 +1454,8 @@ main {
 }
 
 .thread-contact-avatar {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   flex: 0 0 auto;
   border-radius: 999px;
   object-fit: cover;
@@ -1395,14 +1487,21 @@ main {
   font-size: 0.76rem;
 }
 
+.thread-card-top strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.94rem;
+}
+
 .thread-preview {
   color: var(--muted-strong);
-  line-height: 1.48;
-  font-size: 0.93rem;
-  display: -webkit-box;
+  line-height: 1.25;
+  font-size: 0.86rem;
   overflow: hidden;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-label-summary {
@@ -1413,11 +1512,17 @@ main {
 
 .thread-unread {
   flex: 0 0 auto;
-  padding: 4px 8px;
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.02);
   white-space: nowrap;
+  font-size: 0.72rem;
 }
 
 .thread-unread.active {
@@ -1439,6 +1544,7 @@ main {
   justify-content: space-between;
   gap: 14px;
   align-items: flex-start;
+  min-height: 88px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
