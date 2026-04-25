@@ -10,7 +10,6 @@ import type {
   ConversationRecord,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
 } from "@/lib/shared-data";
 import {
   formatDateTime,
@@ -28,7 +27,6 @@ type InboxRealtimeShellProps = {
   initialAccounts: InstagramAccountRecord[];
   initialConversations: ConversationRecord[];
   initialMessages: MessageRecord[];
-  initialReminders: ReminderRecord[];
   initialSelectedConversationId: string | null;
 };
 
@@ -85,12 +83,6 @@ function sortMessages(messages: MessageRecord[]) {
     const rightTimestamp = new Date(right.sent_at ?? right.created_at ?? 0).getTime() || 0;
 
     return leftTimestamp - rightTimestamp;
-  });
-}
-
-function sortReminders(reminders: ReminderRecord[]) {
-  return [...reminders].sort((left, right) => {
-    return new Date(left.remind_at).getTime() - new Date(right.remind_at).getTime();
   });
 }
 
@@ -192,7 +184,6 @@ export function InboxRealtimeShell({
   initialAccounts,
   initialConversations,
   initialMessages,
-  initialReminders,
   initialSelectedConversationId,
 }: InboxRealtimeShellProps) {
   const clientRef = useRef<ReturnType<typeof createClient>>();
@@ -202,7 +193,6 @@ export function InboxRealtimeShell({
     sortConversations(initialConversations),
   );
   const [messages, setMessages] = useState(sortMessages(initialMessages));
-  const [reminders, setReminders] = useState(sortReminders(initialReminders));
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
     initialSelectedConversationId,
   );
@@ -211,14 +201,10 @@ export function InboxRealtimeShell({
   const [labelsDraft, setLabelsDraft] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
-  const [reminderTitle, setReminderTitle] = useState("");
-  const [reminderAt, setReminderAt] = useState("");
-  const [reminderNote, setReminderNote] = useState("");
   const [composerText, setComposerText] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
-  const [creatingReminder, setCreatingReminder] = useState(false);
   const [sendMode, setSendMode] = useState<SendMode>("text");
   const [sendingMessage, setSendingMessage] = useState(false);
 
@@ -480,38 +466,10 @@ export function InboxRealtimeShell({
       )
       .subscribe();
 
-    const remindersChannel = supabase
-      .channel(`instagram-reminders-${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "instagram_reminders",
-          filter: `owner_id=eq.${userId}`,
-        },
-        (payload) => {
-          const reminder = (payload.new || payload.old) as ReminderRecord | undefined;
-
-          if (!reminder) {
-            return;
-          }
-
-          if (payload.eventType === "DELETE") {
-            setReminders((current) => removeById(current, reminder.id));
-            return;
-          }
-
-          setReminders((current) => sortReminders(upsertById(current, reminder)));
-        },
-      )
-      .subscribe();
-
     return () => {
       void supabase.removeChannel(accountsChannel);
       void supabase.removeChannel(conversationsChannel);
       void supabase.removeChannel(messagesChannel);
-      void supabase.removeChannel(remindersChannel);
     };
   }, [userId]);
 
@@ -543,22 +501,6 @@ export function InboxRealtimeShell({
       return matchesSearch && matchesLabel;
     });
   }, [accountUsernameMap, activeLabel, conversations, search]);
-
-  const selectedConversationReminders = useMemo(() => {
-    if (!selectedConversation) {
-      return [];
-    }
-
-    return reminders.filter((reminder) => reminder.conversation_id === selectedConversation.id);
-  }, [reminders, selectedConversation]);
-
-  const dueReminders = useMemo(() => {
-    const now = Date.now();
-
-    return reminders.filter((reminder) => {
-      return reminder.status === "pending" && new Date(reminder.remind_at).getTime() <= now;
-    });
-  }, [reminders]);
 
   function addLabel() {
     const nextLabel = labelInput.trim();
@@ -621,61 +563,6 @@ export function InboxRealtimeShell({
       console.error("No pudimos guardar los cambios del inbox.", error);
     } finally {
       setSavingDetails(false);
-    }
-  }
-
-  async function createReminder() {
-    if (!selectedConversation || !reminderTitle.trim() || !reminderAt) {
-      return;
-    }
-
-    setCreatingReminder(true);
-
-    try {
-      const response = await fetch("/api/instagram/reminders", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          conversationId: selectedConversation.id,
-          title: reminderTitle.trim(),
-          note: reminderNote.trim(),
-          remindAt: new Date(reminderAt).toISOString(),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "No pudimos crear el recordatorio.");
-      }
-
-      setReminderTitle("");
-      setReminderAt("");
-      setReminderNote("");
-    } catch (error) {
-      console.error("No pudimos crear el recordatorio del inbox.", error);
-    } finally {
-      setCreatingReminder(false);
-    }
-  }
-
-  async function dismissReminder(reminderId: string) {
-    try {
-      const response = await fetch(`/api/instagram/reminders/${reminderId}`, {
-        method: "PATCH",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ status: "dismissed" }),
-      });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "No pudimos descartar el recordatorio.");
-      }
-    } catch (error) {
-      console.error("No pudimos descartar el recordatorio del inbox.", error);
     }
   }
 
@@ -772,45 +659,6 @@ export function InboxRealtimeShell({
           <span>conversaciones visibles</span>
         </div>
       </section>
-
-      {dueReminders.length > 0 ? (
-        <section className="surface reminder-banner">
-          <div>
-            <span className="eyebrow">Notificaciones</span>
-            <h2>{dueReminders.length} recordatorio(s) pendiente(s)</h2>
-            <p className="page-copy">
-              Estos seguimientos ya vencieron y estan visibles dentro de la app.
-            </p>
-          </div>
-          <div className="notice-list">
-            {dueReminders.slice(0, 4).map((reminder) => {
-              const reminderConversation = conversations.find(
-                (conversation) => conversation.id === reminder.conversation_id,
-              );
-
-              return (
-                <div key={reminder.id} className="notice-item">
-                  <div>
-                    <strong>{reminder.title}</strong>
-                    <p>
-                      {reminderConversation
-                        ? getConversationDisplayName(reminderConversation)
-                        : "Conversacion"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void dismissReminder(reminder.id)}
-                  >
-                    Descartar
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
 
       <section className="inbox-shell">
         <aside className="surface inbox-column inbox-column-list">
@@ -920,7 +768,7 @@ export function InboxRealtimeShell({
               </h2>
               <p className="page-copy">
                 {selectedConversation
-                  ? `${resolveConversationAccountLabel(selectedConversation)} - ${selectedConversation.last_message_type || "texto"}`
+                  ? resolveConversationAccountLabel(selectedConversation)
                   : "Elige una conversacion para ver el historial y responder."}
               </p>
             </div>
@@ -1055,7 +903,7 @@ export function InboxRealtimeShell({
                 : "Sin conversacion seleccionada"}
             </h3>
             <p className="page-copy">
-              Etiquetas, notas internas y recordatorios visibles para el equipo.
+              Etiquetas y notas internas visibles para el equipo.
             </p>
           </div>
 
@@ -1121,73 +969,6 @@ export function InboxRealtimeShell({
               </div>
 
               <div className="panel-section top-border">
-                <span className="field-label">Recordatorios</span>
-                <div className="form-stack compact-form">
-                  <input
-                    className="text-input"
-                    value={reminderTitle}
-                    onChange={(event) => setReminderTitle(event.target.value)}
-                    placeholder="Llamar, volver a escribir, enviar propuesta..."
-                  />
-                  <input
-                    className="text-input"
-                    type="datetime-local"
-                    value={reminderAt}
-                    onChange={(event) => setReminderAt(event.target.value)}
-                  />
-                  <textarea
-                    className="text-area notes-area"
-                    value={reminderNote}
-                    onChange={(event) => setReminderNote(event.target.value)}
-                    placeholder="Nota opcional"
-                  />
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void createReminder()}
-                    disabled={creatingReminder}
-                  >
-                    {creatingReminder ? "Creando..." : "Crear recordatorio"}
-                  </button>
-                </div>
-
-                <div className="tag-stack">
-                  {selectedConversationReminders.length === 0 ? (
-                    <div className="empty-state compact">
-                      <strong>Sin recordatorios</strong>
-                      <p>Programa seguimientos con fecha y hora para esta conversacion.</p>
-                    </div>
-                  ) : (
-                    selectedConversationReminders.map((reminder) => (
-                      <div key={reminder.id} className="tag-card static-card">
-                        <strong>{reminder.title}</strong>
-                        <span>{formatDateTime(reminder.remind_at)}</span>
-                        <p>{reminder.note || "Sin nota adicional"}</p>
-                        <div className="tag-row compact">
-                          <span
-                            className={
-                              reminder.status === "dismissed" ? "chip passive" : "chip active"
-                            }
-                          >
-                            {reminder.status}
-                          </span>
-                          {reminder.status !== "dismissed" ? (
-                            <button
-                              type="button"
-                              className="button button-secondary"
-                              onClick={() => void dismissReminder(reminder.id)}
-                            >
-                              Descartar
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="panel-section top-border">
                 <span className="eyebrow">Contexto</span>
                 <div className="detail-list">
                   <div className="detail-row">
@@ -1218,7 +999,7 @@ export function InboxRealtimeShell({
           ) : (
             <div className="empty-state compact">
               <strong>Panel listo</strong>
-              <p>Selecciona una conversacion para editar etiquetas, notas y recordatorios.</p>
+              <p>Selecciona una conversacion para editar etiquetas y notas.</p>
             </div>
           )}
         </aside>

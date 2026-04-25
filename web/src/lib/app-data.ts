@@ -10,7 +10,6 @@ export type {
   DashboardMetrics,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
 export {
@@ -30,7 +29,6 @@ import type {
   ConversationRecord,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
 
@@ -551,44 +549,4 @@ export async function loadRecentMessagesForOwner(
   }
 
   return castRows<MessageRecord>(data);
-}
-
-export async function loadReminders(
-  supabase: SupabaseClient,
-  userId: string,
-  limit = 200,
-): Promise<ReminderRecord[]> {
-  const { data, error } = await supabase
-    .from("instagram_reminders")
-    .select("*")
-    .eq("owner_id", userId)
-    .order("remind_at", { ascending: true })
-    .limit(limit);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return castRows<ReminderRecord>(data);
-}
-
-export async function loadDueReminders(
-  supabase: SupabaseClient,
-  userId: string,
-  limit = 6,
-): Promise<ReminderRecord[]> {
-  const { data, error } = await supabase
-    .from("instagram_reminders")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("status", "pending")
-    .lte("remind_at", new Date().toISOString())
-    .order("remind_at", { ascending: true })
-    .limit(limit);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return castRows<ReminderRecord>(data);
 }

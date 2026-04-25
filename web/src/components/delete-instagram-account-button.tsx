@@ -18,7 +18,7 @@ export function DeleteInstagramAccountButton({
 
   async function handleDelete() {
     const confirmed = window.confirm(
-      `Vas a eliminar @${username}. Tambien se borraran conversaciones, mensajes y recordatorios guardados de esa cuenta en Supabase. Esta accion no se puede deshacer.`,
+      `Vas a eliminar @${username}. Tambien se borraran conversaciones y mensajes guardados de esa cuenta en Supabase. Esta accion no se puede deshacer.`,
     );
 
     if (!confirmed) {

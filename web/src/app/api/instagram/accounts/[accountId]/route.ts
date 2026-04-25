@@ -58,7 +58,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return NextResponse.json({
       ok: true,
       message:
-        "La cuenta fue eliminada. Supabase borro tambien conversaciones, mensajes y recordatorios asociados.",
+        "La cuenta fue eliminada. Supabase borro tambien conversaciones y mensajes asociados.",
     });
   } catch (error) {
     return NextResponse.json(

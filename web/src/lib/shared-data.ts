@@ -75,18 +75,6 @@ export type MessageRecord = {
   created_at: string | null;
 };
 
-export type ReminderRecord = {
-  id: string;
-  owner_id: string;
-  conversation_id: string;
-  title: string;
-  note: string | null;
-  remind_at: string;
-  status: "pending" | "dismissed" | string;
-  dismissed_at: string | null;
-  created_at: string | null;
-};
-
 export type DashboardMetrics = {
   todayInbound: number;
   todayOutbound: number;
@@ -96,7 +84,6 @@ export type DashboardMetrics = {
   qualifiedConversations: number;
   staleConversations: number;
   activeAccounts: number;
-  overdueReminders: number;
   replyRatio: number;
 };
 
@@ -190,7 +177,6 @@ export function computeDashboardMetrics(
   messages: MessageRecord[],
   conversations: ConversationRecord[],
   accounts: InstagramAccountRecord[],
-  reminders: ReminderRecord[],
 ): DashboardMetrics {
   const now = Date.now();
   const dayAgo = now - 24 * 60 * 60 * 1000;
@@ -231,12 +217,6 @@ export function computeDashboardMetrics(
 
     return new Date(conversation.last_message_at).getTime() < now - 14 * 24 * 60 * 60 * 1000;
   }).length;
-  const overdueReminders = reminders.filter(
-    (reminder) =>
-      reminder.status === "pending" &&
-      new Date(reminder.remind_at).getTime() <= now,
-  ).length;
-
   return {
     todayInbound: inboundToday,
     todayOutbound: outboundToday,
@@ -246,7 +226,6 @@ export function computeDashboardMetrics(
     qualifiedConversations,
     staleConversations,
     activeAccounts: accounts.length,
-    overdueReminders,
     replyRatio:
       inboundToday === 0 ? 100 : Math.min(999, (outboundToday / inboundToday) * 100),
   };
