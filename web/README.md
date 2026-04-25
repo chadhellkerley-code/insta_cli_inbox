@@ -26,7 +26,7 @@ npm run dev
 2. Definir `META_OAUTH_REDIRECT_URI` con la URL final exacta del deploy.
 3. Cargar exactamente ese mismo valor en `OAuth redirect URIs` dentro de Meta.
 4. En Meta App Dashboard agregar `Webhooks`, configurar el objeto `Instagram`, verificar `https://tu-dominio/api/webhook/instagram` con el mismo `META_WEBHOOK_VERIFY_TOKEN` del entorno. Para esta configuracion, usar `meta_inbox_state_secret_2023`, y suscribir la app a los fields de Instagram que usa el proyecto.
-5. Definir `CRON_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` y dejar `web/vercel.json` activo para que `/api/automation/dispatch` procese etapas y followups desde cron.
+5. Definir `CRON_SECRET`, `SUPABASE_SERVICE_ROLE_KEY` y dejar `web/vercel.json` activo para que `/api/automation/dispatch` procese etapas y followups cada minuto desde cron.
 
 La configuracion de webhooks de Instagram se hace desde Meta App Dashboard. Durante el callback OAuth la app solo persiste la cuenta conectada y la deja en `oauth_connected`. La cuenta pasa a `messaging_ready` recien cuando recibimos el primer webhook real o confirmamos una operacion real de mensajeria.
 
@@ -36,4 +36,5 @@ La configuracion de webhooks de Instagram se hace desde Meta App Dashboard. Dura
 - Solo puede haber un agente activo por usuario.
 - La API key de IA se guarda localmente en el navegador de cada usuario.
 - El envio de etapas y followups corre por jobs via `/api/automation/dispatch`.
+- El primer mensaje de cada etapa sale inmediato; los delays aplican entre mensajes de la etapa y en los followups.
 - Desde la UI, el dispatcher puede correr con la sesion del usuario. Desde cron necesita `SUPABASE_SERVICE_ROLE_KEY`.

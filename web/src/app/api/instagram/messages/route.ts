@@ -300,7 +300,6 @@ export async function POST(request: Request) {
 
     const metaResponse = await sendInstagramMessage({
       accessToken: managedToken.accessToken,
-      instagramAccountId: resolvedInstagramAccountId,
       recipientId: conversation.contact_igsid,
       text,
       messageType: messageType === "audio" ? "audio" : undefined,
@@ -316,13 +315,16 @@ export async function POST(request: Request) {
     });
 
     const createdAt = nowIso;
+    const scopedMetaMessageId = metaResponse.message_id
+      ? `${account.id}:${metaResponse.message_id}`
+      : crypto.randomUUID();
     const preview = text || (messageType === "audio" ? "Mensaje de audio" : "Mensaje");
 
     const messageInsert = await admin.from("instagram_messages").insert({
       owner_id: user.id,
       account_id: account.id,
       conversation_id: conversation.id,
-      meta_message_id: metaResponse.message_id ?? crypto.randomUUID(),
+      meta_message_id: scopedMetaMessageId,
       direction: "out",
       message_type: messageType,
       text_content: text ?? null,

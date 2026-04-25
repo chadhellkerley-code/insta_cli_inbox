@@ -667,7 +667,6 @@ async function sendAutomationJob(
 
   const response = await sendInstagramMessage({
     accessToken: managedToken.accessToken,
-    instagramAccountId: account.instagram_account_id,
     recipientId: conversation.contact_igsid,
     text: textContent ?? undefined,
     messageType: messageType === "audio" ? "audio" : undefined,
@@ -675,12 +674,15 @@ async function sendAutomationJob(
   });
   const nowIso = new Date().toISOString();
   const preview = textContent ?? (messageType === "audio" ? "Mensaje de audio" : "Mensaje");
+  const scopedMetaMessageId = response.message_id
+    ? `${conversation.account_id}:${response.message_id}`
+    : crypto.randomUUID();
 
   const messageInsert = await client.from("instagram_messages").insert({
     owner_id: conversation.owner_id,
     account_id: conversation.account_id,
     conversation_id: conversation.id,
-    meta_message_id: response.message_id ?? crypto.randomUUID(),
+    meta_message_id: scopedMetaMessageId,
     direction: "out",
     message_type: messageType,
     text_content: textContent,

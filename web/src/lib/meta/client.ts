@@ -529,14 +529,13 @@ export async function activateInstagramAccountWebhooks(options: {
 
 export async function sendInstagramMessage(options: {
   accessToken: string;
-  instagramAccountId: string;
   recipientId: string;
   text?: string;
   messageType?: "audio" | "image" | "video" | "file";
   mediaUrl?: string;
 }) {
   const oauthConfig = getMetaOauthConfig();
-  const url = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramAccountId}/messages`);
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me/messages`);
 
   const message =
     options.messageType && options.mediaUrl
