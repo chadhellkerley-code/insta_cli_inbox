@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -14,8 +13,6 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const [successMessage, setSuccessMessage] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -47,35 +44,22 @@ export default function LoginPage() {
     };
   }, [router, supabase]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const trimmedEmail = email.trim();
-
-    if (!trimmedEmail || !password) {
-      setSuccessMessage(undefined);
-      setErrorMessage("Completá email y contraseña.");
-      return;
-    }
-
+  async function handleGoogleLogin() {
     setIsSubmitting(true);
     setSuccessMessage(undefined);
     setErrorMessage(undefined);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: trimmedEmail,
-      password,
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/supabase/callback`,
+      },
     });
 
-    setIsSubmitting(false);
-
     if (error) {
+      setIsSubmitting(false);
       setErrorMessage(error.message);
-      return;
     }
-
-    router.push("/dashboard");
-    router.refresh();
   }
 
   return (
@@ -84,57 +68,27 @@ export default function LoginPage() {
         <span className="eyebrow">Acceso</span>
         <h1>Entrá al panel web</h1>
         <p className="auth-copy">
-          Next.js 14, Supabase Auth y un dashboard oscuro pensado para operar
-          inbox, cuentas y automatizaciones desde un solo lugar.
+          Accedé con Google. Cada cuenta queda registrada en Supabase y ve solo
+          sus cuentas, conversaciones y automatizaciones.
         </p>
 
         {errorMessage ? <div className="feedback error">{errorMessage}</div> : null}
         {successMessage ? <div className="feedback success">{successMessage}</div> : null}
 
-        <form onSubmit={handleSubmit} className="form-stack">
-          <div className="field">
-            <label className="field-label" htmlFor="email">
-              Email
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              className="text-input"
-              placeholder="owner@instacli.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </div>
-
-          <div className="field">
-            <label className="field-label" htmlFor="password">
-              Contraseña
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              className="text-input"
-              placeholder="********"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </div>
-
-          <button type="submit" className="button button-primary" disabled={isSubmitting}>
-            {isSubmitting ? "Ingresando..." : "Ingresar"}
-          </button>
-        </form>
+        <button
+          type="button"
+          className="button button-secondary google-auth-button"
+          disabled={isSubmitting}
+          onClick={handleGoogleLogin}
+        >
+          <span className="google-mark" aria-hidden="true">
+            G
+          </span>
+          {isSubmitting ? "Redirigiendo..." : "Continuar con Google"}
+        </button>
 
         <p className="auth-footer">
-          Alta de usuarios en{" "}
-          <Link href="/registro">
-            <code>/registro</code>
-          </Link>{" "}
-          para owners.
+          Al ingresar se crea tu usuario y tu perfil operativo en Supabase.
         </p>
       </section>
     </main>

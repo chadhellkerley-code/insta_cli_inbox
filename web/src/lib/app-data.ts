@@ -314,7 +314,7 @@ export async function loadUserProfile(
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, role, expires_at")
+    .select("id, email, full_name, avatar_url, role, expires_at, last_login_at")
     .eq("id", userId)
     .maybeSingle();
 

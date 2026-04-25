@@ -4,8 +4,12 @@ import { isFallbackInstagramUsername } from "@/lib/meta/instagram-username";
 
 export type UserProfile = {
   id: string;
+  email: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
   role: string | null;
   expires_at: string | null;
+  last_login_at: string | null;
 };
 
 export type InstagramAccountRecord = {
@@ -282,5 +286,5 @@ export function getDisplayName(user: User, profile: UserProfile | null) {
     return "Owner";
   }
 
-  return user.email?.split("@")[0] ?? "Usuario";
+  return profile?.full_name ?? user.user_metadata?.name ?? user.email?.split("@")[0] ?? "Usuario";
 }

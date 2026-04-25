@@ -647,6 +647,25 @@ main {
   color: var(--text);
 }
 
+.google-auth-button {
+  width: 100%;
+  margin-top: 18px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.google-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1f2937;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .button-danger {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.28);
