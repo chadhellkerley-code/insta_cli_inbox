@@ -39,6 +39,8 @@ La forma prolija de desplegar este repo en Vercel es:
 
 `SUPABASE_SERVICE_ROLE_KEY` ya no es necesaria para que un usuario autenticado cree, edite o borre sus agentes desde la UI. Sigue siendo obligatoria para ejecuciones server-to-server como cron, webhooks y procesos globales sin sesion de usuario.
 
+Para el dispatcher de automatizaciones en plan Hobby, no uses Vercel Cron por minuto. Vercel Hobby solo permite cron diario. En este repo, la opcion recomendada es usar GitHub Actions cada 5 minutos contra `/api/automation/dispatch` con `Authorization: Bearer $CRON_SECRET`.
+
 ## Supabase schema requerido
 
 El flujo productivo actual asume que existen estas dos tablas auxiliares:
