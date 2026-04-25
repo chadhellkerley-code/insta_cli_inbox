@@ -216,8 +216,6 @@ export function InboxRealtimeShell({
   const [reminderNote, setReminderNote] = useState("");
   const [composerText, setComposerText] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [feedbackTone, setFeedbackTone] = useState<"success" | "error">("success");
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [creatingReminder, setCreatingReminder] = useState(false);
@@ -562,11 +560,6 @@ export function InboxRealtimeShell({
     });
   }, [reminders]);
 
-  function showFeedback(message: string, tone: "success" | "error") {
-    setFeedback(message);
-    setFeedbackTone(tone);
-  }
-
   function addLabel() {
     const nextLabel = labelInput.trim();
 
@@ -590,7 +583,6 @@ export function InboxRealtimeShell({
     }
 
     setSavingDetails(true);
-    setFeedback(null);
 
     try {
       const response = await fetch(
@@ -625,12 +617,8 @@ export function InboxRealtimeShell({
           ),
         ),
       );
-      showFeedback("Etiquetas y notas actualizadas.", "success");
     } catch (error) {
-      showFeedback(
-        error instanceof Error ? error.message : "No pudimos guardar los cambios.",
-        "error",
-      );
+      console.error("No pudimos guardar los cambios del inbox.", error);
     } finally {
       setSavingDetails(false);
     }
@@ -642,7 +630,6 @@ export function InboxRealtimeShell({
     }
 
     setCreatingReminder(true);
-    setFeedback(null);
 
     try {
       const response = await fetch("/api/instagram/reminders", {
@@ -666,12 +653,8 @@ export function InboxRealtimeShell({
       setReminderTitle("");
       setReminderAt("");
       setReminderNote("");
-      showFeedback("Recordatorio creado.", "success");
     } catch (error) {
-      showFeedback(
-        error instanceof Error ? error.message : "No pudimos crear el recordatorio.",
-        "error",
-      );
+      console.error("No pudimos crear el recordatorio del inbox.", error);
     } finally {
       setCreatingReminder(false);
     }
@@ -691,15 +674,8 @@ export function InboxRealtimeShell({
       if (!response.ok) {
         throw new Error(payload?.error || "No pudimos descartar el recordatorio.");
       }
-
-      showFeedback("Recordatorio descartado.", "success");
     } catch (error) {
-      showFeedback(
-        error instanceof Error
-          ? error.message
-          : "No pudimos descartar el recordatorio.",
-        "error",
-      );
+      console.error("No pudimos descartar el recordatorio del inbox.", error);
     }
   }
 
@@ -717,7 +693,6 @@ export function InboxRealtimeShell({
     }
 
     setSendingMessage(true);
-    setFeedback(null);
 
     try {
       let mediaUrl: string | undefined;
@@ -761,12 +736,8 @@ export function InboxRealtimeShell({
 
       setComposerText("");
       setAudioFile(null);
-      showFeedback(sendMode === "audio" ? "Audio enviado." : "Mensaje enviado.", "success");
     } catch (error) {
-      showFeedback(
-        error instanceof Error ? error.message : "No pudimos enviar el mensaje.",
-        "error",
-      );
+      console.error("No pudimos enviar el mensaje del inbox.", error);
     } finally {
       setSendingMessage(false);
     }
@@ -826,12 +797,6 @@ export function InboxRealtimeShell({
             })}
           </div>
         </section>
-      ) : null}
-
-      {feedback ? (
-        <div className={feedbackTone === "success" ? "feedback success" : "feedback error"}>
-          {feedback}
-        </div>
       ) : null}
 
       <section className="inbox-shell">
