@@ -10,15 +10,14 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublicRoute = publicRoutes.has(pathname);
   const isProtectedRoute = protectedPrefixes.some((prefix) => pathname.startsWith(prefix));
-  const isRootRoute = pathname === "/";
 
-  if (!user && (isProtectedRoute || isRootRoute)) {
+  if (!user && isProtectedRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && (isPublicRoute || isRootRoute)) {
+  if (user && isPublicRoute) {
     const dashboardUrl = request.nextUrl.clone();
     dashboardUrl.pathname = "/dashboard";
     return NextResponse.redirect(dashboardUrl);

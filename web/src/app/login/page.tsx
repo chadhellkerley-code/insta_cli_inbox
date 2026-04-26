@@ -79,7 +79,7 @@ export default function LoginPage() {
           <span className="eyebrow">Acceso</span>
           <h1>Entrá a tu panel</h1>
           <p className="auth-copy">
-            Inbox, cuentas y automatizaciones en un solo espacio privado.
+            Bandeja, cuentas y automatizaciones en un solo espacio privado.
           </p>
         </div>
 
@@ -99,9 +99,9 @@ export default function LoginPage() {
         </button>
 
         <div className="auth-proof" aria-label="Estado del acceso">
-          <span>Google OAuth</span>
+          <span>Acceso Google</span>
           <span>Datos aislados</span>
-          <span>Meta API</span>
+          <span>API de Meta</span>
         </div>
       </section>
     </main>
