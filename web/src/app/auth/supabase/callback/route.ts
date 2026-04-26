@@ -40,7 +40,7 @@ async function upsertProfile(user: User) {
     const admin = createAdminClient();
     const { error } = await admin
       .from("profiles")
-      .upsert(payload, { onConflict: "id" });
+      .upsert(payload as never, { onConflict: "id" });
 
     if (error) {
       throw error;
@@ -51,7 +51,7 @@ async function upsertProfile(user: User) {
     const supabase = createClient();
     const { error: sessionError } = await supabase
       .from("profiles")
-      .upsert(payload, { onConflict: "id" });
+      .upsert(payload as never, { onConflict: "id" });
 
     if (sessionError) {
       console.error("[supabase-auth] profile upsert failed", sessionError);
