@@ -1,31 +1,37 @@
 const features = [
   {
     title: "Automatización de mensajes directos",
+    label: "Flujos",
     description:
       "Respondé conversaciones de Instagram con flujos guiados y seguimiento por estado.",
   },
   {
     title: "Bandeja operativa",
+    label: "Inbox",
     description:
       "Centralizá mensajes, cuentas y contactos para trabajar sin cambiar de herramienta.",
   },
   {
     title: "Control humano",
+    label: "Equipo",
     description:
       "Tomá una conversación cuando haga falta y mantené la automatización bajo control.",
   },
   {
     title: "API oficial de Meta",
+    label: "Meta",
     description:
       "El flujo se apoya en la conexión autorizada de Meta para operar cuentas aprobadas.",
   },
   {
     title: "Cuentas aisladas",
+    label: "Privado",
     description:
       "Cada usuario ve solo sus cuentas, mensajes, métricas y automatizaciones.",
   },
   {
     title: "Panel en tiempo real",
+    label: "Live",
     description:
       "Monitoreá conversaciones, actividad y configuración desde un panel oscuro.",
   },
@@ -132,7 +138,10 @@ export default function Home() {
 
       <section className="landing-hero">
         <div className="landing-hero-copy">
-          <span className="landing-pill">CRM para Instagram con IA</span>
+          <div className="hero-kicker">
+            <span className="landing-pill">CRM para Instagram con IA</span>
+            <span className="landing-note">Nuevo inicio actualizado</span>
+          </div>
           <h1>Automatizá tus mensajes directos sin perder control de la bandeja.</h1>
           <p>
             Gestioná mensajes, cuentas y automatizaciones desde un panel privado
@@ -167,9 +176,13 @@ export default function Home() {
         <div className="hero-product" aria-label="Vista previa del CRM">
           <div className="mock-window">
             <div className="mock-topbar">
-              <span />
-              <span />
-              <span />
+              <div className="mock-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+              <strong>Panel de control</strong>
+              <small>Activo</small>
             </div>
             <div className="mock-grid">
               <aside className="mock-sidebar">
@@ -195,6 +208,10 @@ export default function Home() {
               <section className="mock-chat">
                 <div className="mock-bubble left">Hola, quiero automatizar mis mensajes.</div>
                 <div className="mock-bubble right">Perfecto. Te hago unas preguntas rápidas.</div>
+                <div className="mock-compose">
+                  <span>Respuesta lista para revisar</span>
+                  <strong>Enviar</strong>
+                </div>
                 <div className="mock-status">Automatización activa</div>
               </section>
             </div>
@@ -215,7 +232,9 @@ export default function Home() {
         <div className="feature-grid">
           {features.map((feature) => (
             <article className="landing-card feature-card" key={feature.title}>
-              <span className="card-icon" aria-hidden="true" />
+              <span className="card-icon" aria-hidden="true">
+                {feature.label}
+              </span>
               <h3>{feature.title}</h3>
               <p>{feature.description}</p>
             </article>
