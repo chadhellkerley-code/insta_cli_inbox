@@ -65,12 +65,23 @@ export default function LoginPage() {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <span className="eyebrow">Acceso</span>
-        <h1>Entrá al panel web</h1>
-        <p className="auth-copy">
-          Accedé con Google. Cada cuenta queda registrada en Supabase y ve solo
-          sus cuentas, conversaciones y automatizaciones.
-        </p>
+        <div className="auth-brand">
+          <span className="auth-logo" aria-hidden="true">
+            IC
+          </span>
+          <div>
+            <strong>Insta CLI Inbox</strong>
+            <span>Instagram CRM</span>
+          </div>
+        </div>
+
+        <div className="auth-heading">
+          <span className="eyebrow">Acceso</span>
+          <h1>Entrá a tu panel</h1>
+          <p className="auth-copy">
+            Inbox, cuentas y automatizaciones en un solo espacio privado.
+          </p>
+        </div>
 
         {errorMessage ? <div className="feedback error">{errorMessage}</div> : null}
         {successMessage ? <div className="feedback success">{successMessage}</div> : null}
@@ -87,9 +98,11 @@ export default function LoginPage() {
           {isSubmitting ? "Redirigiendo..." : "Continuar con Google"}
         </button>
 
-        <p className="auth-footer">
-          Al ingresar se crea tu usuario y tu perfil operativo en Supabase.
-        </p>
+        <div className="auth-proof" aria-label="Estado del acceso">
+          <span>Google OAuth</span>
+          <span>Datos aislados</span>
+          <span>Meta API</span>
+        </div>
       </section>
     </main>
   );
