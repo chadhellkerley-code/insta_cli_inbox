@@ -31,8 +31,32 @@ type InboxRealtimeShellProps = {
 };
 
 type SendMode = "text" | "audio";
+type TimeFilter = "all" | "plus12" | "between6and12" | "under6" | "new";
+type StatusFilter = "all" | "active" | "handoff";
 
 const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
+const HOUR_MS = 60 * 60 * 1000;
+
+const TIME_FILTERS: Array<{
+  id: TimeFilter;
+  label: string;
+  tone?: "success" | "warning" | "danger";
+}> = [
+  { id: "all", label: "All" },
+  { id: "plus12", label: "12h+", tone: "success" },
+  { id: "between6and12", label: "6-12h", tone: "warning" },
+  { id: "under6", label: "<6h", tone: "danger" },
+  { id: "new", label: "New" },
+];
+
+const STATUS_FILTERS: Array<{
+  id: StatusFilter;
+  label: string;
+}> = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "handoff", label: "Handoff" },
+];
 
 type InstagramContactLite = {
   contact_igsid: string;
@@ -107,6 +131,60 @@ function normalizeSortableDate(value: string | null | undefined) {
 
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getConversationAgeHours(conversation: ConversationRecord) {
+  const timestamp = normalizeSortableDate(
+    conversation.last_message_at ?? conversation.updated_at ?? conversation.created_at,
+  );
+
+  if (!timestamp) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(0, (Date.now() - timestamp) / HOUR_MS);
+}
+
+function conversationMatchesTimeFilter(
+  conversation: ConversationRecord,
+  timeFilter: TimeFilter,
+) {
+  if (timeFilter === "all") {
+    return true;
+  }
+
+  if (timeFilter === "new") {
+    return getConversationAgeHours(conversation) < 1;
+  }
+
+  const ageHours = getConversationAgeHours(conversation);
+
+  if (timeFilter === "under6") {
+    return ageHours >= 1 && ageHours < 6;
+  }
+
+  if (timeFilter === "between6and12") {
+    return ageHours >= 6 && ageHours < 12;
+  }
+
+  return ageHours >= 12 && ageHours < 24;
+}
+
+function conversationMatchesStatusFilter(
+  conversation: ConversationRecord,
+  statusFilter: StatusFilter,
+) {
+  if (statusFilter === "all") {
+    return true;
+  }
+
+  const ageHours = getConversationAgeHours(conversation);
+
+  if (statusFilter === "active") {
+    return ageHours < 24;
+  }
+
+  return ageHours >= 24;
 }
 
 async function loadConversationRows(client: ReturnType<typeof createClient>, userId: string) {
@@ -197,7 +275,10 @@ export function InboxRealtimeShell({
     initialSelectedConversationId,
   );
   const [search, setSearch] = useState("");
-  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  const [labelMenuOpen, setLabelMenuOpen] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [labelsDraft, setLabelsDraft] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
@@ -496,12 +577,26 @@ export function InboxRealtimeShell({
         accountUsername.includes(searchTerm) ||
         preview.includes(searchTerm);
       const matchesLabel =
-        !activeLabel ||
-        getConversationLabels(conversation.labels).includes(activeLabel);
+        activeLabels.length === 0 ||
+        activeLabels.some((label) =>
+          getConversationLabels(conversation.labels).includes(label),
+        );
+      const matchesTime = conversationMatchesTimeFilter(conversation, timeFilter);
+      const matchesStatus = conversationMatchesStatusFilter(conversation, statusFilter);
 
-      return matchesSearch && matchesLabel;
+      return matchesSearch && matchesLabel && matchesTime && matchesStatus;
     });
-  }, [accountUsernameMap, activeLabel, conversations, search]);
+  }, [accountUsernameMap, activeLabels, conversations, search, statusFilter, timeFilter]);
+
+  function toggleActiveLabel(label: string) {
+    setActiveLabels((current) => {
+      if (current.includes(label)) {
+        return current.filter((item) => item !== label);
+      }
+
+      return [...current, label];
+    });
+  }
 
   function addLabel() {
     const nextLabel = labelInput.trim();
@@ -667,35 +762,92 @@ export function InboxRealtimeShell({
 
       <section className="inbox-shell">
         <aside className="surface inbox-column inbox-column-list">
-          <div className="inbox-toolbar">
-            <label className="field-label" htmlFor="thread-search">
-              Buscar
-            </label>
-            <input
-              id="thread-search"
-              className="text-input"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Usuario, cuenta o mensaje"
-            />
+          <div className="inbox-compact-header">
+            <h2>Inbox</h2>
           </div>
 
-          <div className="tag-row">
+          <div className="inbox-toolbar">
+            <div className="inbox-search-row compact">
+              <label className="visually-hidden" htmlFor="thread-search">
+                Buscar conversaciones
+              </label>
+              <input
+                id="thread-search"
+                className="text-input inbox-search-input"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search conversations..."
+              />
+            </div>
+
+            {labelMenuOpen ? (
+              <div className="label-filter-menu">
+                <div className="label-filter-menu-head">
+                  <strong>Etiquetas</strong>
+                  <button type="button" onClick={() => setActiveLabels([])}>
+                    Limpiar
+                  </button>
+                </div>
+                <div className="label-filter-options">
+                  {allLabels.length === 0 ? (
+                    <span className="muted">Sin etiquetas guardadas</span>
+                  ) : null}
+                  {allLabels.map((label) => (
+                    <label key={label} className="label-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={activeLabels.includes(label)}
+                        onChange={() => toggleActiveLabel(label)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="tag-row inbox-filter-row time-filter-row">
+            {TIME_FILTERS.filter((filter) => filter.id !== "new").map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={timeFilter === filter.id ? "chip active" : "chip"}
+                onClick={() => setTimeFilter(filter.id)}
+              >
+                {filter.tone ? <span className={`time-dot ${filter.tone}`} /> : null}
+                {filter.label}
+              </button>
+            ))}
             <button
               type="button"
-              className={!activeLabel ? "chip active" : "chip"}
-              onClick={() => setActiveLabel(null)}
+              className={activeLabels.length > 0 || labelMenuOpen ? "chip active" : "chip"}
+              onClick={() => setLabelMenuOpen((current) => !current)}
+              aria-expanded={labelMenuOpen}
             >
-              Todas
+              Exp{activeLabels.length > 0 ? ` ${activeLabels.length}` : ""}
             </button>
-            {allLabels.map((label) => (
+            {TIME_FILTERS.filter((filter) => filter.id === "new").map((filter) => (
               <button
-                key={label}
+                key={filter.id}
                 type="button"
-                className={activeLabel === label ? "chip active" : "chip"}
-                onClick={() => setActiveLabel(label)}
+                className={timeFilter === filter.id ? "chip active" : "chip"}
+                onClick={() => setTimeFilter(filter.id)}
               >
-                {label}
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="tag-row inbox-filter-row">
+            {STATUS_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={statusFilter === filter.id ? "chip active" : "chip"}
+                onClick={() => setStatusFilter(filter.id)}
+              >
+                {filter.label}
               </button>
             ))}
           </div>
