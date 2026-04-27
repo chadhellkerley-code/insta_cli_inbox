@@ -1974,11 +1974,10 @@ main {
 }
 
 .inbox-toolbar {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
 }
 
 .inbox-toolbar .field-label {
@@ -2023,10 +2022,6 @@ main {
   display: none;
 }
 
-.time-filter-row {
-  margin-top: 2px;
-}
-
 .inbox-filter-row .chip {
   min-height: 30px;
   padding: 4px 10px;
@@ -2061,10 +2056,64 @@ main {
   background: #fb7185;
 }
 
+.time-filter-wrap {
+  position: relative;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.time-filter-group {
+  display: grid;
+  grid-template-columns: 0.75fr 1.02fr 1.12fr 0.92fr 0.84fr 0.92fr;
+  align-items: center;
+  gap: 1px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  background: rgba(30, 41, 59, 0.54);
+  overflow: hidden;
+}
+
+.time-filter-group .chip {
+  justify-content: center;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 999px;
+  color: #cbd5e1;
+  background: transparent;
+  font-size: 0.76rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.time-filter-group .chip:hover {
+  transform: none;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.time-filter-group .chip.active {
+  color: #f8fafc;
+  background: rgba(71, 85, 105, 0.9);
+  border-color: transparent;
+}
+
+.time-filter-group .time-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.status-filter-row {
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .label-filter-menu {
   position: absolute;
   z-index: 10;
-  top: calc(100% + 2px);
+  top: calc(100% + 8px);
   left: 0;
   right: 0;
   display: grid;
@@ -2083,12 +2132,36 @@ main {
   gap: 12px;
 }
 
-.label-filter-menu-head button {
+.label-filter-menu-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.label-filter-menu-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.label-filter-menu-head button,
+.label-filter-actions button {
   border: 0;
   color: var(--muted-strong);
   background: transparent;
   cursor: pointer;
   font-size: 0.82rem;
+}
+
+.label-filter-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.label-filter-actions button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .label-filter-options {

@@ -266,6 +266,7 @@ export function InboxRealtimeShell({
 }: InboxRealtimeShellProps) {
   const clientRef = useRef<ReturnType<typeof createClient>>();
   const selectedConversationRef = useRef<string | null>(initialSelectedConversationId);
+  const labelMenuRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState(initialAccounts);
   const [conversations, setConversations] = useState(
     sortConversations(initialConversations),
@@ -297,6 +298,38 @@ export function InboxRealtimeShell({
   useEffect(() => {
     selectedConversationRef.current = selectedConversationId;
   }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!labelMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (
+        target instanceof Node &&
+        labelMenuRef.current &&
+        !labelMenuRef.current.contains(target)
+      ) {
+        setLabelMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLabelMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [labelMenuOpen]);
 
   const selectedConversation =
     conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
@@ -779,13 +812,55 @@ export function InboxRealtimeShell({
                 placeholder="Search conversations..."
               />
             </div>
+          </div>
+
+          <div className="time-filter-wrap" ref={labelMenuRef}>
+            <div className="time-filter-group" role="group" aria-label="Filtros por tiempo">
+              {TIME_FILTERS.filter((filter) => filter.id !== "new").map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={timeFilter === filter.id ? "chip active" : "chip"}
+                  onClick={() => setTimeFilter(filter.id)}
+                >
+                  {filter.tone ? <span className={`time-dot ${filter.tone}`} /> : null}
+                  {filter.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={activeLabels.length > 0 || labelMenuOpen ? "chip active" : "chip"}
+                onClick={() => setLabelMenuOpen((current) => !current)}
+                aria-expanded={labelMenuOpen}
+              >
+                Exp{activeLabels.length > 0 ? ` ${activeLabels.length}` : ""}
+              </button>
+              {TIME_FILTERS.filter((filter) => filter.id === "new").map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={timeFilter === filter.id ? "chip active" : "chip"}
+                  onClick={() => setTimeFilter(filter.id)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
 
             {labelMenuOpen ? (
-              <div className="label-filter-menu">
+              <div className="label-filter-menu" role="dialog" aria-label="Seleccionar etiquetas">
                 <div className="label-filter-menu-head">
-                  <strong>Etiquetas</strong>
+                  <div>
+                    <strong>Etiquetas</strong>
+                    <span>{activeLabels.length} seleccionadas</span>
+                  </div>
+                  <button type="button" onClick={() => setLabelMenuOpen(false)}>
+                    Cerrar
+                  </button>
+                </div>
+                <div className="label-filter-actions">
                   <button type="button" onClick={() => setActiveLabels([])}>
-                    Limpiar
+                    Todas
                   </button>
                 </div>
                 <div className="label-filter-options">
@@ -807,39 +882,7 @@ export function InboxRealtimeShell({
             ) : null}
           </div>
 
-          <div className="tag-row inbox-filter-row time-filter-row">
-            {TIME_FILTERS.filter((filter) => filter.id !== "new").map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                className={timeFilter === filter.id ? "chip active" : "chip"}
-                onClick={() => setTimeFilter(filter.id)}
-              >
-                {filter.tone ? <span className={`time-dot ${filter.tone}`} /> : null}
-                {filter.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className={activeLabels.length > 0 || labelMenuOpen ? "chip active" : "chip"}
-              onClick={() => setLabelMenuOpen((current) => !current)}
-              aria-expanded={labelMenuOpen}
-            >
-              Exp{activeLabels.length > 0 ? ` ${activeLabels.length}` : ""}
-            </button>
-            {TIME_FILTERS.filter((filter) => filter.id === "new").map((filter) => (
-              <button
-                key={filter.id}
-                type="button"
-                className={timeFilter === filter.id ? "chip active" : "chip"}
-                onClick={() => setTimeFilter(filter.id)}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="tag-row inbox-filter-row">
+          <div className="tag-row inbox-filter-row status-filter-row">
             {STATUS_FILTERS.map((filter) => (
               <button
                 key={filter.id}
