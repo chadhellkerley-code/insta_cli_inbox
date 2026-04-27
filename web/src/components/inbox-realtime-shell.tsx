@@ -207,6 +207,7 @@ export function InboxRealtimeShell({
   const [savingDetails, setSavingDetails] = useState(false);
   const [sendMode, setSendMode] = useState<SendMode>("text");
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   if (!clientRef.current) {
     clientRef.current = createClient();
@@ -584,6 +585,7 @@ export function InboxRealtimeShell({
     }
 
     setSendingMessage(true);
+    setSendError(null);
 
     try {
       let mediaUrl: string | undefined;
@@ -629,6 +631,9 @@ export function InboxRealtimeShell({
       setAudioFile(null);
     } catch (error) {
       console.error("No pudimos enviar el mensaje del inbox.", error);
+      setSendError(
+        error instanceof Error ? error.message : "No pudimos enviar el mensaje.",
+      );
     } finally {
       setSendingMessage(false);
     }
@@ -891,6 +896,7 @@ export function InboxRealtimeShell({
                   ? "Enviar audio"
                   : "Enviar mensaje"}
             </button>
+            {sendError ? <p className="feedback error">{sendError}</p> : null}
           </div>
         </section>
 

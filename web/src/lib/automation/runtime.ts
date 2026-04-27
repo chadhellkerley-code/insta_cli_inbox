@@ -10,6 +10,7 @@ import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 
 type QueryClient = Pick<SupabaseClient, "from">;
 const STAGE_MESSAGE_PART_GAP_MS = 1_000;
+const STANDARD_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type AutomationAgentRuntimeRow = {
   id: string;
@@ -748,6 +749,16 @@ function shouldSkipFollowup(run: AutomationRunRow, job: AutomationJobRow) {
   return lastInboundMs > followupCreatedMs;
 }
 
+function isOutsideAutomationWindow(run: AutomationRunRow) {
+  const lastInboundMs = toMillis(run.last_inbound_at);
+
+  if (lastInboundMs === null) {
+    return true;
+  }
+
+  return Date.now() - lastInboundMs > STANDARD_MESSAGING_WINDOW_MS;
+}
+
 async function handleJob(client: QueryClient, job: AutomationJobRow) {
   const [agent, run, conversation, account] = await Promise.all([
     loadAgent(client, job.agent_id),
@@ -778,6 +789,15 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
       last_error: "El cliente respondio antes del followup.",
     });
     return "skipped_followup_answered" as const;
+  }
+
+  if (isOutsideAutomationWindow(run)) {
+    await markJob(client, job.id, {
+      status: "skipped",
+      last_error:
+        "Meta no permite automatizaciones fuera de las 24 horas desde el ultimo mensaje del cliente.",
+    });
+    return "skipped_outside_automation_window" as const;
   }
 
   try {
@@ -863,6 +883,7 @@ export async function processDueAutomationJobs(
         break;
       case "skipped_followup_answered":
       case "skipped_missing_dependencies":
+      case "skipped_outside_automation_window":
         summary.skipped += 1;
         break;
       default:

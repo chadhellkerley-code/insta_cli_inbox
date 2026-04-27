@@ -22,6 +22,11 @@ type SendMessageBody = {
   mediaUrl?: string;
 };
 
+type LastInboundMessageLookup = {
+  sent_at: string | null;
+  created_at: string | null;
+};
+
 type ConversationLookup = {
   id: string;
   owner_id: string;
@@ -43,6 +48,9 @@ type AccountLookup = {
   last_oauth_at: string | null;
 };
 
+const STANDARD_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HUMAN_AGENT_MESSAGING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 function normalizeOptionalString(value: string | null | undefined) {
   if (typeof value !== "string") {
     return null;
@@ -50,6 +58,15 @@ function normalizeOptionalString(value: string | null | undefined) {
 
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function toTimestampMs(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function logInstagramMessage(
@@ -301,6 +318,50 @@ export async function POST(request: Request) {
       await assertInstagramAudioUrlAccessible(mediaUrl);
     }
 
+    const lastInboundResult = await admin
+      .from("instagram_messages")
+      .select("sent_at, created_at")
+      .eq("conversation_id", conversation.id)
+      .eq("direction", "in")
+      .order("sent_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    const lastInbound = lastInboundResult.data as LastInboundMessageLookup | null;
+
+    if (lastInboundResult.error) {
+      throw new Error(lastInboundResult.error.message);
+    }
+
+    const lastInboundAtMs = toTimestampMs(lastInbound?.sent_at ?? lastInbound?.created_at);
+
+    if (lastInboundAtMs === null) {
+      return NextResponse.json(
+        {
+          error:
+            "No encontramos un mensaje entrante del cliente. Instagram requiere que el cliente haya iniciado la conversacion.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const elapsedSinceLastInboundMs = Date.now() - lastInboundAtMs;
+
+    if (elapsedSinceLastInboundMs > HUMAN_AGENT_MESSAGING_WINDOW_MS) {
+      return NextResponse.json(
+        {
+          error:
+            "Pasaron mas de 7 dias desde el ultimo mensaje del cliente. Necesitas que vuelva a escribir para reabrir la conversacion.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const sendTag =
+      elapsedSinceLastInboundMs > STANDARD_MESSAGING_WINDOW_MS
+        ? "HUMAN_AGENT"
+        : undefined;
+
     const contactProfile = await resolveInstagramContactProfile({
       admin,
       account,
@@ -323,6 +384,7 @@ export async function POST(request: Request) {
       text,
       messageType: messageType === "audio" ? "audio" : undefined,
       mediaUrl,
+      tag: sendTag,
     });
 
     logInstagramMessage("info", "meta message sent", {
@@ -331,6 +393,7 @@ export async function POST(request: Request) {
       accountId: account.id,
       metaMessageId: metaResponse.message_id ?? null,
       messageType,
+      tag: sendTag ?? "STANDARD",
     });
 
     const createdAt = nowIso;

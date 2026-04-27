@@ -533,6 +533,7 @@ export async function sendInstagramMessage(options: {
   text?: string;
   messageType?: "audio" | "image" | "video" | "file";
   mediaUrl?: string;
+  tag?: "HUMAN_AGENT";
 }) {
   const oauthConfig = getMetaOauthConfig();
   const url = new URL(`${oauthConfig.graphBaseUrl}/me/messages`);
@@ -573,6 +574,12 @@ export async function sendInstagramMessage(options: {
         id: options.recipientId,
       },
       message,
+      ...(options.tag
+        ? {
+            messaging_type: "MESSAGE_TAG",
+            tag: options.tag,
+          }
+        : {}),
     }),
     cache: "no-store",
   });
