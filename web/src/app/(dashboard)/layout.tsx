@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { SidebarNav } from "@/components/sidebar-nav";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { getDisplayName, requireUserContext } from "@/lib/app-data";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,6 +22,8 @@ export default async function DashboardLayout({
 
   return (
     <div className="dashboard-shell">
+      <ThemeToggle />
+
       <aside className="dashboard-sidebar">
         <div className="sidebar-brand">
           <span>Insta CLI Inbox</span>

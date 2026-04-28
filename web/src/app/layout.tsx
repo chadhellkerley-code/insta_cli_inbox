@@ -19,14 +19,28 @@ export const metadata: Metadata = {
     "CRM dark mode para Instagram con dashboard, inbox realtime y auth sobre Supabase.",
 };
 
+const themeScript = `
+(() => {
+  try {
+    const theme = window.localStorage.getItem("insta-cli-theme") === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  } catch {
+    document.documentElement.dataset.theme = "dark";
+    document.documentElement.style.colorScheme = "dark";
+  }
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="es" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         {children}
       </body>
     </html>
