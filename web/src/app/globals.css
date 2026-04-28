@@ -9,8 +9,8 @@
   --text: #f8fafc;
   --muted: #94a3b8;
   --muted-strong: #cbd5e1;
-  --accent: #7c3aed;
-  --accent-strong: #8b5cf6;
+  --accent: #22c55e;
+  --accent-strong: #38bdf8;
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -140,7 +140,7 @@ main {
   height: 34px;
   border-radius: 8px;
   color: #02130a;
-  background: linear-gradient(135deg, #22c55e, #38bdf8 62%, #a78bfa);
+  background: linear-gradient(135deg, #22c55e, #38bdf8 62%, #86efac);
   font-size: 0.8rem;
   letter-spacing: 0;
 }
@@ -836,9 +836,9 @@ main {
 }
 
 .nav-link.active {
-  background: rgba(124, 58, 237, 0.18);
-  border-color: rgba(124, 58, 237, 0.46);
-  box-shadow: inset 3px 0 0 rgba(139, 92, 246, 0.92);
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.42);
+  box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.92);
   color: var(--text);
 }
 
@@ -1018,7 +1018,7 @@ main {
   display: grid;
   place-items: center;
   border: 1px solid var(--line);
-  background: linear-gradient(145deg, rgba(124, 58, 237, 0.24), rgba(255, 255, 255, 0.06));
+  background: linear-gradient(145deg, rgba(34, 197, 94, 0.22), rgba(56, 189, 248, 0.12));
   color: var(--text);
   font-weight: 700;
 }
@@ -1088,13 +1088,13 @@ main {
 
 .chip:hover {
   transform: translateY(-1px);
-  border-color: rgba(124, 58, 237, 0.35);
+  border-color: rgba(56, 189, 248, 0.35);
 }
 
 .chip.active,
 .tag-card.active {
-  background: rgba(124, 58, 237, 0.18);
-  border-color: rgba(124, 58, 237, 0.42);
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.42);
   color: var(--text);
 }
 
@@ -1191,7 +1191,7 @@ main {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #22c55e, #38bdf8 62%, #a78bfa);
+  background: linear-gradient(135deg, #22c55e, #38bdf8 62%, #86efac);
   color: #020617;
   font-weight: 900;
   letter-spacing: 0;
@@ -1253,8 +1253,8 @@ main {
 
 .text-input:focus,
 .text-area:focus {
-  border-color: rgba(124, 58, 237, 0.56);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.14);
+  border-color: rgba(34, 197, 94, 0.56);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.14);
 }
 
 .text-area {
@@ -1294,7 +1294,7 @@ main {
 
 .button-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-  color: white;
+  color: #04130a;
 }
 
 .button-secondary {
@@ -1429,7 +1429,7 @@ main {
   overflow: hidden;
   padding: 28px;
   background:
-    radial-gradient(circle at top right, rgba(124, 58, 237, 0.14), transparent 22%),
+    radial-gradient(circle at top right, rgba(34, 197, 94, 0.14), transparent 22%),
     linear-gradient(180deg, rgba(15, 16, 24, 0.98), rgba(10, 11, 18, 0.98));
 }
 
@@ -1519,7 +1519,7 @@ main {
   border-radius: 30px;
   border: 1px solid var(--line);
   background:
-    radial-gradient(circle at top, rgba(124, 58, 237, 0.14), transparent 28%),
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.14), transparent 28%),
     linear-gradient(180deg, rgba(15, 16, 24, 0.9), rgba(10, 11, 18, 0.96));
   text-align: center;
 }
@@ -1530,9 +1530,9 @@ main {
   display: grid;
   place-items: center;
   border-radius: 24px;
-  border: 1px solid rgba(124, 58, 237, 0.28);
-  background: rgba(124, 58, 237, 0.14);
-  color: #d8b4fe;
+  border: 1px solid rgba(34, 197, 94, 0.28);
+  background: rgba(34, 197, 94, 0.14);
+  color: #86efac;
   font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.18em;
@@ -1592,8 +1592,8 @@ main {
 }
 
 .agent-card.selected {
-  border-color: rgba(124, 58, 237, 0.42);
-  background: linear-gradient(145deg, rgba(124, 58, 237, 0.18), rgba(16, 17, 24, 0.96));
+  border-color: rgba(34, 197, 94, 0.42);
+  background: linear-gradient(145deg, rgba(34, 197, 94, 0.16), rgba(15, 23, 42, 0.86));
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
 }
 
@@ -2235,14 +2235,14 @@ main {
 .thread-card:hover,
 .tag-card:hover {
   transform: none;
-  border-color: rgba(124, 58, 237, 0.34);
+  border-color: rgba(56, 189, 248, 0.34);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .thread-card.active {
-  border-color: rgba(124, 58, 237, 0.52);
-  background: rgba(124, 58, 237, 0.2);
-  box-shadow: inset 3px 0 0 rgba(139, 92, 246, 0.96);
+  border-color: rgba(34, 197, 94, 0.52);
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.96);
 }
 
 .thread-card {
@@ -2378,8 +2378,8 @@ main {
 
 .thread-unread.active {
   color: var(--text);
-  border-color: rgba(124, 58, 237, 0.34);
-  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(34, 197, 94, 0.18);
 }
 
 .inbox-empty-list {
@@ -2443,8 +2443,9 @@ main {
 
 .message-bubble.outgoing {
   margin-left: auto;
-  background: linear-gradient(135deg, rgba(124, 58, 237, 0.74), rgba(84, 29, 156, 0.92));
-  border-color: rgba(139, 92, 246, 0.36);
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.78), rgba(56, 189, 248, 0.72));
+  border-color: rgba(34, 197, 94, 0.36);
+  color: #04130a;
 }
 
 .message-bubble p {
