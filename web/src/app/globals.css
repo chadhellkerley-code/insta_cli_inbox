@@ -713,7 +713,7 @@ main {
   flex-direction: column;
   gap: 18px;
   border-right: 1px solid var(--line);
-  background: #101015;
+  background: var(--bg);
   backdrop-filter: blur(20px);
 }
 
@@ -1886,7 +1886,7 @@ main {
 .inbox-column-list {
   overflow: hidden;
   border-width: 0 1px 0 0;
-  background: #101015;
+  background: var(--bg);
 }
 
 .inbox-column-thread {
@@ -1899,7 +1899,7 @@ main {
 .inbox-column-tags {
   overflow-y: auto;
   border-width: 0;
-  background: #101015;
+  background: var(--bg);
 }
 
 .inbox-list-header {
