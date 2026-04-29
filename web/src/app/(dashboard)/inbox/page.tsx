@@ -17,7 +17,7 @@ export default async function InboxPage() {
   const enrichedConversations = enrichConversationsWithAccounts(conversations, accounts);
   const initialConversation = enrichedConversations[0] ?? null;
   const initialMessages = initialConversation
-    ? await loadConversationMessages(supabase, initialConversation.id)
+    ? await loadConversationMessages(supabase, user.id, initialConversation.id)
     : [];
 
   return (

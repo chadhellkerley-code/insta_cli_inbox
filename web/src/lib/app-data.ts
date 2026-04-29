@@ -515,12 +515,14 @@ export async function loadConversations(
 
 export async function loadConversationMessages(
   supabase: SupabaseClient,
+  userId: string,
   conversationId: string,
   limit = 300,
 ): Promise<MessageRecord[]> {
   const { data, error } = await supabase
     .from("instagram_messages")
     .select("*")
+    .eq("owner_id", userId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(limit);

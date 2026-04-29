@@ -241,11 +241,13 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
 
 async function loadMessageRows(
   client: ReturnType<typeof createClient>,
+  userId: string,
   conversationId: string,
 ) {
   const result = await client
     .from("instagram_messages")
     .select("*")
+    .eq("owner_id", userId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(300);
@@ -392,7 +394,7 @@ export function InboxRealtimeShell({
 
     async function loadMessages() {
       setLoadingMessages(true);
-      const nextMessages = await loadMessageRows(supabase, currentConversationId);
+      const nextMessages = await loadMessageRows(supabase, userId, currentConversationId);
 
       if (cancelled) {
         return;
@@ -445,7 +447,7 @@ export function InboxRealtimeShell({
         return;
       }
 
-      const nextMessages = await loadMessageRows(supabase, currentConversationId);
+      const nextMessages = await loadMessageRows(supabase, userId, currentConversationId);
 
       if (cancelled || !nextMessages) {
         return;
