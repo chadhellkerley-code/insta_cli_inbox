@@ -4,6 +4,7 @@ import type {
   AutomationAgent,
   AutomationAgentInput,
   AutomationAgentRecord,
+  AutomationStageFollowupRecord,
   AutomationStageMessageRecord,
   AutomationStageRecord,
 } from "@/lib/automation/types";
@@ -107,12 +108,12 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
   const minReplyDelaySeconds = clampInteger(input.minReplyDelaySeconds, {
     min: 0,
     max: 3600,
-    fallback: 0,
+    fallback: 30,
   });
   const maxReplyDelaySeconds = clampInteger(input.maxReplyDelaySeconds, {
     min: minReplyDelaySeconds,
     max: 7200,
-    fallback: minReplyDelaySeconds,
+    fallback: Math.max(minReplyDelaySeconds, 90),
   });
   const maxMediaPerChat = clampInteger(input.maxMediaPerChat, {
     min: 0,
@@ -142,24 +143,54 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         throw new Error(`La ${ensureStageName(stage.name, stageIndex)} necesita al menos un mensaje.`);
       }
 
-      const followupEnabled = Boolean(stage.followupEnabled);
-      const followupMessage = normalizeString(stage.followupMessage);
-      const followupDelayHours = clampInteger(stage.followupDelayHours, {
-        min: 0,
-        max: 24 * 30,
-        fallback: 2,
-      });
+      const legacyStage = stage as typeof stage & {
+        followupEnabled?: boolean;
+        followupDelayHours?: number;
+        followupMessage?: string;
+      };
+      const rawFollowups = Array.isArray(stage.followups)
+        ? stage.followups
+        : legacyStage.followupEnabled
+          ? [
+              {
+                id: undefined,
+                isActive: true,
+                delayHours: clampInteger(legacyStage.followupDelayHours, {
+                  min: 0,
+                  max: 24 * 30,
+                  fallback: 2,
+                }),
+                message: legacyStage.followupMessage ?? "",
+              },
+            ]
+          : [];
+      const followups = rawFollowups.map((followup) => {
+        const isActive = Boolean(followup.isActive);
+        const message = normalizeString(followup.message);
+        const delayHours = clampInteger(followup.delayHours, {
+          min: 0,
+          max: 24 * 30,
+          fallback: 2,
+        });
 
-      if (followupEnabled && !followupMessage) {
-        throw new Error(`La ${ensureStageName(stage.name, stageIndex)} tiene followup activo pero sin mensaje.`);
-      }
+        if (isActive && !message) {
+          throw new Error(
+            `La ${ensureStageName(stage.name, stageIndex)} tiene followups activos sin mensaje.`,
+          );
+        }
+
+        return {
+          id: normalizeString(followup.id) || undefined,
+          isActive,
+          delayHours,
+          message,
+        };
+      });
 
       return {
         id: normalizeString(stage.id) || undefined,
         name: ensureStageName(stage.name, stageIndex),
-        followupEnabled,
-        followupDelayHours,
-        followupMessage,
+        followups,
         messages: messages.map((message) => {
           const messageType = message.messageType === "audio" ? "audio" : "text";
 
@@ -191,6 +222,7 @@ function castRows<T>(value: unknown) {
 function mapAutomationAgents(
   agents: AutomationAgentRecord[],
   stages: AutomationStageRecord[],
+  followups: AutomationStageFollowupRecord[],
   messages: AutomationStageMessageRecord[],
 ) {
   const messagesByStage = new Map<string, AutomationStageMessageRecord[]>();
@@ -202,11 +234,18 @@ function mapAutomationAgents(
   }
 
   const stagesByAgent = new Map<string, AutomationStageRecord[]>();
+  const followupsByStage = new Map<string, AutomationStageFollowupRecord[]>();
 
   for (const stage of stages) {
     const current = stagesByAgent.get(stage.agent_id) ?? [];
     current.push(stage);
     stagesByAgent.set(stage.agent_id, current);
+  }
+
+  for (const followup of followups) {
+    const current = followupsByStage.get(followup.stage_id) ?? [];
+    current.push(followup);
+    followupsByStage.set(followup.stage_id, current);
   }
 
   return agents.map((agent) => ({
@@ -227,9 +266,15 @@ function mapAutomationAgents(
         id: stage.id,
         name: stage.name,
         order: stage.stage_order,
-        followupEnabled: stage.followup_enabled,
-        followupDelayHours: stage.followup_delay_hours,
-        followupMessage: stage.followup_message ?? "",
+        followups: (followupsByStage.get(stage.id) ?? [])
+          .sort((left, right) => left.followup_order - right.followup_order)
+          .map((followup) => ({
+            id: followup.id,
+            order: followup.followup_order,
+            isActive: followup.is_active,
+            delayHours: followup.delay_hours,
+            message: followup.message ?? "",
+          })),
         messages: (messagesByStage.get(stage.id) ?? [])
           .sort((left, right) => left.message_order - right.message_order)
           .map((message) => ({
@@ -240,6 +285,28 @@ function mapAutomationAgents(
             mediaUrl: message.media_url ?? "",
             delaySeconds: message.delay_seconds,
           })),
+      }))
+      .map((stage) => ({
+        ...stage,
+        followups:
+          stage.followups.length > 0
+            ? stage.followups
+            : (() => {
+                const legacy = stages.find((item) => item.id === stage.id);
+                if (!legacy?.followup_enabled || !legacy.followup_message?.trim()) {
+                  return [];
+                }
+
+                return [
+                  {
+                    id: `legacy-${stage.id}`,
+                    order: 1,
+                    isActive: true,
+                    delayHours: legacy.followup_delay_hours,
+                    message: legacy.followup_message,
+                  },
+                ];
+              })(),
       })),
   })) satisfies AutomationAgent[];
 }
@@ -269,10 +336,16 @@ export async function loadAutomationAgents(
   const stages = castRows<AutomationStageRecord>(stagesResult.data);
 
   if (stagesResult.error || stages.length === 0) {
-    return mapAutomationAgents(agents, [], []);
+    return mapAutomationAgents(agents, [], [], []);
   }
 
   const stageIds = stages.map((stage) => stage.id);
+  const followupsResult = await client
+    .from("automation_stage_followups")
+    .select("*")
+    .in("stage_id", stageIds)
+    .order("followup_order", { ascending: true });
+  const followups = castRows<AutomationStageFollowupRecord>(followupsResult.data);
   const messagesResult = await client
     .from("automation_stage_messages")
     .select("*")
@@ -281,10 +354,15 @@ export async function loadAutomationAgents(
   const messages = castRows<AutomationStageMessageRecord>(messagesResult.data);
 
   if (messagesResult.error) {
-    return mapAutomationAgents(agents, stages, []);
+    return mapAutomationAgents(agents, stages, followupsResult.error ? [] : followups, []);
   }
 
-  return mapAutomationAgents(agents, stages, messages);
+  return mapAutomationAgents(
+    agents,
+    stages,
+    followupsResult.error ? [] : followups,
+    messages,
+  );
 }
 
 async function cancelPendingJobsForAgent(client: QueryClient, agentId: string) {
@@ -437,9 +515,9 @@ export async function saveAutomationAgent(
         agent_id: agentId,
         stage_order: stageIndex + 1,
         name: stage.name,
-        followup_enabled: stage.followupEnabled,
-        followup_delay_hours: stage.followupDelayHours,
-        followup_message: normalizeOptionalString(stage.followupMessage),
+        followup_enabled: false,
+        followup_delay_hours: 0,
+        followup_message: null,
       } as never)
       .select("id")
       .maybeSingle();
@@ -449,6 +527,22 @@ export async function saveAutomationAgent(
     }
 
     const stageId = (stageInsert.data as { id: string }).id;
+
+    for (let followupIndex = 0; followupIndex < stage.followups.length; followupIndex += 1) {
+      const followup = stage.followups[followupIndex];
+      const followupInsert = await client.from("automation_stage_followups").insert({
+        owner_id: ownerId,
+        stage_id: stageId,
+        followup_order: followupIndex + 1,
+        is_active: followup.isActive,
+        delay_hours: followup.delayHours,
+        message: normalizeOptionalString(followup.message),
+      } as never);
+
+      if (followupInsert.error) {
+        throw new Error(followupInsert.error.message);
+      }
+    }
 
     for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex += 1) {
       const message = stage.messages[messageIndex];

@@ -41,9 +41,12 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
     stages: agent.stages.map((stage) => ({
       id: stage.id,
       name: stage.name,
-      followupEnabled: stage.followupEnabled,
-      followupDelayHours: stage.followupDelayHours,
-      followupMessage: stage.followupMessage,
+      followups: stage.followups.map((followup) => ({
+        id: followup.id,
+        isActive: followup.isActive,
+        delayHours: followup.delayHours,
+        message: followup.message,
+      })),
       messages: stage.messages.map((message) => ({
         id: message.id,
         messageType: message.messageType,
@@ -57,8 +60,9 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
 
 function getAgentCardSummary(agent: AutomationAgent) {
   const totalMessages = agent.stages.reduce((sum, stage) => sum + stage.messages.length, 0);
+  const totalFollowups = agent.stages.reduce((sum, stage) => sum + stage.followups.length, 0);
 
-  return `${agent.stages.length} etapas · ${totalMessages} mensajes`;
+  return `${agent.stages.length} etapas · ${totalMessages} mensajes · ${totalFollowups} followups`;
 }
 
 function readLocalAiConfig() {
@@ -407,9 +411,7 @@ export function AutomationAgentsManager({
         ...current.stages,
         {
           name: `Etapa ${current.stages.length + 1}`,
-          followupEnabled: false,
-          followupDelayHours: 2,
-          followupMessage: "",
+          followups: [],
           messages: [
             {
               messageType: "text",
@@ -449,6 +451,42 @@ export function AutomationAgentsManager({
     updateStage(stageIndex, (stage) => ({
       ...stage,
       messages: stage.messages.filter((_, index) => index !== messageIndex),
+    }));
+  }
+
+  function addFollowup(stageIndex: number) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: [
+        ...stage.followups,
+        {
+          isActive: true,
+          delayHours: 2,
+          message: "",
+        },
+      ],
+    }));
+  }
+
+  function updateFollowup(
+    stageIndex: number,
+    followupIndex: number,
+    updater: (
+      followup: AutomationAgentInput["stages"][number]["followups"][number],
+    ) => AutomationAgentInput["stages"][number]["followups"][number],
+  ) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: stage.followups.map((followup, index) =>
+        index === followupIndex ? updater(followup) : followup,
+      ),
+    }));
+  }
+
+  function removeFollowup(stageIndex: number, followupIndex: number) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: stage.followups.filter((_, index) => index !== followupIndex),
     }));
   }
 
@@ -523,6 +561,7 @@ export function AutomationAgentsManager({
         ...message,
         messageType: "audio",
         mediaUrl: url,
+        textContent: "",
       }));
       showFeedback("Audio grabado y subido.", "success");
     } catch (error) {
@@ -762,6 +801,7 @@ export function AutomationAgentsManager({
                                       updateMessage(stageIndex, messageIndex, (currentMessage) => ({
                                         ...currentMessage,
                                         messageType: "text",
+                                        mediaUrl: "",
                                       }))
                                     }
                                   >
@@ -776,6 +816,7 @@ export function AutomationAgentsManager({
                                       updateMessage(stageIndex, messageIndex, (currentMessage) => ({
                                         ...currentMessage,
                                         messageType: "audio",
+                                        textContent: "",
                                       }))
                                     }
                                   >
@@ -831,6 +872,7 @@ export function AutomationAgentsManager({
                                                   ...currentMessage,
                                                   messageType: "audio",
                                                   mediaUrl: url,
+                                                  textContent: "",
                                                 }),
                                               );
                                               showFeedback("Audio subido.", "success");
@@ -928,57 +970,107 @@ export function AutomationAgentsManager({
 
                         <div className="stage-followup">
                           <div className="stage-followup-top">
-                            <strong>Followup</strong>
+                            <strong>Followups de etapa</strong>
                             <button
                               type="button"
-                              className={
-                                stage.followupEnabled ? "agent-toggle active" : "agent-toggle inactive"
-                              }
-                              onClick={() =>
-                                updateStage(stageIndex, (currentStage) => ({
-                                  ...currentStage,
-                                  followupEnabled: !currentStage.followupEnabled,
-                                }))
-                              }
+                              className="button button-secondary"
+                              onClick={() => addFollowup(stageIndex)}
                             >
-                              {stage.followupEnabled ? "Activo" : "Inactivo"}
+                              Agregar followup
                             </button>
                           </div>
 
-                          <div className="stage-followup-grid">
-                            <div className="field">
-                              <span className="field-label">
-                                Enviar followup si pasan estas horas sin respuesta
-                              </span>
-                              <input
-                                className="text-input"
-                                type="number"
-                                min={0}
-                                value={stage.followupDelayHours}
-                                onChange={(event) =>
-                                  updateStage(stageIndex, (currentStage) => ({
-                                    ...currentStage,
-                                    followupDelayHours: Number(event.target.value || 0),
-                                  }))
-                                }
-                              />
-                            </div>
+                          {stage.followups.length === 0 ? (
+                            <p className="muted">
+                              Esta etapa no tiene followups. Agrega uno o mas para
+                              insistir sin duplicar mensajes.
+                            </p>
+                          ) : (
+                            <div className="stage-message-stack">
+                              {stage.followups.map((followup, followupIndex) => (
+                                <article
+                                  key={`${selectedAgent.id}-stage-${stageIndex}-followup-${followupIndex}`}
+                                  className="stage-message-card"
+                                >
+                                  <div className="stage-message-head">
+                                    <strong>Followup {followupIndex + 1}</strong>
+                                    <button
+                                      type="button"
+                                      className="button button-secondary"
+                                      onClick={() => removeFollowup(stageIndex, followupIndex)}
+                                    >
+                                      Quitar
+                                    </button>
+                                  </div>
 
-                            <div className="field">
-                              <span className="field-label">Mensaje de followup</span>
-                              <textarea
-                                className="text-area"
-                                value={stage.followupMessage}
-                                onChange={(event) =>
-                                  updateStage(stageIndex, (currentStage) => ({
-                                    ...currentStage,
-                                    followupMessage: event.target.value,
-                                  }))
-                                }
-                                placeholder="Mensaje de followup para esta etapa"
-                              />
+                                  <div className="stage-followup-top">
+                                    <span className="muted">Estado</span>
+                                    <button
+                                      type="button"
+                                      className={
+                                        followup.isActive
+                                          ? "agent-toggle active"
+                                          : "agent-toggle inactive"
+                                      }
+                                      onClick={() =>
+                                        updateFollowup(
+                                          stageIndex,
+                                          followupIndex,
+                                          (currentFollowup) => ({
+                                            ...currentFollowup,
+                                            isActive: !currentFollowup.isActive,
+                                          }),
+                                        )
+                                      }
+                                    >
+                                      {followup.isActive ? "Activo" : "Inactivo"}
+                                    </button>
+                                  </div>
+
+                                  <div className="stage-followup-grid">
+                                    <div className="field">
+                                      <span className="field-label">Horas sin respuesta</span>
+                                      <input
+                                        className="text-input"
+                                        type="number"
+                                        min={0}
+                                        value={followup.delayHours}
+                                        onChange={(event) =>
+                                          updateFollowup(
+                                            stageIndex,
+                                            followupIndex,
+                                            (currentFollowup) => ({
+                                              ...currentFollowup,
+                                              delayHours: Number(event.target.value || 0),
+                                            }),
+                                          )
+                                        }
+                                      />
+                                    </div>
+
+                                    <div className="field">
+                                      <span className="field-label">Mensaje</span>
+                                      <textarea
+                                        className="text-area"
+                                        value={followup.message}
+                                        onChange={(event) =>
+                                          updateFollowup(
+                                            stageIndex,
+                                            followupIndex,
+                                            (currentFollowup) => ({
+                                              ...currentFollowup,
+                                              message: event.target.value,
+                                            }),
+                                          )
+                                        }
+                                        placeholder="Mensaje de followup"
+                                      />
+                                    </div>
+                                  </div>
+                                </article>
+                              ))}
                             </div>
-                          </div>
+                          )}
                         </div>
                       </article>
                     ))}
@@ -1110,6 +1202,38 @@ export function AutomationAgentsManager({
               </div>
 
               <div className="field">
+                <span className="field-label">Retraso minimo de respuesta (segundos)</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={0}
+                  value={modalDraft.minReplyDelaySeconds}
+                  onChange={(event) =>
+                    setModalDraft((current) => ({
+                      ...current,
+                      minReplyDelaySeconds: Number(event.target.value || 0),
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="field">
+                <span className="field-label">Retraso maximo de respuesta (segundos)</span>
+                <input
+                  className="text-input"
+                  type="number"
+                  min={0}
+                  value={modalDraft.maxReplyDelaySeconds}
+                  onChange={(event) =>
+                    setModalDraft((current) => ({
+                      ...current,
+                      maxReplyDelaySeconds: Number(event.target.value || 0),
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="field">
                 <span className="field-label">Maximo de contenido multimedia por chat</span>
                 <input
                   className="text-input"
@@ -1127,8 +1251,8 @@ export function AutomationAgentsManager({
             </div>
 
             <p className="muted">
-              El agente responde apenas entra un inbound. Los tiempos se controlan
-              dentro de cada etapa y en sus followups.
+              El agente usa un retraso aleatorio entre el minimo y el maximo, y los
+              followups de cada etapa se configuran en horas.
             </p>
 
             <div className="automation-modal-actions">

@@ -16,6 +16,8 @@ type AutomationAgentRuntimeRow = {
   id: string;
   owner_id: string;
   name: string;
+  min_reply_delay_seconds: number;
+  max_reply_delay_seconds: number;
   max_media_per_chat: number;
   is_active: boolean;
 };
@@ -28,6 +30,15 @@ type AutomationStageRuntimeRow = {
   followup_enabled: boolean;
   followup_delay_hours: number;
   followup_message: string | null;
+};
+
+type AutomationStageFollowupRuntimeRow = {
+  id: string;
+  stage_id: string;
+  followup_order: number;
+  is_active: boolean;
+  delay_hours: number;
+  message: string | null;
 };
 
 type AutomationStageMessageRuntimeRow = {
@@ -113,6 +124,14 @@ function toMillis(value: string | null | undefined) {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
+function randomInteger(min: number, max: number) {
+  if (max <= min) {
+    return min;
+  }
+
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
 function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
   const textContent = normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
@@ -153,7 +172,9 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
 async function loadActiveAgent(client: QueryClient, ownerId: string) {
   const result = await client
     .from("automation_agents")
-    .select("id, owner_id, name, max_media_per_chat, is_active")
+    .select(
+      "id, owner_id, name, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active",
+    )
     .eq("owner_id", ownerId)
     .eq("is_active", true)
     .maybeSingle();
@@ -176,11 +197,18 @@ async function loadStagesForAgent(client: QueryClient, agentId: string) {
   if (stagesResult.error || stages.length === 0) {
     return {
       stages: [],
+      followupsByStage: new Map<string, AutomationStageFollowupRuntimeRow[]>(),
       messagesByStage: new Map<string, AutomationStageMessageRuntimeRow[]>(),
     };
   }
 
   const stageIds = stages.map((stage) => stage.id);
+  const followupsResult = await client
+    .from("automation_stage_followups")
+    .select("id, stage_id, followup_order, is_active, delay_hours, message")
+    .in("stage_id", stageIds)
+    .order("followup_order", { ascending: true });
+  const followups = castRows<AutomationStageFollowupRuntimeRow>(followupsResult.data);
   const messagesResult = await client
     .from("automation_stage_messages")
     .select("id, stage_id, message_order, message_type, text_content, media_url, delay_seconds")
@@ -191,17 +219,27 @@ async function loadStagesForAgent(client: QueryClient, agentId: string) {
   if (messagesResult.error) {
     throw new Error(messagesResult.error.message);
   }
+  if (followupsResult.error) {
+    throw new Error(followupsResult.error.message);
+  }
 
   const messagesByStage = new Map<string, AutomationStageMessageRuntimeRow[]>();
+  const followupsByStage = new Map<string, AutomationStageFollowupRuntimeRow[]>();
 
   for (const message of messages) {
     const current = messagesByStage.get(message.stage_id) ?? [];
     current.push(message);
     messagesByStage.set(message.stage_id, current);
   }
+  for (const followup of followups) {
+    const current = followupsByStage.get(followup.stage_id) ?? [];
+    current.push(followup);
+    followupsByStage.set(followup.stage_id, current);
+  }
 
   return {
     stages,
+    followupsByStage,
     messagesByStage,
   };
 }
@@ -327,7 +365,7 @@ export async function scheduleAutomationForInboundMessage(
     return { scheduled: 0, reason: "no_active_agent" as const };
   }
 
-  const { stages, messagesByStage } = await loadStagesForAgent(client, agent.id);
+  const { stages, followupsByStage, messagesByStage } = await loadStagesForAgent(client, agent.id);
 
   if (stages.length === 0) {
     return { scheduled: 0, reason: "no_stages" as const };
@@ -355,7 +393,12 @@ export async function scheduleAutomationForInboundMessage(
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
-  const startAtMs = Date.now();
+  const createdAtMs = toMillis(options.createdAt) ?? Date.now();
+  const startAtMs = Math.max(
+    Date.now(),
+    createdAtMs +
+      randomInteger(agent.min_reply_delay_seconds, agent.max_reply_delay_seconds) * 1000,
+  );
   let scheduledAtMs = startAtMs;
   let insertedCount = 0;
   let usedAudio = sentAudioJobs;
@@ -429,9 +472,28 @@ export async function scheduleAutomationForInboundMessage(
     return { scheduled: 0, reason: "no_deliverable_messages" as const };
   }
 
-  if (nextStage.followup_enabled && normalizeOptionalString(nextStage.followup_message)) {
+  const activeFollowups = (followupsByStage.get(nextStage.id) ?? [])
+    .filter((followup) => followup.is_active && normalizeOptionalString(followup.message))
+    .sort((left, right) => left.followup_order - right.followup_order);
+  const followups =
+    activeFollowups.length > 0
+      ? activeFollowups
+      : nextStage.followup_enabled && normalizeOptionalString(nextStage.followup_message)
+        ? [
+            {
+              id: `legacy-${nextStage.id}`,
+              stage_id: nextStage.id,
+              followup_order: 1,
+              is_active: true,
+              delay_hours: nextStage.followup_delay_hours,
+              message: nextStage.followup_message,
+            },
+          ]
+        : [];
+
+  for (const followup of followups) {
     const followupScheduledFor = new Date(
-      scheduledAtMs + nextStage.followup_delay_hours * 60 * 60 * 1000,
+      scheduledAtMs + followup.delay_hours * 60 * 60 * 1000,
     ).toISOString();
     const insertFollowup = await client.from("automation_jobs").insert({
       owner_id: options.ownerId,
@@ -447,8 +509,9 @@ export async function scheduleAutomationForInboundMessage(
       payload: {
         stageOrder: nextStage.stage_order,
         stageName: nextStage.name,
+        followupOrder: followup.followup_order,
         messageType: "text",
-        textContent: nextStage.followup_message,
+        textContent: followup.message,
       },
     } as never);
 
