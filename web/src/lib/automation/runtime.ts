@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  AUTOMATION_AI_MODEL,
   decryptApiKey,
   loadAiCredential,
-  type AiCredentialProvider,
 } from "@/lib/automation/ai-credentials";
 import { sendInstagramMessage } from "@/lib/meta/client";
 import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
@@ -135,9 +135,6 @@ type ConversationMessageContextRow = {
 };
 
 type GenerateAutomationReplyOptions = {
-  ownerId: string;
-  provider: AiCredentialProvider;
-  model: string;
   apiKey: string;
   aiPrompt: string | null;
   personality: string | null;
@@ -225,14 +222,6 @@ function buildAutomationAiMessages(options: GenerateAutomationReplyOptions) {
   ];
 }
 
-function getAiEndpoint(provider: AiCredentialProvider) {
-  if (provider === "groq") {
-    return "https://api.groq.com/openai/v1/chat/completions";
-  }
-
-  return "https://api.openai.com/v1/chat/completions";
-}
-
 function readChatCompletionContent(payload: unknown) {
   const content = (payload as {
     choices?: Array<{
@@ -246,14 +235,14 @@ function readChatCompletionContent(payload: unknown) {
 }
 
 export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
-  const response = await fetch(getAiEndpoint(options.provider), {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "authorization": `Bearer ${options.apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: options.model,
+      model: AUTOMATION_AI_MODEL,
       messages: [
         {
           role: "system",
@@ -268,13 +257,13 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
 
   if (!response.ok) {
     const errorMessage = (payload as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(errorMessage ?? `Proveedor IA respondio con HTTP ${response.status}.`);
+    throw new Error(errorMessage ?? `OpenAI respondio con HTTP ${response.status}.`);
   }
 
   const content = readChatCompletionContent(payload);
 
   if (!content) {
-    throw new Error("El proveedor IA no devolvio contenido.");
+    throw new Error("OpenAI no devolvio contenido.");
   }
 
   return content;
@@ -297,9 +286,6 @@ async function generateAgentAiReply(
   }
 
   return generateAutomationReply({
-    ownerId,
-    provider: credential.provider,
-    model: credential.model,
     apiKey: decryptApiKey(credential),
     aiPrompt: agent.ai_prompt,
     personality: agent.personality,
@@ -997,6 +983,23 @@ async function countRemainingStageMessageJobs(
   return castRows<{ id: string }>(result.data).length;
 }
 
+async function loadLastStageOrder(client: QueryClient, agentId: string) {
+  const result = await client
+    .from("automation_agent_stages")
+    .select("stage_order")
+    .eq("agent_id", agentId)
+    .order("stage_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const stage = castRow<{ stage_order: number }>(result.data);
+  return stage?.stage_order ?? null;
+}
+
 async function maybeCompleteStage(
   client: QueryClient,
   run: AutomationRunRow,
@@ -1013,14 +1016,20 @@ async function maybeCompleteStage(
     typeof job.payload?.stageOrder === "number"
       ? job.payload.stageOrder
       : Number(job.payload?.stageOrder ?? 0);
+  const completedStageOrder = Number.isFinite(stageOrder)
+    ? stageOrder
+    : run.last_completed_stage_order;
+  const lastStageOrder = await loadLastStageOrder(client, run.agent_id);
+  const flowCompleted =
+    lastStageOrder !== null && completedStageOrder >= lastStageOrder;
 
   await client
     .from("automation_runs")
     .update({
-      last_completed_stage_order: Number.isFinite(stageOrder) ? stageOrder : run.last_completed_stage_order,
+      last_completed_stage_order: completedStageOrder,
       active_stage_order: null,
       last_stage_completed_at: completedAt,
-      status: "active",
+      status: flowCompleted ? "completed" : "active",
     } as never)
     .eq("id", run.id);
 }
