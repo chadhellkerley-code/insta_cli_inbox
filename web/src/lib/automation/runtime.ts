@@ -79,7 +79,7 @@ type AutomationJobRow = {
   run_id: string;
   stage_id: string;
   stage_message_id: string | null;
-  job_type: "stage_message" | "followup";
+  job_type: "stage_message" | "followup" | "ai_reply";
   status: "pending" | "processing" | "sent" | "skipped" | "failed" | "cancelled";
   scheduled_for: string;
   sent_at: string | null;
@@ -94,6 +94,7 @@ type AutomationJobResult =
   | "sent"
   | "retry_scheduled"
   | "cancelled_inactive_agent"
+  | "skipped_ai_disabled"
   | "skipped_followup_answered"
   | "skipped_missing_dependencies"
   | "skipped_outside_automation_window"
@@ -334,6 +335,7 @@ function addJobResultToSummary(
       summary.cancelled += 1;
       break;
     case "skipped_followup_answered":
+    case "skipped_ai_disabled":
     case "skipped_missing_dependencies":
     case "skipped_outside_automation_window":
       summary.skipped += 1;
@@ -585,7 +587,7 @@ async function markRunCompleted(client: QueryClient, runId: string) {
     .eq("id", runId);
 }
 
-async function cancelAnsweredPendingFollowups(
+async function cancelAnsweredPendingResponseJobs(
   client: QueryClient,
   options: {
     runId: string;
@@ -596,10 +598,10 @@ async function cancelAnsweredPendingFollowups(
     .from("automation_jobs")
     .update({
       status: "cancelled",
-      last_error: "El cliente respondio antes del followup.",
+      last_error: "El cliente respondio antes de que se envie esta respuesta.",
     } as never)
     .eq("run_id", options.runId)
-    .eq("job_type", "followup")
+    .in("job_type", ["followup", "ai_reply"])
     .eq("status", "pending")
     .lt("created_at", options.inboundAt);
 
@@ -608,57 +610,56 @@ async function cancelAnsweredPendingFollowups(
   }
 }
 
-async function sendCompletedFlowAiReply(
+async function scheduleCompletedFlowAiReply(
   client: QueryClient,
   options: {
     agent: AutomationAgentRuntimeRow;
     run: AutomationRunRow;
     inboundText?: string | null;
     inboundAt: string;
+    stageId: string | null;
   },
 ) {
   if (!options.agent.ai_enabled) {
-    return { sent: false, reason: "ai_disabled" as const };
+    return { scheduled: false, reason: "ai_disabled" as const };
   }
 
   if (isOutsideAutomationWindow(options.run)) {
-    return { sent: false, reason: "outside_automation_window" as const };
+    return { scheduled: false, reason: "outside_automation_window" as const };
   }
 
-  const [conversation, account, conversationMessages] = await Promise.all([
-    loadConversation(client, options.run.conversation_id),
-    loadAccount(client, options.run.account_id),
-    loadRecentConversationMessages(client, options.run.conversation_id),
-  ]);
-
-  if (!conversation || !account) {
-    return { sent: false, reason: "missing_dependencies" as const };
-  }
-
-  const textContent = await generateAgentAiReply(
-    options.agent,
-    options.run.owner_id,
-    options.inboundText,
-    conversationMessages,
-  );
-
-  if (!textContent) {
-    return { sent: false, reason: "empty_ai_reply" as const };
+  if (!options.stageId) {
+    return { scheduled: false, reason: "missing_dependencies" as const };
   }
 
   const inboundAtMs = toMillis(options.inboundAt) ?? Date.now();
   const replyDelayMs =
     randomInteger(options.agent.min_reply_delay_seconds, options.agent.max_reply_delay_seconds) *
     1000;
-  await wait(Math.max(0, inboundAtMs + replyDelayMs - Date.now()));
+  const scheduledFor = new Date(Math.max(Date.now(), inboundAtMs + replyDelayMs)).toISOString();
+  const insertResult = await client.from("automation_jobs").insert({
+    owner_id: options.run.owner_id,
+    agent_id: options.run.agent_id,
+    account_id: options.run.account_id,
+    conversation_id: options.run.conversation_id,
+    run_id: options.run.id,
+    stage_id: options.stageId,
+    stage_message_id: null,
+    job_type: "ai_reply",
+    status: "pending",
+    scheduled_for: scheduledFor,
+    payload: {
+      messageType: "text",
+      inboundText: options.inboundText ?? null,
+      inboundAt: options.inboundAt,
+    },
+  } as never);
 
-  await sendAutomationOutboundMessage(client, conversation, account, {
-    messageType: "text",
-    textContent,
-    mediaUrl: null,
-  });
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message);
+  }
 
-  return { sent: true, reason: "sent" as const };
+  return { scheduled: true, reason: "scheduled" as const };
 }
 
 export async function scheduleAutomationForInboundMessage(
@@ -696,7 +697,7 @@ export async function scheduleAutomationForInboundMessage(
     inboundAt: options.createdAt,
   });
 
-  await cancelAnsweredPendingFollowups(client, {
+  await cancelAnsweredPendingResponseJobs(client, {
     runId: run.id,
     inboundAt: options.createdAt,
   });
@@ -710,16 +711,19 @@ export async function scheduleAutomationForInboundMessage(
 
   if (!nextStage) {
     await markRunCompleted(client, run.id);
-    const aiReply = await sendCompletedFlowAiReply(client, {
+    const aiReply = await scheduleCompletedFlowAiReply(client, {
       agent,
       run,
       inboundText: options.inboundText,
       inboundAt: options.createdAt,
+      stageId: stages[stages.length - 1]?.id ?? null,
     });
 
     return {
-      scheduled: aiReply.sent ? 1 : 0,
-      reason: aiReply.sent ? ("flow_completed_ai_sent" as const) : ("flow_completed" as const),
+      scheduled: aiReply.scheduled ? 1 : 0,
+      reason: aiReply.scheduled
+        ? ("flow_completed_ai_scheduled" as const)
+        : ("flow_completed" as const),
       aiReplyReason: aiReply.reason,
     };
   }
@@ -959,7 +963,9 @@ async function loadRecentConversationMessages(client: QueryClient, conversationI
 async function loadAgent(client: QueryClient, agentId: string) {
   const result = await client
     .from("automation_agents")
-    .select("id, owner_id, is_active")
+    .select(
+      "id, owner_id, name, personality, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active, ai_enabled, ai_prompt",
+    )
     .eq("id", agentId)
     .maybeSingle();
 
@@ -967,7 +973,7 @@ async function loadAgent(client: QueryClient, agentId: string) {
     throw new Error(result.error.message);
   }
 
-  return castRow<{ id: string; owner_id: string; is_active: boolean }>(result.data);
+  return castRow<AutomationAgentRuntimeRow>(result.data);
 }
 
 async function countRemainingStageMessageJobs(
@@ -1170,6 +1176,46 @@ async function sendAutomationJob(
   return { sent: true };
 }
 
+async function sendAutomationAiReplyJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  run: AutomationRunRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+  agent: AutomationAgentRuntimeRow,
+) {
+  const conversationMessages = await loadRecentConversationMessages(client, conversation.id);
+  const inboundText =
+    typeof job.payload?.inboundText === "string" ? job.payload.inboundText : null;
+  const textContent = await generateAgentAiReply(
+    agent,
+    run.owner_id,
+    inboundText,
+    conversationMessages,
+  );
+
+  if (!textContent) {
+    throw new Error("La IA no devolvio una respuesta para enviar.");
+  }
+
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType: "text",
+    textContent,
+    mediaUrl: null,
+  });
+
+  await markJob(client, job.id, {
+    status: "sent",
+    sent_at: result.sentAt,
+    attempt_count: (job.attempt_count ?? 0) + 1,
+    last_error: null,
+  });
+
+  await markRunCompleted(client, run.id);
+
+  return { sent: true };
+}
+
 function shouldSkipFollowup(run: AutomationRunRow, job: AutomationJobRow) {
   const lastInboundMs = toMillis(run.last_inbound_at);
   const followupCreatedMs = toMillis(job.created_at) ?? toMillis(job.scheduled_for);
@@ -1288,6 +1334,14 @@ async function handleJob(
     return "cancelled_inactive_agent" as const;
   }
 
+  if (job.job_type === "ai_reply" && !agent.ai_enabled) {
+    await markJob(client, job.id, {
+      status: "skipped",
+      last_error: "La IA ya no esta activa para este agente.",
+    });
+    return "skipped_ai_disabled" as const;
+  }
+
   if (job.job_type === "followup" && shouldSkipFollowup(run, job)) {
     await markJob(client, job.id, {
       status: "skipped",
@@ -1306,7 +1360,11 @@ async function handleJob(
   }
 
   try {
-    await sendAutomationJob(client, job, run, conversation, account);
+    if (job.job_type === "ai_reply") {
+      await sendAutomationAiReplyJob(client, job, run, conversation, account, agent);
+    } else {
+      await sendAutomationJob(client, job, run, conversation, account);
+    }
     return "sent" as const;
   } catch (error) {
     const nextAttempt = (job.attempt_count ?? 0) + 1;
@@ -1496,7 +1554,7 @@ export async function processDueAutomationJobs(
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
-    .eq("job_type", "followup")
+    .in("job_type", ["followup", "ai_reply"])
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
