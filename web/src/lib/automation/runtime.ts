@@ -27,9 +27,6 @@ type AutomationStageRuntimeRow = {
   agent_id: string;
   stage_order: number;
   name: string;
-  followup_enabled: boolean;
-  followup_delay_hours: number;
-  followup_message: string | null;
 };
 
 type AutomationStageFollowupRuntimeRow = {
@@ -101,6 +98,7 @@ type AutomationProcessingSummary = {
   cancelled: number;
   retried: number;
   failed: number;
+  cleaned: number;
 };
 
 type ConversationRuntimeRow = {
@@ -158,6 +156,7 @@ function createProcessingSummary(): AutomationProcessingSummary {
     cancelled: 0,
     retried: 0,
     failed: 0,
+    cleaned: 0,
   };
 }
 
@@ -271,7 +270,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
 async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const stagesResult = await client
     .from("automation_agent_stages")
-    .select("id, agent_id, stage_order, name, followup_enabled, followup_delay_hours, followup_message")
+    .select("id, agent_id, stage_order, name")
     .eq("agent_id", agentId)
     .order("stage_order", { ascending: true });
   const stages = castRows<AutomationStageRuntimeRow>(stagesResult.data);
@@ -427,6 +426,29 @@ async function markRunCompleted(client: QueryClient, runId: string) {
     .eq("id", runId);
 }
 
+async function cancelAnsweredPendingFollowups(
+  client: QueryClient,
+  options: {
+    runId: string;
+    inboundAt: string;
+  },
+) {
+  const result = await client
+    .from("automation_jobs")
+    .update({
+      status: "cancelled",
+      last_error: "El cliente respondio antes del followup.",
+    } as never)
+    .eq("run_id", options.runId)
+    .eq("job_type", "followup")
+    .eq("status", "pending")
+    .lt("created_at", options.inboundAt);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
 export async function scheduleAutomationForInboundMessage(
   client: QueryClient,
   options: {
@@ -458,6 +480,11 @@ export async function scheduleAutomationForInboundMessage(
     agentId: agent.id,
     accountId: options.accountId,
     conversationId: options.conversationId,
+    inboundAt: options.createdAt,
+  });
+
+  await cancelAnsweredPendingFollowups(client, {
+    runId: run.id,
     inboundAt: options.createdAt,
   });
 
@@ -557,24 +584,9 @@ export async function scheduleAutomationForInboundMessage(
     return { scheduled: 0, reason: "no_deliverable_messages" as const };
   }
 
-  const activeFollowups = (followupsByStage.get(nextStage.id) ?? [])
+  const followups = (followupsByStage.get(nextStage.id) ?? [])
     .filter((followup) => followup.is_active && normalizeOptionalString(followup.message))
     .sort((left, right) => left.followup_order - right.followup_order);
-  const followups =
-    activeFollowups.length > 0
-      ? activeFollowups
-      : nextStage.followup_enabled && normalizeOptionalString(nextStage.followup_message)
-        ? [
-            {
-              id: `legacy-${nextStage.id}`,
-              stage_id: nextStage.id,
-              followup_order: 1,
-              is_active: true,
-              delay_hours: nextStage.followup_delay_hours,
-              message: nextStage.followup_message,
-            },
-          ]
-        : [];
 
   for (const followup of followups) {
     const followupScheduledFor = new Date(
@@ -916,9 +928,79 @@ function isOutsideAutomationWindow(run: AutomationRunRow) {
   return Date.now() - lastInboundMs > STANDARD_MESSAGING_WINDOW_MS;
 }
 
+async function cancelPendingJob(
+  client: QueryClient,
+  jobId: string,
+  reason: string,
+) {
+  const result = await client
+    .from("automation_jobs")
+    .update({
+      status: "cancelled",
+      last_error: reason,
+    } as never)
+    .eq("id", jobId)
+    .eq("status", "pending");
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
+async function cleanupObsoleteFollowups(
+  client: QueryClient,
+  options: {
+    limit: number;
+    ownerId?: string;
+  },
+) {
+  let jobsQuery = client
+    .from("automation_jobs")
+    .select("*")
+    .eq("job_type", "followup")
+    .eq("status", "pending");
+
+  if (options.ownerId) {
+    jobsQuery = jobsQuery.eq("owner_id", options.ownerId);
+  }
+
+  const jobsResult = await jobsQuery
+    .order("created_at", { ascending: true })
+    .limit(options.limit);
+  const jobs = castRows<AutomationJobRow>(jobsResult.data);
+
+  if (jobsResult.error) {
+    throw new Error(jobsResult.error.message);
+  }
+
+  let cleaned = 0;
+  const runsById = new Map<string, AutomationRunRow | null>();
+
+  for (const job of jobs) {
+    let run = runsById.get(job.run_id);
+
+    if (!runsById.has(job.run_id)) {
+      run = await loadRun(client, job.run_id);
+      runsById.set(job.run_id, run);
+    }
+
+    if (!run || !shouldSkipFollowup(run, job)) {
+      continue;
+    }
+
+    await cancelPendingJob(client, job.id, "El cliente respondio antes del followup.");
+    cleaned += 1;
+  }
+
+  return { cleaned };
+}
+
 async function handleJob(
   client: QueryClient,
   job: AutomationJobRow,
+  options?: {
+    retryDelayMs?: number;
+  },
 ): Promise<AutomationJobResult> {
   const [agent, run, conversation, account] = await Promise.all([
     loadAgent(client, job.agent_id),
@@ -972,7 +1054,9 @@ async function handleJob(
         status: "pending",
         attempt_count: nextAttempt,
         last_error: lastError,
-        scheduled_for: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        scheduled_for: new Date(
+          Date.now() + (options?.retryDelayMs ?? 5 * 60 * 1000),
+        ).toISOString(),
       });
       return "retry_scheduled" as const;
     }
@@ -1088,7 +1172,7 @@ export async function processScheduledStageMessages(
     }
 
     summary.claimed += 1;
-    const result = await handleJob(client, claimedJob);
+    const result = await handleJob(client, claimedJob, { retryDelayMs: 10_000 });
     addJobResultToSummary(summary, result);
 
     if (shouldStopLiveStageExecution(result)) {
@@ -1141,9 +1225,14 @@ export async function processDueAutomationJobs(
 ) {
   const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
   const nowIso = new Date().toISOString();
+  const cleanupSummary = await cleanupObsoleteFollowups(client, {
+    limit,
+    ownerId: options?.ownerId,
+  });
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
+    .eq("job_type", "followup")
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
@@ -1159,6 +1248,7 @@ export async function processDueAutomationJobs(
   }
 
   const summary = createProcessingSummary();
+  summary.cleaned = cleanupSummary.cleaned;
 
   for (const pendingJob of jobs) {
     const claimedJob = await claimPendingJob(client, pendingJob.id);

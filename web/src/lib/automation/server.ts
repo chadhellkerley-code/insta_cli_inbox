@@ -143,27 +143,7 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         throw new Error(`La ${ensureStageName(stage.name, stageIndex)} necesita al menos un mensaje.`);
       }
 
-      const legacyStage = stage as typeof stage & {
-        followupEnabled?: boolean;
-        followupDelayHours?: number;
-        followupMessage?: string;
-      };
-      const rawFollowups = Array.isArray(stage.followups)
-        ? stage.followups
-        : legacyStage.followupEnabled
-          ? [
-              {
-                id: undefined,
-                isActive: true,
-                delayHours: clampInteger(legacyStage.followupDelayHours, {
-                  min: 0,
-                  max: 24 * 30,
-                  fallback: 2,
-                }),
-                message: legacyStage.followupMessage ?? "",
-              },
-            ]
-          : [];
+      const rawFollowups = Array.isArray(stage.followups) ? stage.followups : [];
       const followups = rawFollowups.map((followup) => {
         const isActive = Boolean(followup.isActive);
         const message = normalizeString(followup.message);
@@ -286,28 +266,6 @@ function mapAutomationAgents(
             delaySeconds: message.delay_seconds,
           })),
       }))
-      .map((stage) => ({
-        ...stage,
-        followups:
-          stage.followups.length > 0
-            ? stage.followups
-            : (() => {
-                const legacy = stages.find((item) => item.id === stage.id);
-                if (!legacy?.followup_enabled || !legacy.followup_message?.trim()) {
-                  return [];
-                }
-
-                return [
-                  {
-                    id: `legacy-${stage.id}`,
-                    order: 1,
-                    isActive: true,
-                    delayHours: legacy.followup_delay_hours,
-                    message: legacy.followup_message,
-                  },
-                ];
-              })(),
-      })),
   })) satisfies AutomationAgent[];
 }
 
@@ -515,9 +473,6 @@ export async function saveAutomationAgent(
         agent_id: agentId,
         stage_order: stageIndex + 1,
         name: stage.name,
-        followup_enabled: false,
-        followup_delay_hours: 0,
-        followup_message: null,
       } as never)
       .select("id")
       .maybeSingle();

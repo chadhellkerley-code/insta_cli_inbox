@@ -19,9 +19,6 @@ export type AutomationStageRecord = {
   agent_id: string;
   stage_order: number;
   name: string;
-  followup_enabled: boolean;
-  followup_delay_hours: number;
-  followup_message: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
