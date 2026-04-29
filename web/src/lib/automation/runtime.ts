@@ -126,6 +126,13 @@ type AccountRuntimeRow = {
   token_lifecycle: string | null;
 };
 
+type ConversationMessageContextRow = {
+  direction: "in" | "out";
+  message_type: string;
+  text_content: string | null;
+  created_at: string | null;
+};
+
 type GenerateAutomationReplyOptions = {
   ownerId: string;
   provider: AiCredentialProvider;
@@ -134,6 +141,7 @@ type GenerateAutomationReplyOptions = {
   aiPrompt: string | null;
   personality: string | null;
   inboundText: string;
+  conversationMessages?: ConversationMessageContextRow[];
 };
 
 function castRows<T>(value: unknown) {
@@ -184,6 +192,38 @@ function buildAutomationAiSystemPrompt(options: Pick<
   return parts.join("\n");
 }
 
+function buildAutomationAiMessages(options: GenerateAutomationReplyOptions) {
+  const conversationMessages = options.conversationMessages ?? [];
+  const messages = conversationMessages
+    .map((message) => {
+      const textContent = normalizeOptionalString(message.text_content);
+      const sender = message.direction === "out" ? "El agente" : "El cliente";
+      const content =
+        textContent ??
+        (message.message_type === "audio"
+          ? `${sender} envio un audio.`
+          : `${sender} envio un mensaje de tipo ${message.message_type || "desconocido"}.`);
+
+      return {
+        role: message.direction === "out" ? ("assistant" as const) : ("user" as const),
+        content,
+      };
+    })
+    .filter((message) => normalizeOptionalString(message.content));
+
+  if (messages.length > 0) {
+    return messages;
+  }
+
+  return [
+    {
+      role: "user" as const,
+      content:
+        normalizeOptionalString(options.inboundText) ?? "El cliente envio un mensaje sin texto.",
+    },
+  ];
+}
+
 function getAiEndpoint(provider: AiCredentialProvider) {
   if (provider === "groq") {
     return "https://api.groq.com/openai/v1/chat/completions";
@@ -205,8 +245,6 @@ function readChatCompletionContent(payload: unknown) {
 }
 
 export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
-  const inboundText =
-    normalizeOptionalString(options.inboundText) ?? "El cliente envio un mensaje sin texto.";
   const response = await fetch(getAiEndpoint(options.provider), {
     method: "POST",
     headers: {
@@ -220,10 +258,7 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
           role: "system",
           content: buildAutomationAiSystemPrompt(options),
         },
-        {
-          role: "user",
-          content: inboundText,
-        },
+        ...buildAutomationAiMessages(options),
       ],
       temperature: 0.7,
     }),
@@ -248,6 +283,7 @@ async function generateAgentAiReply(
   agent: AutomationAgentRuntimeRow,
   ownerId: string,
   inboundText: string | null | undefined,
+  conversationMessages?: ConversationMessageContextRow[],
 ) {
   if (!agent.ai_enabled) {
     return null;
@@ -267,6 +303,7 @@ async function generateAgentAiReply(
     aiPrompt: agent.ai_prompt,
     personality: agent.personality,
     inboundText: inboundText ?? "",
+    conversationMessages,
   });
 }
 
@@ -335,12 +372,8 @@ function compareNullableIso(left: string | null, right: string | null) {
   return leftMs - rightMs;
 }
 
-function buildStageMessageJobPayloads(
-  stageMessage: AutomationStageMessageRuntimeRow,
-  textOverride?: string | null,
-) {
-  const textContent =
-    normalizeOptionalString(textOverride) ?? normalizeOptionalString(stageMessage.text_content);
+function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
+  const textContent = normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
 
   if (stageMessage.message_type !== "audio") {
@@ -575,6 +608,59 @@ async function cancelAnsweredPendingFollowups(
   }
 }
 
+async function sendCompletedFlowAiReply(
+  client: QueryClient,
+  options: {
+    agent: AutomationAgentRuntimeRow;
+    run: AutomationRunRow;
+    inboundText?: string | null;
+    inboundAt: string;
+  },
+) {
+  if (!options.agent.ai_enabled) {
+    return { sent: false, reason: "ai_disabled" as const };
+  }
+
+  if (isOutsideAutomationWindow(options.run)) {
+    return { sent: false, reason: "outside_automation_window" as const };
+  }
+
+  const [conversation, account, conversationMessages] = await Promise.all([
+    loadConversation(client, options.run.conversation_id),
+    loadAccount(client, options.run.account_id),
+    loadRecentConversationMessages(client, options.run.conversation_id),
+  ]);
+
+  if (!conversation || !account) {
+    return { sent: false, reason: "missing_dependencies" as const };
+  }
+
+  const textContent = await generateAgentAiReply(
+    options.agent,
+    options.run.owner_id,
+    options.inboundText,
+    conversationMessages,
+  );
+
+  if (!textContent) {
+    return { sent: false, reason: "empty_ai_reply" as const };
+  }
+
+  const inboundAtMs = toMillis(options.inboundAt) ?? Date.now();
+  const replyDelayMs =
+    randomInteger(options.agent.min_reply_delay_seconds, options.agent.max_reply_delay_seconds) *
+    1000;
+  await wait(Math.max(0, inboundAtMs + replyDelayMs - Date.now()));
+
+  await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType: "text",
+    textContent,
+    mediaUrl: null,
+  });
+
+  return { sent: true, reason: "sent" as const };
+}
+
 export async function scheduleAutomationForInboundMessage(
   client: QueryClient,
   options: {
@@ -624,15 +710,22 @@ export async function scheduleAutomationForInboundMessage(
 
   if (!nextStage) {
     await markRunCompleted(client, run.id);
-    return { scheduled: 0, reason: "flow_completed" as const };
+    const aiReply = await sendCompletedFlowAiReply(client, {
+      agent,
+      run,
+      inboundText: options.inboundText,
+      inboundAt: options.createdAt,
+    });
+
+    return {
+      scheduled: aiReply.sent ? 1 : 0,
+      reason: aiReply.sent ? ("flow_completed_ai_sent" as const) : ("flow_completed" as const),
+      aiReplyReason: aiReply.reason,
+    };
   }
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
-  const aiReply = stageMessages.some((stageMessage) => stageMessage.message_type === "text")
-    ? await generateAgentAiReply(agent, options.ownerId, options.inboundText)
-    : null;
-  let aiReplyUsed = false;
   const createdAtMs = toMillis(options.createdAt) ?? Date.now();
   const startAtMs = Math.max(
     Date.now(),
@@ -658,17 +751,8 @@ export async function scheduleAutomationForInboundMessage(
 
     lastScheduledIso = new Date(scheduledAtMs).toISOString();
 
-    const shouldUseAiReply =
-      Boolean(aiReply) && !aiReplyUsed && stageMessage.message_type === "text";
-    const jobPayloads = buildStageMessageJobPayloads(
-      stageMessage,
-      shouldUseAiReply ? aiReply : null,
-    );
+    const jobPayloads = buildStageMessageJobPayloads(stageMessage);
     let lastPartScheduledAtMs = scheduledAtMs;
-
-    if (shouldUseAiReply) {
-      aiReplyUsed = true;
-    }
 
     for (let payloadIndex = 0; payloadIndex < jobPayloads.length; payloadIndex += 1) {
       const payload = jobPayloads[payloadIndex];
@@ -857,6 +941,21 @@ async function loadAccount(client: QueryClient, accountId: string) {
   return castRow<AccountRuntimeRow>(result.data);
 }
 
+async function loadRecentConversationMessages(client: QueryClient, conversationId: string) {
+  const result = await client
+    .from("instagram_messages")
+    .select("direction, message_type, text_content, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return castRows<ConversationMessageContextRow>(result.data).reverse();
+}
+
 async function loadAgent(client: QueryClient, agentId: string) {
   const result = await client
     .from("automation_agents")
@@ -920,12 +1019,15 @@ async function maybeCompleteStage(
     .eq("id", run.id);
 }
 
-async function sendAutomationJob(
+async function sendAutomationOutboundMessage(
   client: QueryClient,
-  job: AutomationJobRow,
-  run: AutomationRunRow,
   conversation: ConversationRuntimeRow,
   account: AccountRuntimeRow,
+  options: {
+    messageType: "text" | "audio";
+    textContent: string | null;
+    mediaUrl: string | null;
+  },
 ) {
   const managedToken = await ensureInstagramAccessToken({
     accessToken: account.access_token,
@@ -955,20 +1057,16 @@ async function sendAutomationJob(
       account.token_lifecycle = nextToken.lifecycle;
     },
   });
-  const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
-  const textContent = normalizeOptionalString(
-    typeof job.payload?.textContent === "string" ? job.payload.textContent : null,
-  );
-  const mediaUrl = normalizeOptionalString(
-    typeof job.payload?.mediaUrl === "string" ? job.payload.mediaUrl : null,
-  );
+  const messageType = options.messageType;
+  const textContent = normalizeOptionalString(options.textContent);
+  const mediaUrl = normalizeOptionalString(options.mediaUrl);
 
   if (messageType === "text" && !textContent) {
-    throw new Error("El job no tiene contenido de texto.");
+    throw new Error("El mensaje no tiene contenido de texto.");
   }
 
   if (messageType === "audio" && !mediaUrl) {
-    throw new Error("El job de audio no tiene media_url.");
+    throw new Error("El mensaje de audio no tiene media_url.");
   }
 
   if (messageType === "audio" && mediaUrl) {
@@ -1033,15 +1131,40 @@ async function sendAutomationJob(
     } as never)
     .eq("id", account.id);
 
+  return {
+    sentAt: nowIso,
+  };
+}
+
+async function sendAutomationJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  run: AutomationRunRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+) {
+  const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
+  const textContent = normalizeOptionalString(
+    typeof job.payload?.textContent === "string" ? job.payload.textContent : null,
+  );
+  const mediaUrl = normalizeOptionalString(
+    typeof job.payload?.mediaUrl === "string" ? job.payload.mediaUrl : null,
+  );
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType,
+    textContent,
+    mediaUrl,
+  });
+
   await markJob(client, job.id, {
     status: "sent",
-    sent_at: nowIso,
+    sent_at: result.sentAt,
     attempt_count: (job.attempt_count ?? 0) + 1,
     last_error: null,
   });
 
   if (job.job_type === "stage_message") {
-    await maybeCompleteStage(client, run, job, nowIso);
+    await maybeCompleteStage(client, run, job, result.sentAt);
   }
 
   return { sent: true };
