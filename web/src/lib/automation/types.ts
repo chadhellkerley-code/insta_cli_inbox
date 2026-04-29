@@ -115,10 +115,6 @@ export type AutomationAgent = {
   }>;
 };
 
-export type LocalAgentAiConfig = {
-  apiKey: string;
-};
-
 export const DEFAULT_AGENT_NAME = "Agente nuevo";
 
 export function createEmptyAgentDraft(): AutomationAgentInput {

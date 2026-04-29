@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  decryptApiKey,
+  loadAiCredential,
+  type AiCredentialProvider,
+} from "@/lib/automation/ai-credentials";
 import { sendInstagramMessage } from "@/lib/meta/client";
 import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import {
@@ -20,6 +25,9 @@ type AutomationAgentRuntimeRow = {
   max_reply_delay_seconds: number;
   max_media_per_chat: number;
   is_active: boolean;
+  ai_enabled: boolean;
+  ai_prompt: string | null;
+  personality: string | null;
 };
 
 type AutomationStageRuntimeRow = {
@@ -118,6 +126,16 @@ type AccountRuntimeRow = {
   token_lifecycle: string | null;
 };
 
+type GenerateAutomationReplyOptions = {
+  ownerId: string;
+  provider: AiCredentialProvider;
+  model: string;
+  apiKey: string;
+  aiPrompt: string | null;
+  personality: string | null;
+  inboundText: string;
+};
+
 function castRows<T>(value: unknown) {
   return (value ?? []) as T[];
 }
@@ -146,6 +164,110 @@ function randomInteger(min: number, max: number) {
   }
 
   return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function buildAutomationAiSystemPrompt(options: Pick<
+  GenerateAutomationReplyOptions,
+  "aiPrompt" | "personality"
+>) {
+  const parts = [
+    "Responde como agente de atencion de Instagram.",
+    "Devuelve solo el texto final para enviar al cliente.",
+    normalizeOptionalString(options.personality)
+      ? `Personalidad: ${normalizeOptionalString(options.personality)}`
+      : null,
+    normalizeOptionalString(options.aiPrompt)
+      ? `Instrucciones: ${normalizeOptionalString(options.aiPrompt)}`
+      : null,
+  ].filter(Boolean);
+
+  return parts.join("\n");
+}
+
+function getAiEndpoint(provider: AiCredentialProvider) {
+  if (provider === "groq") {
+    return "https://api.groq.com/openai/v1/chat/completions";
+  }
+
+  return "https://api.openai.com/v1/chat/completions";
+}
+
+function readChatCompletionContent(payload: unknown) {
+  const content = (payload as {
+    choices?: Array<{
+      message?: {
+        content?: unknown;
+      };
+    }>;
+  })?.choices?.[0]?.message?.content;
+
+  return normalizeOptionalString(typeof content === "string" ? content : null);
+}
+
+export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
+  const inboundText =
+    normalizeOptionalString(options.inboundText) ?? "El cliente envio un mensaje sin texto.";
+  const response = await fetch(getAiEndpoint(options.provider), {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${options.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: options.model,
+      messages: [
+        {
+          role: "system",
+          content: buildAutomationAiSystemPrompt(options),
+        },
+        {
+          role: "user",
+          content: inboundText,
+        },
+      ],
+      temperature: 0.7,
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as unknown;
+
+  if (!response.ok) {
+    const errorMessage = (payload as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(errorMessage ?? `Proveedor IA respondio con HTTP ${response.status}.`);
+  }
+
+  const content = readChatCompletionContent(payload);
+
+  if (!content) {
+    throw new Error("El proveedor IA no devolvio contenido.");
+  }
+
+  return content;
+}
+
+async function generateAgentAiReply(
+  agent: AutomationAgentRuntimeRow,
+  ownerId: string,
+  inboundText: string | null | undefined,
+) {
+  if (!agent.ai_enabled) {
+    return null;
+  }
+
+  const credential = await loadAiCredential(ownerId);
+
+  if (!credential) {
+    throw new Error("IA activada sin API key configurada.");
+  }
+
+  return generateAutomationReply({
+    ownerId,
+    provider: credential.provider,
+    model: credential.model,
+    apiKey: decryptApiKey(credential),
+    aiPrompt: agent.ai_prompt,
+    personality: agent.personality,
+    inboundText: inboundText ?? "",
+  });
 }
 
 function createProcessingSummary(): AutomationProcessingSummary {
@@ -213,8 +335,12 @@ function compareNullableIso(left: string | null, right: string | null) {
   return leftMs - rightMs;
 }
 
-function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
-  const textContent = normalizeOptionalString(stageMessage.text_content);
+function buildStageMessageJobPayloads(
+  stageMessage: AutomationStageMessageRuntimeRow,
+  textOverride?: string | null,
+) {
+  const textContent =
+    normalizeOptionalString(textOverride) ?? normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
 
   if (stageMessage.message_type !== "audio") {
@@ -254,7 +380,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
   const result = await client
     .from("automation_agents")
     .select(
-      "id, owner_id, name, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active",
+      "id, owner_id, name, personality, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active, ai_enabled, ai_prompt",
     )
     .eq("owner_id", ownerId)
     .eq("is_active", true)
@@ -457,6 +583,7 @@ export async function scheduleAutomationForInboundMessage(
     conversationId: string;
     createdAt: string;
     isInbound: boolean;
+    inboundText?: string | null;
   },
 ) {
   if (!options.isInbound) {
@@ -502,6 +629,10 @@ export async function scheduleAutomationForInboundMessage(
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
+  const aiReply = stageMessages.some((stageMessage) => stageMessage.message_type === "text")
+    ? await generateAgentAiReply(agent, options.ownerId, options.inboundText)
+    : null;
+  let aiReplyUsed = false;
   const createdAtMs = toMillis(options.createdAt) ?? Date.now();
   const startAtMs = Math.max(
     Date.now(),
@@ -527,8 +658,17 @@ export async function scheduleAutomationForInboundMessage(
 
     lastScheduledIso = new Date(scheduledAtMs).toISOString();
 
-    const jobPayloads = buildStageMessageJobPayloads(stageMessage);
+    const shouldUseAiReply =
+      Boolean(aiReply) && !aiReplyUsed && stageMessage.message_type === "text";
+    const jobPayloads = buildStageMessageJobPayloads(
+      stageMessage,
+      shouldUseAiReply ? aiReply : null,
+    );
     let lastPartScheduledAtMs = scheduledAtMs;
+
+    if (shouldUseAiReply) {
+      aiReplyUsed = true;
+    }
 
     for (let payloadIndex = 0; payloadIndex < jobPayloads.length; payloadIndex += 1) {
       const payload = jobPayloads[payloadIndex];
@@ -1194,6 +1334,7 @@ export async function runAutomationForInboundMessage(
     conversationId: string;
     createdAt: string;
     isInbound: boolean;
+    inboundText?: string | null;
   },
 ) {
   const scheduleResult = await scheduleAutomationForInboundMessage(client, options);

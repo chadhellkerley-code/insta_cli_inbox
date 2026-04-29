@@ -1012,6 +1012,7 @@ async function persistMessagingEvent(
         conversationId,
         createdAt,
         isInbound,
+        inboundText: event.message.text ?? null,
       });
     } catch (error) {
       console.warn("[instagram-webhook] automation execution skipped", {

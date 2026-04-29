@@ -10,7 +10,6 @@ import { startInstagramAudioRecording } from "@/lib/meta/audio-recorder";
 import type {
   AutomationAgent,
   AutomationAgentInput,
-  LocalAgentAiConfig,
 } from "@/lib/automation/types";
 import {
   createEmptyAgentDraft,
@@ -25,7 +24,19 @@ type AutomationAgentsManagerProps = {
 
 type ModalMode = "create" | "edit";
 
-const AI_STORAGE_KEY = "insta-cli-automation-ai";
+type AiCredentialState = {
+  provider: string;
+  model: string;
+  hasApiKey: boolean;
+  apiKeyLast4: string | null;
+};
+
+const DEFAULT_AI_CREDENTIAL: AiCredentialState = {
+  provider: "openai",
+  model: "gpt-4o-mini",
+  hasApiKey: false,
+  apiKeyLast4: null,
+};
 
 function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
   return {
@@ -65,32 +76,6 @@ function getAgentCardSummary(agent: AutomationAgent) {
   return `${agent.stages.length} etapas · ${totalMessages} mensajes · ${totalFollowups} followups`;
 }
 
-function readLocalAiConfig() {
-  if (typeof window === "undefined") {
-    return {} as Record<string, LocalAgentAiConfig>;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(AI_STORAGE_KEY);
-
-    if (!raw) {
-      return {} as Record<string, LocalAgentAiConfig>;
-    }
-
-    return JSON.parse(raw) as Record<string, LocalAgentAiConfig>;
-  } catch {
-    return {} as Record<string, LocalAgentAiConfig>;
-  }
-}
-
-function writeLocalAiConfig(value: Record<string, LocalAgentAiConfig>) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(value));
-}
-
 export function AutomationAgentsManager({
   initialAgents,
 }: AutomationAgentsManagerProps) {
@@ -104,11 +89,18 @@ export function AutomationAgentsManager({
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("create");
   const [modalDraft, setModalDraft] = useState<AutomationAgentInput>(createEmptyAgentDraft());
-  const [localAiConfig, setLocalAiConfig] = useState<Record<string, LocalAgentAiConfig>>({});
+  const [aiCredential, setAiCredential] =
+    useState<AiCredentialState>(DEFAULT_AI_CREDENTIAL);
+  const [aiCredentialDraft, setAiCredentialDraft] = useState({
+    provider: DEFAULT_AI_CREDENTIAL.provider,
+    model: DEFAULT_AI_CREDENTIAL.model,
+    apiKey: "",
+  });
   const [feedback, setFeedback] = useState<string | null>(null);
   const [feedbackTone, setFeedbackTone] = useState<"success" | "error">("success");
   const [savingBasic, setSavingBasic] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
+  const [savingAiCredential, setSavingAiCredential] = useState(false);
   const [processingJobs, setProcessingJobs] = useState(false);
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null);
   const [recordingTargetKey, setRecordingTargetKey] = useState<string | null>(null);
@@ -121,8 +113,48 @@ export function AutomationAgentsManager({
     agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const activeAgentsCount = agents.filter((agent) => agent.isActive).length;
 
+  async function loadAiCredentialStatus() {
+    const response = await fetch("/api/automation/ai-credentials", {
+      method: "GET",
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          provider?: string | null;
+          model?: string | null;
+          hasApiKey?: boolean;
+          apiKeyLast4?: string | null;
+          error?: string;
+        }
+      | null;
+
+    if (!response.ok || !payload) {
+      throw new Error(payload?.error || "No pudimos cargar la credencial de IA.");
+    }
+
+    const nextCredential = {
+      provider: payload.provider ?? DEFAULT_AI_CREDENTIAL.provider,
+      model: payload.model ?? DEFAULT_AI_CREDENTIAL.model,
+      hasApiKey: Boolean(payload.hasApiKey),
+      apiKeyLast4: payload.apiKeyLast4 ?? null,
+    };
+
+    setAiCredential(nextCredential);
+    setAiCredentialDraft((current) => ({
+      ...current,
+      provider: nextCredential.provider,
+      model: nextCredential.model,
+      apiKey: "",
+    }));
+  }
+
   useEffect(() => {
-    setLocalAiConfig(readLocalAiConfig());
+    void loadAiCredentialStatus().catch((error) => {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos cargar la credencial de IA.",
+        "error",
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -316,10 +348,6 @@ export function AutomationAgentsManager({
         throw new Error(payload?.error || "No pudimos eliminar el agente.");
       }
 
-      const nextAiConfig = { ...localAiConfig };
-      delete nextAiConfig[agent.id];
-      setLocalAiConfig(nextAiConfig);
-      writeLocalAiConfig(nextAiConfig);
       await refreshAgents(null);
       showFeedback("Agente eliminado.", "success");
     } catch (error) {
@@ -490,13 +518,59 @@ export function AutomationAgentsManager({
     }));
   }
 
-  function persistLocalAi(agentId: string, nextValue: LocalAgentAiConfig) {
-    const nextConfig = {
-      ...localAiConfig,
-      [agentId]: nextValue,
-    };
-    setLocalAiConfig(nextConfig);
-    writeLocalAiConfig(nextConfig);
+  async function saveAiCredential() {
+    setSavingAiCredential(true);
+
+    try {
+      const response = await fetch("/api/automation/ai-credentials", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(aiCredentialDraft),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            provider?: string | null;
+            model?: string | null;
+            hasApiKey?: boolean;
+            apiKeyLast4?: string | null;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload?.hasApiKey) {
+        throw new Error(payload?.error || "No pudimos guardar la credencial de IA.");
+      }
+
+      const nextCredential = {
+        provider: payload.provider ?? aiCredentialDraft.provider,
+        model: payload.model ?? aiCredentialDraft.model,
+        hasApiKey: true,
+        apiKeyLast4: payload.apiKeyLast4 ?? null,
+      };
+
+      setAiCredential(nextCredential);
+      setAiCredentialDraft((current) => ({
+        ...current,
+        provider: nextCredential.provider,
+        model: nextCredential.model,
+        apiKey: "",
+      }));
+      showFeedback(
+        nextCredential.apiKeyLast4
+          ? `API key configurada: ****${nextCredential.apiKeyLast4}`
+          : "API key configurada.",
+        "success",
+      );
+    } catch (error) {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos guardar la credencial de IA.",
+        "error",
+      );
+    } finally {
+      setSavingAiCredential(false);
+    }
   }
 
   async function uploadAudioFile(file: File, targetKey: string) {
@@ -1086,7 +1160,7 @@ export function AutomationAgentsManager({
                     <div className="stage-followup-top">
                       <div>
                         <span className="eyebrow">Activar IA</span>
-                        <h3>Prompt y clave local por navegador</h3>
+                        <h3>Prompt y credenciales cifradas</h3>
                       </div>
                       <button
                         type="button"
@@ -1107,21 +1181,63 @@ export function AutomationAgentsManager({
                     {flowDraft.aiEnabled ? (
                       <div className="stage-followup-grid">
                         <div className="field">
-                          <span className="field-label">API key local</span>
+                          <span className="field-label">Proveedor</span>
+                          <select
+                            className="text-input"
+                            value={aiCredentialDraft.provider}
+                            onChange={(event) =>
+                              setAiCredentialDraft((current) => ({
+                                ...current,
+                                provider: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="openai">OpenAI</option>
+                            <option value="groq">Groq</option>
+                          </select>
+                        </div>
+
+                        <div className="field">
+                          <span className="field-label">Modelo</span>
+                          <input
+                            className="text-input"
+                            value={aiCredentialDraft.model}
+                            onChange={(event) =>
+                              setAiCredentialDraft((current) => ({
+                                ...current,
+                                model: event.target.value,
+                              }))
+                            }
+                            placeholder="Modelo del proveedor"
+                          />
+                        </div>
+
+                        <div className="field">
+                          <span className="field-label">API key</span>
                           <input
                             className="text-input"
                             type="password"
-                            value={localAiConfig[selectedAgent.id]?.apiKey ?? ""}
+                            value={aiCredentialDraft.apiKey}
                             onChange={(event) =>
-                              persistLocalAi(selectedAgent.id, {
+                              setAiCredentialDraft((current) => ({
+                                ...current,
                                 apiKey: event.target.value,
-                              })
+                              }))
                             }
-                            placeholder="Se guarda en este navegador"
+                            placeholder="Pega la API key para guardarla cifrada"
                           />
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            onClick={saveAiCredential}
+                            disabled={savingAiCredential}
+                          >
+                            {savingAiCredential ? "Guardando..." : "Guardar API key"}
+                          </button>
                           <p className="muted">
-                            Esta clave queda guardada en el browser del usuario actual, no en
-                            la base de datos del proyecto.
+                            {aiCredential.hasApiKey && aiCredential.apiKeyLast4
+                              ? `API key configurada: ****${aiCredential.apiKeyLast4}`
+                              : "La API key se guarda cifrada en el servidor."}
                           </p>
                         </div>
 
@@ -1142,8 +1258,8 @@ export function AutomationAgentsManager({
                       </div>
                     ) : (
                       <p className="muted">
-                        Activa IA si quieres dejar listo un prompt propio y una API key local
-                        para este navegador.
+                        Activa IA si quieres usar un prompt propio y una API key cifrada
+                        del usuario.
                       </p>
                     )}
                   </article>
