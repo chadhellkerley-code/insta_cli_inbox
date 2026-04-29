@@ -17,10 +17,7 @@ import {
   INSTAGRAM_MESSAGING_STATUS_READY,
   INSTAGRAM_WEBHOOK_STATUS_READY,
 } from "@/lib/meta/account-status";
-import {
-  processDueAutomationJobs,
-  scheduleAutomationForInboundMessage,
-} from "@/lib/automation/runtime";
+import { runAutomationForInboundMessage } from "@/lib/automation/runtime";
 import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -1009,20 +1006,15 @@ async function persistMessagingEvent(
 
   if (isInbound) {
     try {
-      const scheduleResult = await scheduleAutomationForInboundMessage(admin, {
+      await runAutomationForInboundMessage(admin, {
         ownerId: account.owner_id,
         accountId: account.id,
         conversationId,
         createdAt,
         isInbound,
       });
-
-      await processDueAutomationJobs(admin, {
-        limit: scheduleResult.scheduled > 0 ? 25 : 10,
-        ownerId: account.owner_id,
-      });
     } catch (error) {
-      console.warn("[instagram-webhook] automation schedule skipped", {
+      console.warn("[instagram-webhook] automation execution skipped", {
         accountId: account.id,
         conversationId,
         error: error instanceof Error ? error.message : String(error),
