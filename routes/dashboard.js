@@ -14,8 +14,8 @@ function ensureAuth(req, res, next) {
 router.get('/', ensureAuth, async (req, res) => {
   const db = req.db;
   try {
-    const metrics = await computeSummary(db);
-    const accounts = await getAccounts(db);
+    const metrics = await computeSummary(db, req.session.user.id);
+    const accounts = await getAccounts(db, req.session.user.id);
     res.render('dashboard', {
       user: req.session.user,
       metrics,

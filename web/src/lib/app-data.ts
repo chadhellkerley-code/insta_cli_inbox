@@ -5,12 +5,12 @@ import { syncInstagramUsernamesFromStoredRuntimeMetadata } from "@/lib/meta/inst
 import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { hasHydratedInstagramContact } from "@/lib/shared-data";
 export type {
   ConversationRecord,
   DashboardMetrics,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
 export {
@@ -25,12 +25,12 @@ export {
   getDisplayName,
   getInstagramAccountDisplayName,
   getMessagePreview,
+  hasHydratedInstagramContact,
 } from "@/lib/shared-data";
 import type {
   ConversationRecord,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
   UserProfile,
 } from "@/lib/shared-data";
 
@@ -86,6 +86,7 @@ type InstagramContactRecord = {
   contact_igsid: string;
   contact_username: string | null;
   contact_name: string | null;
+  profile_picture_url: string | null;
 };
 
 type InstagramAccountProfileSyncRecord = {
@@ -315,7 +316,7 @@ export async function loadUserProfile(
 ): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, role, expires_at")
+    .select("id, email, full_name, avatar_url, role, expires_at, last_login_at")
     .eq("id", userId)
     .maybeSingle();
 
@@ -390,6 +391,7 @@ export async function loadOwnedAccounts(
         const result = await syncInstagramAccountProfile({
           admin,
           account,
+          ownerId: userId,
         });
 
         return result.updated;
@@ -470,12 +472,12 @@ export async function loadConversations(
   );
 
   if (contactIds.length === 0) {
-    return conversations;
+    return conversations.filter(hasHydratedInstagramContact);
   }
 
   const { data: contactsData, error: contactsError } = await supabase
     .from("instagram_contacts")
-    .select("contact_igsid, contact_username, contact_name")
+    .select("contact_igsid, contact_username, contact_name, profile_picture_url")
     .eq("owner_id", userId)
     .in("contact_igsid", contactIds);
 
@@ -491,7 +493,7 @@ export async function loadConversations(
       });
     }
 
-    return conversations;
+    return conversations.filter(hasHydratedInstagramContact);
   }
 
   const contacts = castRows<InstagramContactRecord>(contactsData);
@@ -508,18 +510,22 @@ export async function loadConversations(
       ...conversation,
       contact_username: contact.contact_username ?? conversation.contact_username,
       contact_name: contact.contact_name ?? conversation.contact_name,
+      contact_profile_picture_url:
+        contact.profile_picture_url ?? conversation.contact_profile_picture_url ?? null,
     };
-  });
+  }).filter(hasHydratedInstagramContact);
 }
 
 export async function loadConversationMessages(
   supabase: SupabaseClient,
+  userId: string,
   conversationId: string,
   limit = 300,
 ): Promise<MessageRecord[]> {
   const { data, error } = await supabase
     .from("instagram_messages")
     .select("*")
+    .eq("owner_id", userId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(limit);
@@ -548,44 +554,4 @@ export async function loadRecentMessagesForOwner(
   }
 
   return castRows<MessageRecord>(data);
-}
-
-export async function loadReminders(
-  supabase: SupabaseClient,
-  userId: string,
-  limit = 200,
-): Promise<ReminderRecord[]> {
-  const { data, error } = await supabase
-    .from("instagram_reminders")
-    .select("*")
-    .eq("owner_id", userId)
-    .order("remind_at", { ascending: true })
-    .limit(limit);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return castRows<ReminderRecord>(data);
-}
-
-export async function loadDueReminders(
-  supabase: SupabaseClient,
-  userId: string,
-  limit = 6,
-): Promise<ReminderRecord[]> {
-  const { data, error } = await supabase
-    .from("instagram_reminders")
-    .select("*")
-    .eq("owner_id", userId)
-    .eq("status", "pending")
-    .lte("remind_at", new Date().toISOString())
-    .order("remind_at", { ascending: true })
-    .limit(limit);
-
-  if (error || !data) {
-    return [];
-  }
-
-  return castRows<ReminderRecord>(data);
 }

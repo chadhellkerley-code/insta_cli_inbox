@@ -4,9 +4,11 @@ import type {
   AutomationAgent,
   AutomationAgentInput,
   AutomationAgentRecord,
+  AutomationStageFollowupRecord,
   AutomationStageMessageRecord,
   AutomationStageRecord,
 } from "@/lib/automation/types";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 
 type QueryClient = Pick<SupabaseClient, "from">;
 
@@ -58,10 +60,48 @@ function ensureAudioMessageUrl(value: unknown) {
   const normalized = normalizeString(value);
 
   if (!normalized) {
-    throw new Error("Cada audio necesita un archivo subido.");
+    throw new Error("Cada audio necesita un archivo o una URL publica.");
   }
 
   return normalized;
+}
+
+async function validateAutomationAudioMessages(input: AutomationAgentInput) {
+  const validationCache = new Map<string, Promise<unknown>>();
+  const validations: Promise<unknown>[] = [];
+
+  for (let stageIndex = 0; stageIndex < input.stages.length; stageIndex += 1) {
+    const stage = input.stages[stageIndex];
+
+    for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex += 1) {
+      const message = stage.messages[messageIndex];
+
+      if (message.messageType !== "audio") {
+        continue;
+      }
+
+      const mediaUrl = ensureAudioMessageUrl(message.mediaUrl);
+      let validation = validationCache.get(mediaUrl);
+
+      if (!validation) {
+        validation = assertInstagramAudioUrlAccessible(mediaUrl);
+        validationCache.set(mediaUrl, validation);
+      }
+
+      validations.push(
+        validation.catch((error) => {
+          const stageName = ensureStageName(stage.name, stageIndex);
+          const messageLabel = `mensaje ${messageIndex + 1}`;
+          const reason =
+            error instanceof Error ? error.message : "No pudimos validar el audio.";
+
+          throw new Error(`${stageName}: ${messageLabel}. ${reason}`);
+        }),
+      );
+    }
+  }
+
+  await Promise.all(validations);
 }
 
 export function sanitizeAutomationAgentInput(input: AutomationAgentInput): AutomationAgentInput {
@@ -103,24 +143,34 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         throw new Error(`La ${ensureStageName(stage.name, stageIndex)} necesita al menos un mensaje.`);
       }
 
-      const followupEnabled = Boolean(stage.followupEnabled);
-      const followupMessage = normalizeString(stage.followupMessage);
-      const followupDelayMinutes = clampInteger(stage.followupDelayMinutes, {
-        min: 0,
-        max: 60 * 24 * 30,
-        fallback: 120,
-      });
+      const rawFollowups = Array.isArray(stage.followups) ? stage.followups : [];
+      const followups = rawFollowups.map((followup) => {
+        const isActive = Boolean(followup.isActive);
+        const message = normalizeString(followup.message);
+        const delayHours = clampInteger(followup.delayHours, {
+          min: 0,
+          max: 24 * 30,
+          fallback: 2,
+        });
 
-      if (followupEnabled && !followupMessage) {
-        throw new Error(`La ${ensureStageName(stage.name, stageIndex)} tiene followup activo pero sin mensaje.`);
-      }
+        if (isActive && !message) {
+          throw new Error(
+            `La ${ensureStageName(stage.name, stageIndex)} tiene followups activos sin mensaje.`,
+          );
+        }
+
+        return {
+          id: normalizeString(followup.id) || undefined,
+          isActive,
+          delayHours,
+          message,
+        };
+      });
 
       return {
         id: normalizeString(stage.id) || undefined,
         name: ensureStageName(stage.name, stageIndex),
-        followupEnabled,
-        followupDelayMinutes,
-        followupMessage,
+        followups,
         messages: messages.map((message) => {
           const messageType = message.messageType === "audio" ? "audio" : "text";
 
@@ -128,7 +178,9 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
             id: normalizeString(message.id) || undefined,
             messageType,
             textContent:
-              messageType === "text" ? ensureTextMessageContent(message.textContent) : "",
+              messageType === "text"
+                ? ensureTextMessageContent(message.textContent)
+                : normalizeString(message.textContent),
             mediaUrl:
               messageType === "audio" ? ensureAudioMessageUrl(message.mediaUrl) : "",
             delaySeconds: clampInteger(message.delaySeconds, {
@@ -150,6 +202,7 @@ function castRows<T>(value: unknown) {
 function mapAutomationAgents(
   agents: AutomationAgentRecord[],
   stages: AutomationStageRecord[],
+  followups: AutomationStageFollowupRecord[],
   messages: AutomationStageMessageRecord[],
 ) {
   const messagesByStage = new Map<string, AutomationStageMessageRecord[]>();
@@ -161,11 +214,18 @@ function mapAutomationAgents(
   }
 
   const stagesByAgent = new Map<string, AutomationStageRecord[]>();
+  const followupsByStage = new Map<string, AutomationStageFollowupRecord[]>();
 
   for (const stage of stages) {
     const current = stagesByAgent.get(stage.agent_id) ?? [];
     current.push(stage);
     stagesByAgent.set(stage.agent_id, current);
+  }
+
+  for (const followup of followups) {
+    const current = followupsByStage.get(followup.stage_id) ?? [];
+    current.push(followup);
+    followupsByStage.set(followup.stage_id, current);
   }
 
   return agents.map((agent) => ({
@@ -186,9 +246,15 @@ function mapAutomationAgents(
         id: stage.id,
         name: stage.name,
         order: stage.stage_order,
-        followupEnabled: stage.followup_enabled,
-        followupDelayMinutes: stage.followup_delay_minutes,
-        followupMessage: stage.followup_message ?? "",
+        followups: (followupsByStage.get(stage.id) ?? [])
+          .sort((left, right) => left.followup_order - right.followup_order)
+          .map((followup) => ({
+            id: followup.id,
+            order: followup.followup_order,
+            isActive: followup.is_active,
+            delayHours: followup.delay_hours,
+            message: followup.message ?? "",
+          })),
         messages: (messagesByStage.get(stage.id) ?? [])
           .sort((left, right) => left.message_order - right.message_order)
           .map((message) => ({
@@ -199,7 +265,7 @@ function mapAutomationAgents(
             mediaUrl: message.media_url ?? "",
             delaySeconds: message.delay_seconds,
           })),
-      })),
+      }))
   })) satisfies AutomationAgent[];
 }
 
@@ -228,10 +294,16 @@ export async function loadAutomationAgents(
   const stages = castRows<AutomationStageRecord>(stagesResult.data);
 
   if (stagesResult.error || stages.length === 0) {
-    return mapAutomationAgents(agents, [], []);
+    return mapAutomationAgents(agents, [], [], []);
   }
 
   const stageIds = stages.map((stage) => stage.id);
+  const followupsResult = await client
+    .from("automation_stage_followups")
+    .select("*")
+    .in("stage_id", stageIds)
+    .order("followup_order", { ascending: true });
+  const followups = castRows<AutomationStageFollowupRecord>(followupsResult.data);
   const messagesResult = await client
     .from("automation_stage_messages")
     .select("*")
@@ -240,10 +312,15 @@ export async function loadAutomationAgents(
   const messages = castRows<AutomationStageMessageRecord>(messagesResult.data);
 
   if (messagesResult.error) {
-    return mapAutomationAgents(agents, stages, []);
+    return mapAutomationAgents(agents, stages, followupsResult.error ? [] : followups, []);
   }
 
-  return mapAutomationAgents(agents, stages, messages);
+  return mapAutomationAgents(
+    agents,
+    stages,
+    followupsResult.error ? [] : followups,
+    messages,
+  );
 }
 
 async function cancelPendingJobsForAgent(client: QueryClient, agentId: string) {
@@ -279,6 +356,7 @@ export async function saveAutomationAgent(
   input: AutomationAgentInput,
 ) {
   const payload = sanitizeAutomationAgentInput(input);
+  await validateAutomationAudioMessages(payload);
   const nowIso = new Date().toISOString();
   const isUpdate = Boolean(payload.id);
   let agentId = payload.id;
@@ -395,9 +473,6 @@ export async function saveAutomationAgent(
         agent_id: agentId,
         stage_order: stageIndex + 1,
         name: stage.name,
-        followup_enabled: stage.followupEnabled,
-        followup_delay_minutes: stage.followupDelayMinutes,
-        followup_message: normalizeOptionalString(stage.followupMessage),
       } as never)
       .select("id")
       .maybeSingle();
@@ -407,6 +482,22 @@ export async function saveAutomationAgent(
     }
 
     const stageId = (stageInsert.data as { id: string }).id;
+
+    for (let followupIndex = 0; followupIndex < stage.followups.length; followupIndex += 1) {
+      const followup = stage.followups[followupIndex];
+      const followupInsert = await client.from("automation_stage_followups").insert({
+        owner_id: ownerId,
+        stage_id: stageId,
+        followup_order: followupIndex + 1,
+        is_active: followup.isActive,
+        delay_hours: followup.delayHours,
+        message: normalizeOptionalString(followup.message),
+      } as never);
+
+      if (followupInsert.error) {
+        throw new Error(followupInsert.error.message);
+      }
+    }
 
     for (let messageIndex = 0; messageIndex < stage.messages.length; messageIndex += 1) {
       const message = stage.messages[messageIndex];

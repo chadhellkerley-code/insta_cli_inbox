@@ -19,9 +19,18 @@ export type AutomationStageRecord = {
   agent_id: string;
   stage_order: number;
   name: string;
-  followup_enabled: boolean;
-  followup_delay_minutes: number;
-  followup_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type AutomationStageFollowupRecord = {
+  id: string;
+  owner_id: string;
+  stage_id: string;
+  followup_order: number;
+  is_active: boolean;
+  delay_hours: number;
+  message: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -50,9 +59,12 @@ export type AutomationStageMessageInput = {
 export type AutomationStageInput = {
   id?: string;
   name: string;
-  followupEnabled: boolean;
-  followupDelayMinutes: number;
-  followupMessage: string;
+  followups: Array<{
+    id?: string;
+    isActive: boolean;
+    delayHours: number;
+    message: string;
+  }>;
   messages: AutomationStageMessageInput[];
 };
 
@@ -85,9 +97,13 @@ export type AutomationAgent = {
     id: string;
     name: string;
     order: number;
-    followupEnabled: boolean;
-    followupDelayMinutes: number;
-    followupMessage: string;
+    followups: Array<{
+      id: string;
+      order: number;
+      isActive: boolean;
+      delayHours: number;
+      message: string;
+    }>;
     messages: Array<{
       id: string;
       order: number;
@@ -97,10 +113,6 @@ export type AutomationAgent = {
       delaySeconds: number;
     }>;
   }>;
-};
-
-export type LocalAgentAiConfig = {
-  apiKey: string;
 };
 
 export const DEFAULT_AGENT_NAME = "Agente nuevo";
@@ -118,9 +130,7 @@ export function createEmptyAgentDraft(): AutomationAgentInput {
     stages: [
       {
         name: "Etapa 1",
-        followupEnabled: false,
-        followupDelayMinutes: 120,
-        followupMessage: "",
+        followups: [],
         messages: [
           {
             messageType: "text",

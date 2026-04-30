@@ -12,7 +12,7 @@ function ensureAuth(req, res, next) {
 router.get('/', ensureAuth, async (req, res) => {
   const db = req.db;
   try {
-    const metrics = await computeSummary(db);
+    const metrics = await computeSummary(db, req.session.user.id);
     res.render('metrics', { user: req.session.user, metrics, error: null });
   } catch (err) {
     console.error('Metrics error:', err.message);

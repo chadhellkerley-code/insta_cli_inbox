@@ -6,16 +6,17 @@ import {
   INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
   INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT,
 } from "@/lib/meta/audio";
+import { startInstagramAudioRecording } from "@/lib/meta/audio-recorder";
 import type {
   AutomationAgent,
   AutomationAgentInput,
-  LocalAgentAiConfig,
 } from "@/lib/automation/types";
 import {
   createEmptyAgentDraft,
   DEFAULT_AGENT_NAME,
   getAgentStatusLabel,
 } from "@/lib/automation/types";
+import { AUTOMATION_PAGE_HEADER } from "@/lib/automation/ui";
 
 type AutomationAgentsManagerProps = {
   initialAgents: AutomationAgent[];
@@ -23,7 +24,15 @@ type AutomationAgentsManagerProps = {
 
 type ModalMode = "create" | "edit";
 
-const AI_STORAGE_KEY = "insta-cli-automation-ai";
+type AiCredentialState = {
+  hasApiKey: boolean;
+  apiKeyLast4: string | null;
+};
+
+const DEFAULT_AI_CREDENTIAL: AiCredentialState = {
+  hasApiKey: false,
+  apiKeyLast4: null,
+};
 
 function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
   return {
@@ -39,9 +48,12 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
     stages: agent.stages.map((stage) => ({
       id: stage.id,
       name: stage.name,
-      followupEnabled: stage.followupEnabled,
-      followupDelayMinutes: stage.followupDelayMinutes,
-      followupMessage: stage.followupMessage,
+      followups: stage.followups.map((followup) => ({
+        id: followup.id,
+        isActive: followup.isActive,
+        delayHours: followup.delayHours,
+        message: followup.message,
+      })),
       messages: stage.messages.map((message) => ({
         id: message.id,
         messageType: message.messageType,
@@ -55,34 +67,9 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
 
 function getAgentCardSummary(agent: AutomationAgent) {
   const totalMessages = agent.stages.reduce((sum, stage) => sum + stage.messages.length, 0);
+  const totalFollowups = agent.stages.reduce((sum, stage) => sum + stage.followups.length, 0);
 
-  return `${agent.stages.length} etapas · ${totalMessages} mensajes`;
-}
-
-function readLocalAiConfig() {
-  if (typeof window === "undefined") {
-    return {} as Record<string, LocalAgentAiConfig>;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(AI_STORAGE_KEY);
-
-    if (!raw) {
-      return {} as Record<string, LocalAgentAiConfig>;
-    }
-
-    return JSON.parse(raw) as Record<string, LocalAgentAiConfig>;
-  } catch {
-    return {} as Record<string, LocalAgentAiConfig>;
-  }
-}
-
-function writeLocalAiConfig(value: Record<string, LocalAgentAiConfig>) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(value));
+  return `${agent.stages.length} etapas · ${totalMessages} mensajes · ${totalFollowups} followups`;
 }
 
 export function AutomationAgentsManager({
@@ -98,25 +85,64 @@ export function AutomationAgentsManager({
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>("create");
   const [modalDraft, setModalDraft] = useState<AutomationAgentInput>(createEmptyAgentDraft());
-  const [localAiConfig, setLocalAiConfig] = useState<Record<string, LocalAgentAiConfig>>({});
+  const [aiCredential, setAiCredential] =
+    useState<AiCredentialState>(DEFAULT_AI_CREDENTIAL);
+  const [aiCredentialDraft, setAiCredentialDraft] = useState({
+    apiKey: "",
+  });
   const [feedback, setFeedback] = useState<string | null>(null);
   const [feedbackTone, setFeedbackTone] = useState<"success" | "error">("success");
   const [savingBasic, setSavingBasic] = useState(false);
   const [savingFlow, setSavingFlow] = useState(false);
+  const [savingAiCredential, setSavingAiCredential] = useState(false);
   const [processingJobs, setProcessingJobs] = useState(false);
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null);
   const [recordingTargetKey, setRecordingTargetKey] = useState<string | null>(null);
   const [uploadingTargetKey, setUploadingTargetKey] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const mediaChunksRef = useRef<Blob[]>([]);
+  const recordingSessionRef = useRef<Awaited<
+    ReturnType<typeof startInstagramAudioRecording>
+  > | null>(null);
 
   const selectedAgent =
     agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const activeAgentsCount = agents.filter((agent) => agent.isActive).length;
 
+  async function loadAiCredentialStatus() {
+    const response = await fetch("/api/automation/ai-credentials", {
+      method: "GET",
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | {
+          hasApiKey?: boolean;
+          apiKeyLast4?: string | null;
+          error?: string;
+        }
+      | null;
+
+    if (!response.ok || !payload) {
+      throw new Error(payload?.error || "No pudimos cargar la credencial de IA.");
+    }
+
+    const nextCredential = {
+      hasApiKey: Boolean(payload.hasApiKey),
+      apiKeyLast4: payload.apiKeyLast4 ?? null,
+    };
+
+    setAiCredential(nextCredential);
+    setAiCredentialDraft((current) => ({
+      ...current,
+      apiKey: "",
+    }));
+  }
+
   useEffect(() => {
-    setLocalAiConfig(readLocalAiConfig());
+    void loadAiCredentialStatus().catch((error) => {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos cargar la credencial de IA.",
+        "error",
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -131,11 +157,7 @@ export function AutomationAgentsManager({
 
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      void recordingSessionRef.current?.cancel();
     };
   }, []);
 
@@ -314,10 +336,6 @@ export function AutomationAgentsManager({
         throw new Error(payload?.error || "No pudimos eliminar el agente.");
       }
 
-      const nextAiConfig = { ...localAiConfig };
-      delete nextAiConfig[agent.id];
-      setLocalAiConfig(nextAiConfig);
-      writeLocalAiConfig(nextAiConfig);
       await refreshAgents(null);
       showFeedback("Agente eliminado.", "success");
     } catch (error) {
@@ -409,9 +427,7 @@ export function AutomationAgentsManager({
         ...current.stages,
         {
           name: `Etapa ${current.stages.length + 1}`,
-          followupEnabled: false,
-          followupDelayMinutes: 120,
-          followupMessage: "",
+          followups: [],
           messages: [
             {
               messageType: "text",
@@ -454,13 +470,89 @@ export function AutomationAgentsManager({
     }));
   }
 
-  function persistLocalAi(agentId: string, nextValue: LocalAgentAiConfig) {
-    const nextConfig = {
-      ...localAiConfig,
-      [agentId]: nextValue,
-    };
-    setLocalAiConfig(nextConfig);
-    writeLocalAiConfig(nextConfig);
+  function addFollowup(stageIndex: number) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: [
+        ...stage.followups,
+        {
+          isActive: true,
+          delayHours: 2,
+          message: "",
+        },
+      ],
+    }));
+  }
+
+  function updateFollowup(
+    stageIndex: number,
+    followupIndex: number,
+    updater: (
+      followup: AutomationAgentInput["stages"][number]["followups"][number],
+    ) => AutomationAgentInput["stages"][number]["followups"][number],
+  ) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: stage.followups.map((followup, index) =>
+        index === followupIndex ? updater(followup) : followup,
+      ),
+    }));
+  }
+
+  function removeFollowup(stageIndex: number, followupIndex: number) {
+    updateStage(stageIndex, (stage) => ({
+      ...stage,
+      followups: stage.followups.filter((_, index) => index !== followupIndex),
+    }));
+  }
+
+  async function saveAiCredential() {
+    setSavingAiCredential(true);
+
+    try {
+      const response = await fetch("/api/automation/ai-credentials", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(aiCredentialDraft),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            hasApiKey?: boolean;
+            apiKeyLast4?: string | null;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload?.hasApiKey) {
+        throw new Error(payload?.error || "No pudimos guardar la credencial de IA.");
+      }
+
+      const nextCredential = {
+        hasApiKey: true,
+        apiKeyLast4: payload.apiKeyLast4 ?? null,
+      };
+
+      setAiCredential(nextCredential);
+      setAiCredentialDraft((current) => ({
+        ...current,
+        apiKey: "",
+      }));
+      showFeedback(
+        nextCredential.apiKeyLast4
+          ? `API key configurada: ****${nextCredential.apiKeyLast4}`
+          : "API key configurada.",
+        "success",
+      );
+    } catch (error) {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos guardar la credencial de IA.",
+        "error",
+      );
+    } finally {
+      setSavingAiCredential(false);
+    }
   }
 
   async function uploadAudioFile(file: File, targetKey: string) {
@@ -492,50 +584,13 @@ export function AutomationAgentsManager({
     const targetKey = `${stageIndex}-${messageIndex}`;
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      mediaChunksRef.current = [];
+      if (recordingSessionRef.current) {
+        throw new Error("Ya hay una grabacion en curso.");
+      }
 
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
+      const recordingSession = await startInstagramAudioRecording();
+      recordingSessionRef.current = recordingSession;
       setRecordingTargetKey(targetKey);
-
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) {
-          mediaChunksRef.current.push(event.data);
-        }
-      });
-
-      recorder.addEventListener("stop", async () => {
-        const blob = new Blob(mediaChunksRef.current, {
-          type: recorder.mimeType || "audio/webm",
-        });
-        const file = new File([blob], `automation-${Date.now()}.webm`, {
-          type: blob.type || "audio/webm",
-        });
-
-        mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-        setRecordingTargetKey(null);
-
-        try {
-          const url = await uploadAudioFile(file, targetKey);
-          updateMessage(stageIndex, messageIndex, (message) => ({
-            ...message,
-            messageType: "audio",
-            mediaUrl: url,
-            textContent: "",
-          }));
-          showFeedback("Audio grabado y subido.", "success");
-        } catch (error) {
-          showFeedback(
-            error instanceof Error ? error.message : "No pudimos grabar el audio.",
-            "error",
-          );
-        }
-      });
-
-      recorder.start();
     } catch (error) {
       showFeedback(
         error instanceof Error ? error.message : "No pudimos acceder al microfono.",
@@ -544,22 +599,44 @@ export function AutomationAgentsManager({
     }
   }
 
-  function stopRecording() {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+  async function stopRecording(stageIndex: number, messageIndex: number) {
+    const targetKey = `${stageIndex}-${messageIndex}`;
+    const recordingSession = recordingSessionRef.current;
+
+    if (!recordingSession) {
+      return;
+    }
+
+    recordingSessionRef.current = null;
+    setRecordingTargetKey(null);
+
+    try {
+      const file = await recordingSession.stop();
+      const url = await uploadAudioFile(file, targetKey);
+      updateMessage(stageIndex, messageIndex, (message) => ({
+        ...message,
+        messageType: "audio",
+        mediaUrl: url,
+        textContent: "",
+      }));
+      showFeedback("Audio grabado y subido.", "success");
+    } catch (error) {
+      showFeedback(
+        error instanceof Error ? error.message : "No pudimos grabar el audio.",
+        "error",
+      );
     }
   }
 
   return (
     <div className="automation-page automation-blueprint page-stack">
       <section className="page-header automation-page-header">
-        <div>
-          <span className="eyebrow">Automatizaciones</span>
-          <h1>Automatizaciones en respuestas y followup</h1>
-          <p className="page-copy">
-            genera respuestas en automatico y followups para generar conversaciones
-            reales con tus clientes.
-          </p>
+        <div className="automation-page-header-copy">
+          <span className="eyebrow">{AUTOMATION_PAGE_HEADER.eyebrow}</span>
+          <h1>{AUTOMATION_PAGE_HEADER.title}</h1>
+          {AUTOMATION_PAGE_HEADER.description ? (
+            <p className="page-copy">{AUTOMATION_PAGE_HEADER.description}</p>
+          ) : null}
         </div>
 
         <div className="automation-toolbar">
@@ -701,8 +778,9 @@ export function AutomationAgentsManager({
                       <span className="eyebrow">Flujo</span>
                       <h2>{selectedAgent.name}</h2>
                       <p>
-                        Cada respuesta inbound entra a la siguiente etapa pendiente del
-                        agente activo y queda marcada para no repetir la misma etapa.
+                        Cada inbound entra a la siguiente etapa pendiente. El primer
+                        mensaje de esa etapa sale inmediato y los delays se aplican
+                        solo entre mensajes y followups.
                       </p>
                     </div>
 
@@ -822,7 +900,7 @@ export function AutomationAgentsManager({
                                         className="button button-secondary"
                                         onClick={() =>
                                           isRecording
-                                            ? stopRecording()
+                                            ? stopRecording(stageIndex, messageIndex)
                                             : startRecording(stageIndex, messageIndex)
                                         }
                                       >
@@ -880,11 +958,31 @@ export function AutomationAgentsManager({
                                       }
                                       placeholder="URL del audio subido"
                                     />
+                                    <textarea
+                                      className="text-area"
+                                      value={message.textContent}
+                                      onChange={(event) =>
+                                        updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                          ...currentMessage,
+                                          textContent: event.target.value,
+                                        }))
+                                      }
+                                      placeholder="Mensaje opcional para enviar antes del audio"
+                                    />
+                                    {message.mediaUrl ? (
+                                      <audio
+                                        controls
+                                        src={message.mediaUrl}
+                                        className="message-audio"
+                                      />
+                                    ) : null}
                                     <p className="muted">
                                       {isUploading
                                         ? "Subiendo audio..."
                                         : message.mediaUrl
-                                          ? "Audio listo para enviarse en esta etapa."
+                                          ? message.textContent.trim()
+                                            ? "La etapa enviara primero el texto y despues el audio."
+                                            : "Audio listo para enviarse en esta etapa."
                                           : `Puedes grabar o subir un audio para esta etapa. ${INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT}.`}
                                     </p>
                                   </div>
@@ -892,7 +990,7 @@ export function AutomationAgentsManager({
 
                                 <div className="field">
                                   <span className="field-label">
-                                    Delay despues de este mensaje (segundos)
+                                    Delay antes del siguiente mensaje (segundos)
                                   </span>
                                   <input
                                     className="text-input"
@@ -906,6 +1004,10 @@ export function AutomationAgentsManager({
                                       }))
                                     }
                                   />
+                                  <p className="muted">
+                                    El primer mensaje de la etapa sale inmediato. Este
+                                    delay espera antes del proximo mensaje del mismo flujo.
+                                  </p>
                                 </div>
                               </article>
                             );
@@ -924,57 +1026,107 @@ export function AutomationAgentsManager({
 
                         <div className="stage-followup">
                           <div className="stage-followup-top">
-                            <strong>Followup</strong>
+                            <strong>Followups de etapa</strong>
                             <button
                               type="button"
-                              className={
-                                stage.followupEnabled ? "agent-toggle active" : "agent-toggle inactive"
-                              }
-                              onClick={() =>
-                                updateStage(stageIndex, (currentStage) => ({
-                                  ...currentStage,
-                                  followupEnabled: !currentStage.followupEnabled,
-                                }))
-                              }
+                              className="button button-secondary"
+                              onClick={() => addFollowup(stageIndex)}
                             >
-                              {stage.followupEnabled ? "Activo" : "Inactivo"}
+                              Agregar followup
                             </button>
                           </div>
 
-                          <div className="stage-followup-grid">
-                            <div className="field">
-                              <span className="field-label">
-                                Enviar followup si pasan estos minutos sin respuesta
-                              </span>
-                              <input
-                                className="text-input"
-                                type="number"
-                                min={0}
-                                value={stage.followupDelayMinutes}
-                                onChange={(event) =>
-                                  updateStage(stageIndex, (currentStage) => ({
-                                    ...currentStage,
-                                    followupDelayMinutes: Number(event.target.value || 0),
-                                  }))
-                                }
-                              />
-                            </div>
+                          {stage.followups.length === 0 ? (
+                            <p className="muted">
+                              Esta etapa no tiene followups. Agrega uno o mas para
+                              insistir sin duplicar mensajes.
+                            </p>
+                          ) : (
+                            <div className="stage-message-stack">
+                              {stage.followups.map((followup, followupIndex) => (
+                                <article
+                                  key={`${selectedAgent.id}-stage-${stageIndex}-followup-${followupIndex}`}
+                                  className="stage-message-card"
+                                >
+                                  <div className="stage-message-head">
+                                    <strong>Followup {followupIndex + 1}</strong>
+                                    <button
+                                      type="button"
+                                      className="button button-secondary"
+                                      onClick={() => removeFollowup(stageIndex, followupIndex)}
+                                    >
+                                      Quitar
+                                    </button>
+                                  </div>
 
-                            <div className="field">
-                              <span className="field-label">Mensaje de followup</span>
-                              <textarea
-                                className="text-area"
-                                value={stage.followupMessage}
-                                onChange={(event) =>
-                                  updateStage(stageIndex, (currentStage) => ({
-                                    ...currentStage,
-                                    followupMessage: event.target.value,
-                                  }))
-                                }
-                                placeholder="Mensaje de followup para esta etapa"
-                              />
+                                  <div className="stage-followup-top">
+                                    <span className="muted">Estado</span>
+                                    <button
+                                      type="button"
+                                      className={
+                                        followup.isActive
+                                          ? "agent-toggle active"
+                                          : "agent-toggle inactive"
+                                      }
+                                      onClick={() =>
+                                        updateFollowup(
+                                          stageIndex,
+                                          followupIndex,
+                                          (currentFollowup) => ({
+                                            ...currentFollowup,
+                                            isActive: !currentFollowup.isActive,
+                                          }),
+                                        )
+                                      }
+                                    >
+                                      {followup.isActive ? "Activo" : "Inactivo"}
+                                    </button>
+                                  </div>
+
+                                  <div className="stage-followup-grid">
+                                    <div className="field">
+                                      <span className="field-label">Horas sin respuesta</span>
+                                      <input
+                                        className="text-input"
+                                        type="number"
+                                        min={0}
+                                        value={followup.delayHours}
+                                        onChange={(event) =>
+                                          updateFollowup(
+                                            stageIndex,
+                                            followupIndex,
+                                            (currentFollowup) => ({
+                                              ...currentFollowup,
+                                              delayHours: Number(event.target.value || 0),
+                                            }),
+                                          )
+                                        }
+                                      />
+                                    </div>
+
+                                    <div className="field">
+                                      <span className="field-label">Mensaje</span>
+                                      <textarea
+                                        className="text-area"
+                                        value={followup.message}
+                                        onChange={(event) =>
+                                          updateFollowup(
+                                            stageIndex,
+                                            followupIndex,
+                                            (currentFollowup) => ({
+                                              ...currentFollowup,
+                                              message: event.target.value,
+                                            }),
+                                          )
+                                        }
+                                        placeholder="Mensaje de followup"
+                                      />
+                                    </div>
+                                  </div>
+                                </article>
+                              ))}
                             </div>
-                          </div>
+                          )}
                         </div>
                       </article>
                     ))}
@@ -990,7 +1142,7 @@ export function AutomationAgentsManager({
                     <div className="stage-followup-top">
                       <div>
                         <span className="eyebrow">Activar IA</span>
-                        <h3>Prompt y clave local por navegador</h3>
+                        <h3>Prompt y credenciales cifradas</h3>
                       </div>
                       <button
                         type="button"
@@ -1011,21 +1163,31 @@ export function AutomationAgentsManager({
                     {flowDraft.aiEnabled ? (
                       <div className="stage-followup-grid">
                         <div className="field">
-                          <span className="field-label">API key local</span>
+                          <span className="field-label">API key de OpenAI</span>
                           <input
                             className="text-input"
                             type="password"
-                            value={localAiConfig[selectedAgent.id]?.apiKey ?? ""}
+                            value={aiCredentialDraft.apiKey}
                             onChange={(event) =>
-                              persistLocalAi(selectedAgent.id, {
+                              setAiCredentialDraft((current) => ({
+                                ...current,
                                 apiKey: event.target.value,
-                              })
+                              }))
                             }
-                            placeholder="Se guarda en este navegador"
+                            placeholder="Pega la API key para guardarla cifrada"
                           />
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            onClick={saveAiCredential}
+                            disabled={savingAiCredential}
+                          >
+                            {savingAiCredential ? "Guardando..." : "Guardar API key"}
+                          </button>
                           <p className="muted">
-                            Esta clave queda guardada en el browser del usuario actual, no en
-                            la base de datos del proyecto.
+                            {aiCredential.hasApiKey && aiCredential.apiKeyLast4
+                              ? `API key configurada: ****${aiCredential.apiKeyLast4}`
+                              : "La API key se guarda cifrada en el servidor."}
                           </p>
                         </div>
 
@@ -1046,8 +1208,8 @@ export function AutomationAgentsManager({
                       </div>
                     ) : (
                       <p className="muted">
-                        Activa IA si quieres dejar listo un prompt propio y una API key local
-                        para este navegador.
+                        Activa IA si quieres usar un prompt propio y una API key cifrada
+                        de OpenAI.
                       </p>
                     )}
                   </article>
@@ -1153,6 +1315,11 @@ export function AutomationAgentsManager({
                 />
               </div>
             </div>
+
+            <p className="muted">
+              El agente usa un retraso aleatorio entre el minimo y el maximo, y los
+              followups de cada etapa se configuran en horas.
+            </p>
 
             <div className="automation-modal-actions">
               <button type="button" className="button button-secondary" onClick={closeModal}>

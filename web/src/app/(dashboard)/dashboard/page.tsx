@@ -2,13 +2,11 @@ import {
   computeDashboardMetrics,
   enrichConversationsWithAccounts,
   formatCompactNumber,
-  formatDateTime,
   formatRelativeTime,
   getConversationDisplayName,
   getConversationPreview,
   getInstagramAccountDisplayName,
   loadConversations,
-  loadDueReminders,
   loadOwnedAccounts,
   loadRecentMessagesForOwner,
   requireUserContext,
@@ -16,20 +14,18 @@ import {
 
 export default async function DashboardPage() {
   const { supabase, user } = await requireUserContext();
-  const [accounts, conversations, messages, dueReminders] = await Promise.all([
+  const [accounts, conversations, messages] = await Promise.all([
     loadOwnedAccounts(supabase, user.id),
     loadConversations(supabase, user.id),
     loadRecentMessagesForOwner(supabase, user.id),
-    loadDueReminders(supabase, user.id),
   ]);
 
   const enrichedConversations = enrichConversationsWithAccounts(conversations, accounts);
-  const metrics = computeDashboardMetrics(
-    messages,
-    enrichedConversations,
-    accounts,
-    dueReminders,
+  const visibleConversationIds = new Set(enrichedConversations.map((conversation) => conversation.id));
+  const visibleMessages = messages.filter((message) =>
+    visibleConversationIds.has(message.conversation_id),
   );
+  const metrics = computeDashboardMetrics(visibleMessages, enrichedConversations, accounts);
 
   return (
     <div className="page-stack">
@@ -38,8 +34,8 @@ export default async function DashboardPage() {
           <span className="eyebrow">Dashboard</span>
           <h1>Operacion del inbox de Instagram</h1>
           <p className="page-copy">
-            Resumen de actividad, conversaciones, cuentas conectadas y recordatorios
-            pendientes sobre la integracion oficial con Meta.
+            Resumen de actividad, conversaciones y cuentas conectadas sobre la
+            integracion oficial con Meta.
           </p>
         </div>
       </section>
@@ -59,11 +55,6 @@ export default async function DashboardPage() {
           <span>Cuentas conectadas</span>
           <strong>{formatCompactNumber(metrics.activeAccounts)}</strong>
           <p>Perfiles Professional conectados por OAuth.</p>
-        </article>
-        <article className="metric-card">
-          <span>Recordatorios vencidos</span>
-          <strong>{formatCompactNumber(metrics.overdueReminders)}</strong>
-          <p>Notificaciones pendientes dentro de la app.</p>
         </article>
       </section>
 
@@ -132,7 +123,7 @@ export default async function DashboardPage() {
         </article>
       </section>
 
-      <section className="split-grid">
+      <section>
         <article className="list-card">
           <span className="eyebrow">Conversaciones</span>
           <h2>Ultima actividad</h2>
@@ -153,29 +144,6 @@ export default async function DashboardPage() {
                     </p>
                   </div>
                   <span className="muted">{formatRelativeTime(conversation.last_message_at)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-
-        <article className="list-card">
-          <span className="eyebrow">Recordatorios</span>
-          <h2>Seguimientos vencidos</h2>
-          {dueReminders.length === 0 ? (
-            <div className="empty-state compact">
-              <strong>Sin alertas vencidas</strong>
-              <p>Los recordatorios creados desde el inbox van a aparecer aca cuando venzan.</p>
-            </div>
-          ) : (
-            <div className="stack-list">
-              {dueReminders.slice(0, 6).map((reminder) => (
-                <div key={reminder.id} className="list-row">
-                  <div>
-                    <strong>{reminder.title}</strong>
-                    <p>{reminder.note || "Sin nota adicional"}</p>
-                  </div>
-                  <span className="muted">{formatDateTime(reminder.remind_at)}</span>
                 </div>
               ))}
             </div>

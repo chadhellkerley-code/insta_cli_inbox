@@ -153,7 +153,7 @@ async function removeTempFile(filePath) {
 }
 
 async function renderAccountsPage(req, res, overrides = {}, statusCode = 200) {
-  const accounts = await getAccounts(req.db);
+  const accounts = await getAccounts(req.db, req.session.user.id);
   const errorMessage = overrides.error !== undefined ? overrides.error : normalizeNullableText(req.query.error);
   const successMessage =
     overrides.success !== undefined ? overrides.success : normalizeNullableText(req.query.success);
@@ -462,7 +462,7 @@ router.get('/csv-template', ensureAuth, async (req, res) => {
 
 router.get('/edit/:id', ensureAuth, async (req, res) => {
   try {
-    const editingAccount = await getAccountById(req.db, req.params.id);
+    const editingAccount = await getAccountById(req.db, req.params.id, req.session.user.id);
 
     if (!editingAccount) {
       return renderAccountsPage(req, res, { error: 'Cuenta no encontrada.' }, 404);
@@ -480,7 +480,7 @@ router.post('/edit/:id', ensureAuth, async (req, res) => {
   const supabase = req.supabase;
 
   try {
-    const currentAccount = await getAccountById(db, req.params.id);
+    const currentAccount = await getAccountById(db, req.params.id, req.session.user.id);
 
     if (!currentAccount) {
       return renderAccountsPage(req, res, { error: 'Cuenta no encontrada.' }, 404);
@@ -496,7 +496,7 @@ router.post('/edit/:id', ensureAuth, async (req, res) => {
       proxy_password: req.body.proxy_password,
     });
 
-    const changes = await updateAccount(db, req.params.id, accountPayload);
+    const changes = await updateAccount(db, req.params.id, req.session.user.id, accountPayload);
     if (!changes) {
       throw new Error('No se pudo actualizar la cuenta.');
     }
@@ -507,7 +507,7 @@ router.post('/edit/:id', ensureAuth, async (req, res) => {
   } catch (err) {
     console.error('Accounts edit POST error:', err.message);
 
-    const editingAccount = await getAccountById(db, req.params.id);
+    const editingAccount = await getAccountById(db, req.params.id, req.session.user.id);
     return renderAccountsPage(
       req,
       res,
@@ -535,13 +535,13 @@ router.delete('/:id', ensureAuth, async (req, res) => {
   const supabase = req.supabase;
 
   try {
-    const account = await getAccountById(db, req.params.id);
+    const account = await getAccountById(db, req.params.id, req.session.user.id);
 
     if (!account) {
       return res.redirect(buildAccountsRedirect({ error: 'Cuenta no encontrada.' }));
     }
 
-    const changes = await deleteAccount(db, req.params.id);
+    const changes = await deleteAccount(db, req.params.id, req.session.user.id);
     if (!changes) {
       return res.status(404).send('Cuenta no encontrada');
     }
@@ -563,7 +563,7 @@ router.get('/login/:id', ensureAuth, async (req, res) => {
   const db = req.db;
 
   try {
-    const account = await getAccountById(db, req.params.id);
+    const account = await getAccountById(db, req.params.id, req.session.user.id);
     if (!account) {
       return res.redirect(buildAccountsRedirect({ error: 'Cuenta no encontrada.' }));
     }

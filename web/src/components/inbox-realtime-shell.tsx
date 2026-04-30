@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
@@ -10,7 +10,6 @@ import type {
   ConversationRecord,
   InstagramAccountRecord,
   MessageRecord,
-  ReminderRecord,
 } from "@/lib/shared-data";
 import {
   formatDateTime,
@@ -20,6 +19,7 @@ import {
   getConversationPreview,
   getInstagramAccountDisplayName,
   getMessagePreview,
+  hasHydratedInstagramContact,
 } from "@/lib/shared-data";
 import { createClient } from "@/lib/supabase/client";
 
@@ -28,13 +28,65 @@ type InboxRealtimeShellProps = {
   initialAccounts: InstagramAccountRecord[];
   initialConversations: ConversationRecord[];
   initialMessages: MessageRecord[];
-  initialReminders: ReminderRecord[];
   initialSelectedConversationId: string | null;
 };
 
 type SendMode = "text" | "audio";
+type TimeFilter = "all" | "plus12" | "between6and12" | "under6" | "new";
+type StatusFilter = "all" | "active" | "handoff";
+type AccountFilter = "all" | string; // "all" or an account UUID
 
 const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
+const HOUR_MS = 60 * 60 * 1000;
+
+const TIME_FILTERS: Array<{
+  id: TimeFilter;
+  label: string;
+  tone?: "success" | "warning" | "danger";
+}> = [
+  { id: "all", label: "All" },
+  { id: "plus12", label: "12h+", tone: "success" },
+  { id: "between6and12", label: "6-12h", tone: "warning" },
+  { id: "under6", label: "<6h", tone: "danger" },
+  { id: "new", label: "New" },
+];
+
+const STATUS_FILTERS: Array<{
+  id: StatusFilter;
+  label: string;
+}> = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "handoff", label: "Handoff" },
+];
+
+type InstagramContactLite = {
+  contact_igsid: string;
+  contact_username: string | null;
+  contact_name: string | null;
+  profile_picture_url: string | null;
+};
+
+function mergeConversationIdentity(
+  previous: ConversationRecord | undefined,
+  incoming: ConversationRecord,
+) {
+  return {
+    ...incoming,
+    contact_username:
+      incoming.contact_username ??
+      previous?.contact_username ??
+      null,
+    contact_name:
+      incoming.contact_name ??
+      previous?.contact_name ??
+      null,
+    contact_profile_picture_url:
+      incoming.contact_profile_picture_url ??
+      previous?.contact_profile_picture_url ??
+      null,
+  } satisfies ConversationRecord;
+}
 
 function sortConversations(conversations: ConversationRecord[]) {
   return [...conversations].sort((left, right) => {
@@ -60,12 +112,6 @@ function sortMessages(messages: MessageRecord[]) {
   });
 }
 
-function sortReminders(reminders: ReminderRecord[]) {
-  return [...reminders].sort((left, right) => {
-    return new Date(left.remind_at).getTime() - new Date(right.remind_at).getTime();
-  });
-}
-
 function upsertById<T extends { id: string }>(items: T[], nextItem: T) {
   const exists = items.some((item) => item.id === nextItem.id);
 
@@ -80,6 +126,69 @@ function removeById<T extends { id: string }>(items: T[], id: string) {
   return items.filter((item) => item.id !== id);
 }
 
+function normalizeSortableDate(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getConversationAgeHours(conversation: ConversationRecord) {
+  const timestamp = normalizeSortableDate(
+    conversation.last_message_at ?? conversation.updated_at ?? conversation.created_at,
+  );
+
+  if (!timestamp) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(0, (Date.now() - timestamp) / HOUR_MS);
+}
+
+function conversationMatchesTimeFilter(
+  conversation: ConversationRecord,
+  timeFilter: TimeFilter,
+) {
+  if (timeFilter === "all") {
+    return true;
+  }
+
+  if (timeFilter === "new") {
+    return getConversationAgeHours(conversation) < 1;
+  }
+
+  const ageHours = getConversationAgeHours(conversation);
+
+  if (timeFilter === "under6") {
+    return ageHours >= 1 && ageHours < 6;
+  }
+
+  if (timeFilter === "between6and12") {
+    return ageHours >= 6 && ageHours < 12;
+  }
+
+  return ageHours >= 12 && ageHours < 24;
+}
+
+function conversationMatchesStatusFilter(
+  conversation: ConversationRecord,
+  statusFilter: StatusFilter,
+) {
+  if (statusFilter === "all") {
+    return true;
+  }
+
+  const ageHours = getConversationAgeHours(conversation);
+
+  if (statusFilter === "active") {
+    return ageHours < 24;
+  }
+
+  return ageHours >= 24;
+}
+
 async function loadConversationRows(client: ReturnType<typeof createClient>, userId: string) {
   const result = await client
     .from("instagram_conversations")
@@ -92,16 +201,55 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
     return null;
   }
 
-  return sortConversations(result.data as ConversationRecord[]);
+  const conversations = result.data as ConversationRecord[];
+  const contactIds = Array.from(
+    new Set(conversations.map((conversation) => conversation.contact_igsid).filter(Boolean)),
+  );
+
+  if (contactIds.length === 0) {
+    return sortConversations(conversations.filter(hasHydratedInstagramContact));
+  }
+
+  const contactsResult = await client
+    .from("instagram_contacts")
+    .select("contact_igsid, contact_username, contact_name, profile_picture_url")
+    .eq("owner_id", userId)
+    .in("contact_igsid", contactIds);
+
+  if (contactsResult.error || !contactsResult.data) {
+    return sortConversations(conversations.filter(hasHydratedInstagramContact));
+  }
+
+  const contacts = contactsResult.data as InstagramContactLite[];
+  const contactMap = new Map(contacts.map((contact) => [contact.contact_igsid, contact]));
+  const mergedConversations = conversations.map((conversation) => {
+    const contact = contactMap.get(conversation.contact_igsid);
+
+    if (!contact) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      contact_username: contact.contact_username ?? conversation.contact_username,
+      contact_name: contact.contact_name ?? conversation.contact_name,
+      contact_profile_picture_url:
+        contact.profile_picture_url ?? conversation.contact_profile_picture_url ?? null,
+    } satisfies ConversationRecord;
+  });
+
+  return sortConversations(mergedConversations.filter(hasHydratedInstagramContact));
 }
 
 async function loadMessageRows(
   client: ReturnType<typeof createClient>,
+  userId: string,
   conversationId: string,
 ) {
   const result = await client
     .from("instagram_messages")
     .select("*")
+    .eq("owner_id", userId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
     .limit(300);
@@ -118,37 +266,35 @@ export function InboxRealtimeShell({
   initialAccounts,
   initialConversations,
   initialMessages,
-  initialReminders,
   initialSelectedConversationId,
 }: InboxRealtimeShellProps) {
   const clientRef = useRef<ReturnType<typeof createClient>>();
   const selectedConversationRef = useRef<string | null>(initialSelectedConversationId);
+  const labelMenuRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState(initialAccounts);
   const [conversations, setConversations] = useState(
     sortConversations(initialConversations),
   );
   const [messages, setMessages] = useState(sortMessages(initialMessages));
-  const [reminders, setReminders] = useState(sortReminders(initialReminders));
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
     initialSelectedConversationId,
   );
   const [search, setSearch] = useState("");
-  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [activeLabels, setActiveLabels] = useState<string[]>([]);
+  const [labelMenuOpen, setLabelMenuOpen] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [accountFilter, setAccountFilter] = useState<AccountFilter>("all");
   const [labelsDraft, setLabelsDraft] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
-  const [reminderTitle, setReminderTitle] = useState("");
-  const [reminderAt, setReminderAt] = useState("");
-  const [reminderNote, setReminderNote] = useState("");
   const [composerText, setComposerText] = useState("");
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [feedbackTone, setFeedbackTone] = useState<"success" | "error">("success");
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
-  const [creatingReminder, setCreatingReminder] = useState(false);
   const [sendMode, setSendMode] = useState<SendMode>("text");
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   if (!clientRef.current) {
     clientRef.current = createClient();
@@ -158,13 +304,66 @@ export function InboxRealtimeShell({
     selectedConversationRef.current = selectedConversationId;
   }, [selectedConversationId]);
 
+  useEffect(() => {
+    if (!labelMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (
+        target instanceof Node &&
+        labelMenuRef.current &&
+        !labelMenuRef.current.contains(target)
+      ) {
+        setLabelMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLabelMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [labelMenuOpen]);
+
   const selectedConversation =
     conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const selectedAccount =
     accounts.find((account) => account.id === selectedConversation?.account_id) ?? null;
+  const accountOrdinalById = useMemo(() => {
+    const ordered = [...accounts].sort((left, right) => {
+      const leftTimestamp = normalizeSortableDate(left.connected_at ?? left.created_at);
+      const rightTimestamp = normalizeSortableDate(right.connected_at ?? right.created_at);
+      return leftTimestamp - rightTimestamp;
+    });
+
+    return new Map(ordered.map((account, index) => [account.id, index + 1]));
+  }, [accounts]);
   const accountUsernameMap = useMemo(() => {
     return new Map(accounts.map((account) => [account.id, account.username]));
   }, [accounts]);
+  const resolveConversationAccountLabel = (conversation: ConversationRecord) => {
+    const baseLabel = getInstagramAccountDisplayName(
+      accountUsernameMap.get(conversation.account_id) ?? conversation.account_username,
+    );
+
+    if (baseLabel !== "Cuenta conectada") {
+      return baseLabel;
+    }
+
+    const ordinal = accountOrdinalById.get(conversation.account_id);
+    return ordinal ? `Cuenta ${ordinal}` : baseLabel;
+  };
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -198,7 +397,7 @@ export function InboxRealtimeShell({
 
     async function loadMessages() {
       setLoadingMessages(true);
-      const nextMessages = await loadMessageRows(supabase, currentConversationId);
+      const nextMessages = await loadMessageRows(supabase, userId, currentConversationId);
 
       if (cancelled) {
         return;
@@ -251,7 +450,7 @@ export function InboxRealtimeShell({
         return;
       }
 
-      const nextMessages = await loadMessageRows(supabase, currentConversationId);
+      const nextMessages = await loadMessageRows(supabase, userId, currentConversationId);
 
       if (cancelled || !nextMessages) {
         return;
@@ -351,7 +550,20 @@ export function InboxRealtimeShell({
             return;
           }
 
-          setConversations((current) => sortConversations(upsertById(current, conversation)));
+          setConversations((current) => {
+            const previousConversation = current.find((item) => item.id === conversation.id);
+            const nextConversation = mergeConversationIdentity(previousConversation, conversation);
+            if (!hasHydratedInstagramContact(nextConversation)) {
+              if (selectedConversationRef.current === conversation.id) {
+                setSelectedConversationId(null);
+                setMessages([]);
+              }
+
+              return removeById(current, conversation.id);
+            }
+
+            return sortConversations(upsertById(current, nextConversation));
+          });
         },
       )
       .subscribe();
@@ -383,38 +595,10 @@ export function InboxRealtimeShell({
       )
       .subscribe();
 
-    const remindersChannel = supabase
-      .channel(`instagram-reminders-${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "instagram_reminders",
-          filter: `owner_id=eq.${userId}`,
-        },
-        (payload) => {
-          const reminder = (payload.new || payload.old) as ReminderRecord | undefined;
-
-          if (!reminder) {
-            return;
-          }
-
-          if (payload.eventType === "DELETE") {
-            setReminders((current) => removeById(current, reminder.id));
-            return;
-          }
-
-          setReminders((current) => sortReminders(upsertById(current, reminder)));
-        },
-      )
-      .subscribe();
-
     return () => {
       void supabase.removeChannel(accountsChannel);
       void supabase.removeChannel(conversationsChannel);
       void supabase.removeChannel(messagesChannel);
-      void supabase.removeChannel(remindersChannel);
     };
   }, [userId]);
 
@@ -428,6 +612,8 @@ export function InboxRealtimeShell({
 
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
+      const matchesAccount =
+        accountFilter === "all" || conversation.account_id === accountFilter;
       const displayName = getConversationDisplayName(conversation).toLowerCase();
       const accountUsername = getInstagramAccountDisplayName(
         accountUsernameMap.get(conversation.account_id) ?? conversation.account_username,
@@ -440,32 +626,25 @@ export function InboxRealtimeShell({
         accountUsername.includes(searchTerm) ||
         preview.includes(searchTerm);
       const matchesLabel =
-        !activeLabel ||
-        getConversationLabels(conversation.labels).includes(activeLabel);
+        activeLabels.length === 0 ||
+        activeLabels.some((label) =>
+          getConversationLabels(conversation.labels).includes(label),
+        );
+      const matchesTime = conversationMatchesTimeFilter(conversation, timeFilter);
+      const matchesStatus = conversationMatchesStatusFilter(conversation, statusFilter);
 
-      return matchesSearch && matchesLabel;
+      return matchesAccount && matchesSearch && matchesLabel && matchesTime && matchesStatus;
     });
-  }, [accountUsernameMap, activeLabel, conversations, search]);
+  }, [accountFilter, accountUsernameMap, activeLabels, conversations, search, statusFilter, timeFilter]);
 
-  const selectedConversationReminders = useMemo(() => {
-    if (!selectedConversation) {
-      return [];
-    }
+  function toggleActiveLabel(label: string) {
+    setActiveLabels((current) => {
+      if (current.includes(label)) {
+        return current.filter((item) => item !== label);
+      }
 
-    return reminders.filter((reminder) => reminder.conversation_id === selectedConversation.id);
-  }, [reminders, selectedConversation]);
-
-  const dueReminders = useMemo(() => {
-    const now = Date.now();
-
-    return reminders.filter((reminder) => {
-      return reminder.status === "pending" && new Date(reminder.remind_at).getTime() <= now;
+      return [...current, label];
     });
-  }, [reminders]);
-
-  function showFeedback(message: string, tone: "success" | "error") {
-    setFeedback(message);
-    setFeedbackTone(tone);
   }
 
   function addLabel() {
@@ -491,7 +670,6 @@ export function InboxRealtimeShell({
     }
 
     setSavingDetails(true);
-    setFeedback(null);
 
     try {
       const response = await fetch(
@@ -526,85 +704,18 @@ export function InboxRealtimeShell({
           ),
         ),
       );
-      showFeedback("Etiquetas y notas actualizadas.", "success");
     } catch (error) {
-      showFeedback(
-        error instanceof Error ? error.message : "No pudimos guardar los cambios.",
-        "error",
-      );
+      console.error("No pudimos guardar los cambios del inbox.", error);
     } finally {
       setSavingDetails(false);
     }
   }
 
-  async function createReminder() {
-    if (!selectedConversation || !reminderTitle.trim() || !reminderAt) {
+  async function sendMessage() {
+    if (sendingMessage) {
       return;
     }
 
-    setCreatingReminder(true);
-    setFeedback(null);
-
-    try {
-      const response = await fetch("/api/instagram/reminders", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          conversationId: selectedConversation.id,
-          title: reminderTitle.trim(),
-          note: reminderNote.trim(),
-          remindAt: new Date(reminderAt).toISOString(),
-        }),
-      });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "No pudimos crear el recordatorio.");
-      }
-
-      setReminderTitle("");
-      setReminderAt("");
-      setReminderNote("");
-      showFeedback("Recordatorio creado.", "success");
-    } catch (error) {
-      showFeedback(
-        error instanceof Error ? error.message : "No pudimos crear el recordatorio.",
-        "error",
-      );
-    } finally {
-      setCreatingReminder(false);
-    }
-  }
-
-  async function dismissReminder(reminderId: string) {
-    try {
-      const response = await fetch(`/api/instagram/reminders/${reminderId}`, {
-        method: "PATCH",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ status: "dismissed" }),
-      });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "No pudimos descartar el recordatorio.");
-      }
-
-      showFeedback("Recordatorio descartado.", "success");
-    } catch (error) {
-      showFeedback(
-        error instanceof Error
-          ? error.message
-          : "No pudimos descartar el recordatorio.",
-        "error",
-      );
-    }
-  }
-
-  async function sendMessage() {
     if (!selectedConversation) {
       return;
     }
@@ -618,7 +729,7 @@ export function InboxRealtimeShell({
     }
 
     setSendingMessage(true);
-    setFeedback(null);
+    setSendError(null);
 
     try {
       let mediaUrl: string | undefined;
@@ -662,15 +773,23 @@ export function InboxRealtimeShell({
 
       setComposerText("");
       setAudioFile(null);
-      showFeedback(sendMode === "audio" ? "Audio enviado." : "Mensaje enviado.", "success");
     } catch (error) {
-      showFeedback(
+      console.error("No pudimos enviar el mensaje del inbox.", error);
+      setSendError(
         error instanceof Error ? error.message : "No pudimos enviar el mensaje.",
-        "error",
       );
     } finally {
       setSendingMessage(false);
     }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
+      return;
+    }
+
+    event.preventDefault();
+    void sendMessage();
   }
 
   return (
@@ -690,82 +809,127 @@ export function InboxRealtimeShell({
         </div>
       </section>
 
-      {dueReminders.length > 0 ? (
-        <section className="surface reminder-banner">
-          <div>
-            <span className="eyebrow">Notificaciones</span>
-            <h2>{dueReminders.length} recordatorio(s) pendiente(s)</h2>
-            <p className="page-copy">
-              Estos seguimientos ya vencieron y estan visibles dentro de la app.
-            </p>
-          </div>
-          <div className="notice-list">
-            {dueReminders.slice(0, 4).map((reminder) => {
-              const reminderConversation = conversations.find(
-                (conversation) => conversation.id === reminder.conversation_id,
-              );
-
-              return (
-                <div key={reminder.id} className="notice-item">
-                  <div>
-                    <strong>{reminder.title}</strong>
-                    <p>
-                      {reminderConversation
-                        ? getConversationDisplayName(reminderConversation)
-                        : "Conversacion"}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void dismissReminder(reminder.id)}
-                  >
-                    Descartar
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {feedback ? (
-        <div className={feedbackTone === "success" ? "feedback success" : "feedback error"}>
-          {feedback}
-        </div>
-      ) : null}
-
       <section className="inbox-shell">
         <aside className="surface inbox-column inbox-column-list">
-          <div className="inbox-toolbar">
-            <label className="field-label" htmlFor="thread-search">
-              Buscar
-            </label>
-            <input
-              id="thread-search"
-              className="text-input"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Usuario, cuenta o mensaje"
-            />
+          <div className="inbox-compact-header">
+            <h2>Inbox</h2>
           </div>
 
-          <div className="tag-row">
-            <button
-              type="button"
-              className={!activeLabel ? "chip active" : "chip"}
-              onClick={() => setActiveLabel(null)}
-            >
-              Todas
-            </button>
-            {allLabels.map((label) => (
+          <div className="inbox-toolbar">
+            <div className="inbox-search-row compact">
+              <label className="visually-hidden" htmlFor="thread-search">
+                Buscar conversaciones
+              </label>
+              <input
+                id="thread-search"
+                className="text-input inbox-search-input"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search conversations..."
+              />
+            </div>
+          </div>
+
+          {accounts.length > 1 ? (
+            <div className="tag-row inbox-filter-row account-filter-row">
               <button
-                key={label}
                 type="button"
-                className={activeLabel === label ? "chip active" : "chip"}
-                onClick={() => setActiveLabel(label)}
+                className={accountFilter === "all" ? "chip active" : "chip"}
+                onClick={() => setAccountFilter("all")}
               >
-                {label}
+                Todas las cuentas
+              </button>
+              {accounts.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  className={accountFilter === account.id ? "chip active" : "chip"}
+                  onClick={() => setAccountFilter(account.id)}
+                  title={account.username}
+                >
+                  {getInstagramAccountDisplayName(account.username)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="time-filter-wrap" ref={labelMenuRef}>
+            <div className="time-filter-group" role="group" aria-label="Filtros por tiempo">
+              {TIME_FILTERS.filter((filter) => filter.id !== "new").map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={timeFilter === filter.id ? "chip active" : "chip"}
+                  onClick={() => setTimeFilter(filter.id)}
+                >
+                  {filter.tone ? <span className={`time-dot ${filter.tone}`} /> : null}
+                  {filter.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={activeLabels.length > 0 || labelMenuOpen ? "chip active" : "chip"}
+                onClick={() => setLabelMenuOpen((current) => !current)}
+                aria-expanded={labelMenuOpen}
+              >
+                Exp{activeLabels.length > 0 ? ` ${activeLabels.length}` : ""}
+              </button>
+              {TIME_FILTERS.filter((filter) => filter.id === "new").map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={timeFilter === filter.id ? "chip active" : "chip"}
+                  onClick={() => setTimeFilter(filter.id)}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            {labelMenuOpen ? (
+              <div className="label-filter-menu" role="dialog" aria-label="Seleccionar etiquetas">
+                <div className="label-filter-menu-head">
+                  <div>
+                    <strong>Etiquetas</strong>
+                    <span>{activeLabels.length} seleccionadas</span>
+                  </div>
+                  <button type="button" onClick={() => setLabelMenuOpen(false)}>
+                    Cerrar
+                  </button>
+                </div>
+                <div className="label-filter-actions">
+                  <button type="button" onClick={() => setActiveLabels([])}>
+                    Todas
+                  </button>
+                </div>
+                <div className="label-filter-options">
+                  {allLabels.length === 0 ? (
+                    <span className="muted">Sin etiquetas guardadas</span>
+                  ) : null}
+                  {allLabels.map((label) => (
+                    <label key={label} className="label-filter-option">
+                      <input
+                        type="checkbox"
+                        checked={activeLabels.includes(label)}
+                        onChange={() => toggleActiveLabel(label)}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="tag-row inbox-filter-row status-filter-row">
+            {STATUS_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                className={statusFilter === filter.id ? "chip active" : "chip"}
+                onClick={() => setStatusFilter(filter.id)}
+              >
+                {filter.label}
               </button>
             ))}
           </div>
@@ -789,23 +953,44 @@ export function InboxRealtimeShell({
                 }
                 onClick={() => setSelectedConversationId(conversation.id)}
               >
-                <div className="thread-card-top">
-                  <strong>{getConversationDisplayName(conversation)}</strong>
-                  <span>{formatRelativeTime(conversation.last_message_at)}</span>
-                </div>
-                <span className="thread-account">
-                  {getInstagramAccountDisplayName(
-                    accountUsernameMap.get(conversation.account_id) ??
-                      conversation.account_username,
-                  )}
-                </span>
-                <p>{getConversationPreview(conversation)}</p>
-                <div className="thread-meta">
-                  <span>
-                    {getConversationLabels(conversation.labels).join(", ") || "Sin etiquetas"}
+                {conversation.contact_profile_picture_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    className="thread-contact-avatar"
+                    src={conversation.contact_profile_picture_url}
+                    alt={getConversationDisplayName(conversation)}
+                    loading="lazy"
+                  />
+                ) : (
+                  <span className="thread-contact-avatar thread-contact-avatar-fallback">
+                    {getConversationDisplayName(conversation).slice(0, 1).toUpperCase()}
                   </span>
-                  <span>{conversation.unread_count ?? 0} sin leer</span>
-                </div>
+                )}
+                <span className="thread-card-main">
+                  <span className="thread-card-top">
+                    <strong>{getConversationDisplayName(conversation)}</strong>
+                    <span className="thread-card-time">
+                      {formatRelativeTime(conversation.last_message_at)}
+                    </span>
+                  </span>
+                  <span className="thread-contact-subtitle">
+                    {conversation.contact_name ?? conversation.contact_username ?? "Contacto"} -{" "}
+                    {resolveConversationAccountLabel(conversation)}
+                  </span>
+                  <span className="thread-preview">
+                    {getConversationPreview(conversation)}
+                  </span>
+                  <span className="thread-meta">
+                    <span className="thread-label-summary">
+                      {getConversationLabels(conversation.labels).join(", ") || "Sin etiquetas"}
+                    </span>
+                    {(conversation.unread_count ?? 0) > 0 ? (
+                      <span className="thread-unread active">
+                        {conversation.unread_count}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
               </button>
             ))}
           </div>
@@ -822,10 +1007,7 @@ export function InboxRealtimeShell({
               </h2>
               <p className="page-copy">
                 {selectedConversation
-                  ? `${getInstagramAccountDisplayName(
-                      accountUsernameMap.get(selectedConversation.account_id) ??
-                        selectedConversation.account_username,
-                    )} - ${selectedConversation.last_message_type || "texto"}`
+                  ? resolveConversationAccountLabel(selectedConversation)
                   : "Elige una conversacion para ver el historial y responder."}
               </p>
             </div>
@@ -910,6 +1092,7 @@ export function InboxRealtimeShell({
                 }
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
                 disabled={!selectedConversation || sendingMessage}
               />
             ) : (
@@ -947,6 +1130,7 @@ export function InboxRealtimeShell({
                   ? "Enviar audio"
                   : "Enviar mensaje"}
             </button>
+            {sendError ? <p className="feedback error">{sendError}</p> : null}
           </div>
         </section>
 
@@ -959,7 +1143,7 @@ export function InboxRealtimeShell({
                 : "Sin conversacion seleccionada"}
             </h3>
             <p className="page-copy">
-              Etiquetas, notas internas y recordatorios visibles para el equipo.
+              Etiquetas y notas internas visibles para el equipo.
             </p>
           </div>
 
@@ -1025,78 +1209,17 @@ export function InboxRealtimeShell({
               </div>
 
               <div className="panel-section top-border">
-                <span className="field-label">Recordatorios</span>
-                <div className="form-stack compact-form">
-                  <input
-                    className="text-input"
-                    value={reminderTitle}
-                    onChange={(event) => setReminderTitle(event.target.value)}
-                    placeholder="Llamar, volver a escribir, enviar propuesta..."
-                  />
-                  <input
-                    className="text-input"
-                    type="datetime-local"
-                    value={reminderAt}
-                    onChange={(event) => setReminderAt(event.target.value)}
-                  />
-                  <textarea
-                    className="text-area notes-area"
-                    value={reminderNote}
-                    onChange={(event) => setReminderNote(event.target.value)}
-                    placeholder="Nota opcional"
-                  />
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => void createReminder()}
-                    disabled={creatingReminder}
-                  >
-                    {creatingReminder ? "Creando..." : "Crear recordatorio"}
-                  </button>
-                </div>
-
-                <div className="tag-stack">
-                  {selectedConversationReminders.length === 0 ? (
-                    <div className="empty-state compact">
-                      <strong>Sin recordatorios</strong>
-                      <p>Programa seguimientos con fecha y hora para esta conversacion.</p>
-                    </div>
-                  ) : (
-                    selectedConversationReminders.map((reminder) => (
-                      <div key={reminder.id} className="tag-card static-card">
-                        <strong>{reminder.title}</strong>
-                        <span>{formatDateTime(reminder.remind_at)}</span>
-                        <p>{reminder.note || "Sin nota adicional"}</p>
-                        <div className="tag-row compact">
-                          <span
-                            className={
-                              reminder.status === "dismissed" ? "chip passive" : "chip active"
-                            }
-                          >
-                            {reminder.status}
-                          </span>
-                          {reminder.status !== "dismissed" ? (
-                            <button
-                              type="button"
-                              className="button button-secondary"
-                              onClick={() => void dismissReminder(reminder.id)}
-                            >
-                              Descartar
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="panel-section top-border">
                 <span className="eyebrow">Contexto</span>
                 <div className="detail-list">
                   <div className="detail-row">
                     <span>Cuenta</span>
-                    <strong>{selectedAccount ? `@${selectedAccount.username}` : "-"}</strong>
+                    <strong>
+                      {selectedConversation
+                        ? resolveConversationAccountLabel(selectedConversation)
+                        : selectedAccount
+                          ? `@${selectedAccount.username}`
+                          : "-"}
+                    </strong>
                   </div>
                   <div className="detail-row">
                     <span>IGSID</span>
@@ -1116,7 +1239,7 @@ export function InboxRealtimeShell({
           ) : (
             <div className="empty-state compact">
               <strong>Panel listo</strong>
-              <p>Selecciona una conversacion para editar etiquetas, notas y recordatorios.</p>
+              <p>Selecciona una conversacion para editar etiquetas y notas.</p>
             </div>
           )}
         </aside>

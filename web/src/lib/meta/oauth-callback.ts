@@ -275,6 +275,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       .select(
         "id, owner_id, instagram_user_id, instagram_account_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
       )
+      .eq("owner_id", oauthState.userId)
       .or(lookupFilters.join(","));
     const existingAccounts = (existingResult.data as ExistingAccountLookup[] | null) ?? [];
     const existing = pickExistingInstagramAccount(existingAccounts, {
@@ -339,6 +340,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
           .from("instagram_accounts")
           .update(updateMutation as never)
           .eq("id", existing.id)
+          .eq("owner_id", oauthState.userId)
           .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
           .maybeSingle()
       : await admin
@@ -376,6 +378,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
         admin,
         account: {
           id: upsertedAccount.id,
+          owner_id: oauthState.userId,
           instagram_account_id: upsertedAccount.instagram_account_id,
           access_token: managedToken.accessToken,
           token_expires_at: managedToken.expiresAt,
@@ -425,6 +428,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
     await persistInstagramAccountReadiness({
       admin,
       accountId: upsertedAccount.id,
+      ownerId: oauthState.userId,
       readiness,
     });
 

@@ -7,6 +7,7 @@ import {
   persistInstagramAccountIdentifiers,
 } from "@/lib/meta/account-identifiers";
 import { getMetaServerEnv } from "@/lib/meta/config";
+import { fetchInstagramLoginAccountIdentity } from "@/lib/meta/client";
 import {
   resolveInstagramUsernameCandidateFromMessagingEvent,
   syncInstagramUsername,
@@ -16,10 +17,7 @@ import {
   INSTAGRAM_MESSAGING_STATUS_READY,
   INSTAGRAM_WEBHOOK_STATUS_READY,
 } from "@/lib/meta/account-status";
-import {
-  processDueAutomationJobs,
-  scheduleAutomationForInboundMessage,
-} from "@/lib/automation/runtime";
+import { runAutomationForInboundMessage } from "@/lib/automation/runtime";
 import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -32,6 +30,8 @@ type MessagingEvent = {
   message?: {
     mid?: string;
     text?: string;
+    is_echo?: boolean;
+    is_deleted?: boolean;
     attachments?: Array<{
       type?: string;
       payload?: {
@@ -57,6 +57,7 @@ type WebhookPayload = {
 type AccountLookup = {
   id: string;
   owner_id: string;
+  page_id: string | null;
   instagram_user_id: string | null;
   instagram_account_id: string;
   instagram_app_user_id: string | null;
@@ -82,6 +83,29 @@ type AccountMatchResult = {
   matchedValue: string;
 };
 
+type ClassifiedMessagingEvent = {
+  direction: "in" | "out";
+  contactIgsid: string;
+  ownedCandidateIds: string[];
+  ownedUsername: string | null;
+  ownedIdentifierCandidates: Array<{
+    identifier: string | null | undefined;
+    identifierType: string;
+  }>;
+};
+
+type MessagingEventSkipReason =
+  | "missing_message"
+  | "missing_message_mid"
+  | "deleted_message"
+  | "missing_owned_account_identifier"
+  | "missing_contact_igsid";
+
+type CachedAccountMatch = {
+  accountId: string;
+  expiresAtMs: number;
+};
+
 type PersistMessagingEventResult =
   | {
       status: "persisted";
@@ -93,8 +117,11 @@ type PersistMessagingEventResult =
     }
   | {
       status: "skipped";
-      reason: "missing_message" | "missing_message_mid" | "missing_contact_igsid";
+      reason: MessagingEventSkipReason;
     };
+
+const REMOTE_MATCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const remoteAccountMatchCache = new Map<string, CachedAccountMatch>();
 
 function logWebhook(
   level: "info" | "warn" | "error",
@@ -172,6 +199,58 @@ function getMessagePreview(text: string | null, messageType: string) {
   }
 }
 
+function classifyMessagingEvent(
+  entryId: string | null,
+  event: MessagingEvent,
+): ClassifiedMessagingEvent | { status: "skipped"; reason: MessagingEventSkipReason } {
+  if (event.message?.is_deleted) {
+    return {
+      status: "skipped",
+      reason: "deleted_message",
+    } as const;
+  }
+
+  const normalizedEntryId = normalizeInstagramIdentifier(entryId);
+  const senderId = normalizeInstagramIdentifier(event.sender?.id ?? null);
+  const recipientId = normalizeInstagramIdentifier(event.recipient?.id ?? null);
+  const isEcho = event.message?.is_echo === true;
+  const direction = isEcho ? "out" : "in";
+  const ownedActorId = isEcho ? senderId : recipientId;
+  const contactIgsid = isEcho ? recipientId : senderId;
+  const ownedCandidateIds = Array.from(
+    new Set([normalizedEntryId, ownedActorId].filter(Boolean) as string[]),
+  );
+
+  if (ownedCandidateIds.length === 0) {
+    return {
+      status: "skipped",
+      reason: "missing_owned_account_identifier",
+    } as const;
+  }
+
+  if (!contactIgsid) {
+    return {
+      status: "skipped",
+      reason: "missing_contact_igsid",
+    } as const;
+  }
+
+  return {
+    direction,
+    contactIgsid,
+    ownedCandidateIds,
+    ownedUsername: normalizeInstagramUsername(
+      isEcho ? event.sender?.username : event.recipient?.username,
+    ),
+    ownedIdentifierCandidates: [
+      {
+        identifier: ownedActorId,
+        identifierType: isEcho ? "webhook_sender_id" : "webhook_recipient_id",
+      },
+    ],
+  };
+}
+
 function validateWebhookSignature(rawBody: string, signatureHeader: string | null) {
   if (!signatureHeader?.startsWith("sha256=")) {
     return false;
@@ -211,7 +290,7 @@ async function loadAccountById(
   const result = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
     )
     .eq("id", accountId)
     .maybeSingle();
@@ -224,31 +303,52 @@ async function loadAccountById(
   return account;
 }
 
+function readCachedAccountMatch(candidateId: string) {
+  const cached = remoteAccountMatchCache.get(candidateId);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAtMs <= Date.now()) {
+    remoteAccountMatchCache.delete(candidateId);
+    return null;
+  }
+
+  return cached;
+}
+
+function writeCachedAccountMatch(candidateId: string, accountId: string) {
+  remoteAccountMatchCache.set(candidateId, {
+    accountId,
+    expiresAtMs: Date.now() + REMOTE_MATCH_CACHE_TTL_MS,
+  });
+}
+
+function dedupeByAccountId<T extends { account_id: string }>(rows: T[]) {
+  return Array.from(new Map(rows.map((row) => [row.account_id, row])).values());
+}
+
 async function findAccountForEvent(
   admin: ReturnType<typeof createAdminClient>,
   options: {
-    entryId: string | null;
-    senderId: string | null;
-    recipientId: string | null;
-    senderUsername: string | null;
-    recipientUsername: string | null;
+    candidateIds: string[];
+    candidateUsername: string | null;
   },
 ) {
-  const candidateIds = [
-    normalizeInstagramIdentifier(options.entryId),
-    normalizeInstagramIdentifier(options.recipientId),
-    normalizeInstagramIdentifier(options.senderId),
-  ].filter(Boolean) as string[];
+  const candidateIds = Array.from(
+    new Set(options.candidateIds.map(normalizeInstagramIdentifier).filter(Boolean) as string[]),
+  );
   const candidateUsernames = [
-    normalizeInstagramUsername(options.recipientUsername),
-    normalizeInstagramUsername(options.senderUsername),
+    normalizeInstagramUsername(options.candidateUsername),
   ].filter(Boolean) as string[];
 
   if (candidateIds.length > 0) {
     const aliasResult = await admin
       .from("instagram_account_identifiers")
       .select("account_id, identifier, identifier_type")
-      .in("identifier", candidateIds);
+      .in("identifier", candidateIds)
+      .neq("identifier_type", "webhook_entry_id");
     const aliases =
       (aliasResult.data as
         | Array<{ account_id: string; identifier: string; identifier_type: string }>
@@ -259,12 +359,23 @@ async function findAccountForEvent(
     }
 
     for (const candidateId of candidateIds) {
-      const alias = aliases.find((row) => row.identifier === candidateId);
+      const aliasesForCandidate = dedupeByAccountId(
+        aliases.filter((row) => row.identifier === candidateId),
+      );
 
-      if (!alias) {
+      if (aliasesForCandidate.length === 0) {
         continue;
       }
 
+      if (aliasesForCandidate.length > 1) {
+        logWebhook("warn", "ambiguous alias identifier match", {
+          candidateId,
+          accountIds: aliasesForCandidate.map((row) => row.account_id),
+        });
+        continue;
+      }
+
+      const alias = aliasesForCandidate[0];
       const account = await loadAccountById(admin, alias.account_id);
 
       if (account) {
@@ -282,19 +393,31 @@ async function findAccountForEvent(
       "instagram_account_id",
       "instagram_app_user_id",
       "instagram_user_id",
+      "page_id",
     ] as const) {
       const result = await admin
         .from("instagram_accounts")
         .select(
-          "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+          "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
         )
         .eq(column, candidateId)
-        .maybeSingle();
-      const account = result.data as AccountLookup | null;
+        .limit(2);
+      const accounts = (result.data as AccountLookup[] | null) ?? [];
 
       if (result.error) {
         throw new Error(result.error.message);
       }
+
+      if (accounts.length > 1) {
+        logWebhook("warn", "ambiguous direct column match", {
+          candidateId,
+          column,
+          accountIds: accounts.map((account) => account.id),
+        });
+        continue;
+      }
+
+      const account = accounts[0] ?? null;
 
       if (account) {
         return {
@@ -310,7 +433,7 @@ async function findAccountForEvent(
     const usernameResult = await admin
       .from("instagram_accounts")
       .select(
-        "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
+        "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
       )
       .in("username", candidateUsernames)
       .limit(candidateUsernames.length);
@@ -327,9 +450,9 @@ async function findAccountForEvent(
 
       if (account) {
         const matchedActor =
-          normalizeInstagramUsername(options.recipientUsername) === candidateUsername
-            ? "recipient_username"
-            : "sender_username";
+          normalizeInstagramUsername(options.candidateUsername) === candidateUsername
+            ? "owned_username"
+            : "username";
 
         return {
           account,
@@ -343,110 +466,131 @@ async function findAccountForEvent(
   return null;
 }
 
-async function findBootstrapAccountForEvent(
+async function findAccountByRemoteIdentityForEvent(
   admin: ReturnType<typeof createAdminClient>,
   options: {
-    senderId: string | null;
-    recipientId: string | null;
+    candidateIds: string[];
   },
 ) {
-  const recipientId = normalizeInstagramIdentifier(options.recipientId);
+  const candidateIds = new Set(
+    options.candidateIds
+      .map((value) => normalizeInstagramIdentifier(value))
+      .filter(Boolean) as string[],
+  );
 
-  if (!recipientId) {
+  if (candidateIds.size === 0) {
     return null;
   }
 
-  const result = await admin
+  for (const candidateId of candidateIds) {
+    const cached = readCachedAccountMatch(candidateId);
+
+    if (!cached) {
+      continue;
+    }
+
+    const account = await loadAccountById(admin, cached.accountId);
+
+    if (!account) {
+      remoteAccountMatchCache.delete(candidateId);
+      continue;
+    }
+
+    return {
+      account,
+      matchedBy: "remote_identity_cache",
+      matchedValue: candidateId,
+    } satisfies AccountMatchResult;
+  }
+
+  const accountsResult = await admin
     .from("instagram_accounts")
     .select(
-      "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
     );
-  const accounts = (result.data as AccountLookup[] | null) ?? [];
+  const accounts = (accountsResult.data as AccountLookup[] | null) ?? [];
 
-  if (result.error) {
-    throw new Error(result.error.message);
+  if (accountsResult.error) {
+    throw new Error(accountsResult.error.message);
   }
 
-  const senderId = normalizeInstagramIdentifier(options.senderId);
-  const candidates = accounts.filter((account) => {
-    const storedIds = new Set(
-      collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-    );
-    const currentAppUserId = normalizeInstagramIdentifier(account.instagram_app_user_id);
-    const canBootstrapAppUserId =
-      !currentAppUserId ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_user_id) ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_account_id);
+  const matches: AccountMatchResult[] = [];
 
-    if (!canBootstrapAppUserId) {
-      return false;
+  for (const account of accounts) {
+    if (!account.access_token?.trim()) {
+      continue;
     }
 
-    if (storedIds.has(recipientId)) {
-      return false;
+    try {
+      const remoteIdentity = await fetchInstagramLoginAccountIdentity({
+        accessToken: account.access_token,
+      });
+      const remoteCandidates = [
+        normalizeInstagramIdentifier(remoteIdentity.instagramAccountId),
+        normalizeInstagramIdentifier(remoteIdentity.appScopedUserId),
+      ].filter(Boolean) as string[];
+      const matchedValue = remoteCandidates.find((value) => candidateIds.has(value));
+
+      if (!matchedValue) {
+        continue;
+      }
+
+      matches.push({
+        account,
+        matchedBy: "remote_identity",
+        matchedValue,
+      });
+    } catch (error) {
+      logWebhook("warn", "remote identity lookup skipped", {
+        accountId: account.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
+  }
 
-    if (senderId && storedIds.has(senderId)) {
-      return false;
-    }
-
-    return true;
-  });
-
-  if (candidates.length !== 1) {
+  if (matches.length !== 1) {
     return null;
   }
 
-  return {
-    account: candidates[0],
-    matchedBy: "bootstrap:recipient_id",
-    matchedValue: recipientId,
-  } satisfies AccountMatchResult;
+  const match = matches[0];
+  await persistInstagramAccountIdentifiers({
+    admin,
+    accountId: match.account.id,
+    identifiers: [
+      {
+        identifier: match.matchedValue,
+        identifierType: "remote_identity",
+      },
+    ],
+  });
+
+  for (const candidateId of candidateIds) {
+    writeCachedAccountMatch(candidateId, match.account.id);
+  }
+
+  return match;
 }
 
 function resolveOwnedIdentifierCandidates(
   account: AccountLookup,
-  match: AccountMatchResult,
-  entryId: string | null,
-  event: MessagingEvent,
+  classification: ClassifiedMessagingEvent,
 ) {
   const storedIds = new Set(
     collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
   );
-  const accountUsername = normalizeInstagramUsername(account.username);
-  const recipientId = normalizeInstagramIdentifier(event.recipient?.id);
-  const senderId = normalizeInstagramIdentifier(event.sender?.id);
-  const recipientUsername = normalizeInstagramUsername(event.recipient?.username);
-  const senderUsername = normalizeInstagramUsername(event.sender?.username);
 
-  return [
-    {
-      identifier: entryId,
-      identifierType: "webhook_entry_id",
-    },
-    {
+  return classification.ownedIdentifierCandidates.map((candidate) => {
+    const identifier = normalizeInstagramIdentifier(candidate.identifier);
+
+    return {
       identifier:
-        recipientId &&
-        (storedIds.has(recipientId) ||
-          match.matchedValue === recipientId ||
-          match.matchedBy === "recipient_username" ||
-          (accountUsername !== null && recipientUsername === accountUsername))
-          ? recipientId
+        identifier &&
+        (storedIds.has(identifier) || classification.ownedCandidateIds.includes(identifier))
+          ? identifier
           : null,
-      identifierType: "webhook_recipient_id",
-    },
-    {
-      identifier:
-        senderId &&
-        (storedIds.has(senderId) ||
-          match.matchedValue === senderId ||
-          match.matchedBy === "sender_username" ||
-          (accountUsername !== null && senderUsername === accountUsername))
-          ? senderId
-          : null,
-      identifierType: "webhook_sender_id",
-    },
-  ];
+      identifierType: candidate.identifierType,
+    };
+  });
 }
 
 async function backfillInstagramAppUserId(
@@ -486,7 +630,8 @@ async function backfillInstagramAppUserId(
       instagram_app_user_id: nextAppUserId,
       updated_at: new Date().toISOString(),
     } as never)
-    .eq("id", account.id);
+    .eq("id", account.id)
+    .eq("owner_id", account.owner_id);
 
   if (update.error) {
     console.warn("[instagram-webhook] instagram_app_user_id backfill skipped", {
@@ -553,6 +698,7 @@ async function upsertConversationForMessage(
   const existingResult = await admin
     .from("instagram_conversations")
     .select("id, contact_username, contact_name, unread_count")
+    .eq("owner_id", options.ownerId)
     .eq("account_id", options.accountId)
     .eq("contact_igsid", options.contactIgsid)
     .maybeSingle();
@@ -575,6 +721,7 @@ async function upsertConversationForMessage(
         updated_at: options.createdAt,
       } as never)
       .eq("id", existing.id)
+      .eq("owner_id", options.ownerId)
       .select("id")
       .maybeSingle();
     const updatedConversation = update.data as { id: string } | null;
@@ -618,9 +765,13 @@ function resolveConversationContactUsername(
   isInbound: boolean,
 ) {
   if (isInbound) {
-    return event.sender?.username ?? event.recipient?.username ?? null;
+    // For inbound: sender = contact, recipient = owned account.
+    // Never use recipient.username as fallback — that would store the owned
+    // account's own handle as the contact name.
+    return event.sender?.username ?? null;
   }
 
+  // For outbound echo events: sender = owned account, recipient = contact.
   const recipientUsername = event.recipient?.username ?? null;
 
   if (recipientUsername && recipientUsername !== account.username) {
@@ -688,8 +839,7 @@ async function enrichAccountUsernameFromEvent(
 async function persistMessagingEvent(
   admin: ReturnType<typeof createAdminClient>,
   account: AccountLookup,
-  entryId: string | null,
-  match: AccountMatchResult,
+  classification: ClassifiedMessagingEvent,
   event: MessagingEvent,
 ): Promise<PersistMessagingEventResult> {
   if (!event.message) {
@@ -706,27 +856,17 @@ async function persistMessagingEvent(
     };
   }
 
-  const senderId = event.sender?.id ?? null;
+  const senderId = normalizeInstagramIdentifier(event.sender?.id ?? null);
   const recipientId =
-    event.recipient?.id ?? account.instagram_app_user_id ?? account.instagram_account_id;
-  const accountIds = new Set(
-    collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-  );
-  const isInbound = !senderId || !accountIds.has(senderId);
-  const contactIgsid = isInbound ? senderId : recipientId;
-
-  if (!contactIgsid) {
-    return {
-      status: "skipped",
-      reason: "missing_contact_igsid",
-    };
-  }
+    normalizeInstagramIdentifier(event.recipient?.id ?? null) ??
+    account.instagram_app_user_id ??
+    account.instagram_account_id;
+  const isInbound = classification.direction === "in";
+  const contactIgsid = classification.contactIgsid;
 
   const ownedIdentifierCandidates = resolveOwnedIdentifierCandidates(
     account,
-    match,
-    entryId,
-    event,
+    classification,
   );
   await persistInstagramAccountIdentifiers({
     admin,
@@ -742,6 +882,7 @@ async function persistMessagingEvent(
   await backfillInstagramAppUserId(admin, account, ownedIdentifierCandidates);
 
   const attachment = event.message.attachments?.[0];
+  const scopedMetaMessageId = `${account.id}:${event.message.mid}`;
   const messageType = event.message.text?.trim()
     ? "text"
     : mapAttachmentType(attachment?.type);
@@ -754,6 +895,18 @@ async function persistMessagingEvent(
     event,
     isInbound,
   );
+
+  if (!contactProfile.contactUsername) {
+    // Log but do NOT drop the message. The conversation is stored with
+    // contact_username = null so it is hidden from the inbox filter until
+    // a later webhook (or background retry after EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS)
+    // successfully resolves the username and updates the row.
+    logWebhook("warn", "contact username not yet resolved — storing without username", {
+      accountId: account.id,
+      contactIgsid,
+    });
+  }
+
   const conversationId = await upsertConversationForMessage(admin, {
     accountId: account.id,
     ownerId: account.owner_id,
@@ -771,7 +924,7 @@ async function persistMessagingEvent(
       owner_id: account.owner_id,
       account_id: account.id,
       conversation_id: conversationId,
-      meta_message_id: event.message.mid,
+      meta_message_id: scopedMetaMessageId,
       direction: isInbound ? "in" : "out",
       message_type: messageType,
       text_content: event.message.text ?? null,
@@ -803,28 +956,23 @@ async function persistMessagingEvent(
       status: INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
       updated_at: new Date().toISOString(),
     } as never)
-    .eq("id", account.id);
+    .eq("id", account.id)
+    .eq("owner_id", account.owner_id);
 
   await enrichAccountUsernameFromEvent(admin, account, event);
 
   if (isInbound) {
     try {
-      const scheduleResult = await scheduleAutomationForInboundMessage(admin, {
+      await runAutomationForInboundMessage(admin, {
         ownerId: account.owner_id,
         accountId: account.id,
         conversationId,
         createdAt,
         isInbound,
+        inboundText: event.message.text ?? null,
       });
-
-      if (scheduleResult.scheduled > 0) {
-        await processDueAutomationJobs(admin, {
-          limit: 25,
-          ownerId: account.owner_id,
-        });
-      }
     } catch (error) {
-      console.warn("[instagram-webhook] automation schedule skipped", {
+      console.warn("[instagram-webhook] automation execution skipped", {
         accountId: account.id,
         conversationId,
         error: error instanceof Error ? error.message : String(error),
@@ -953,16 +1101,21 @@ export async function POST(request: Request) {
   }
 
   const entries = Array.isArray(body.entry) ? body.entry : [];
+  const bodyObject = typeof body.object === "string" ? body.object : null;
 
   logWebhook("info", "payload received", {
-    bodyObject: typeof body.object === "string" ? body.object : null,
+    bodyObject,
     entryCount: entries.length,
   });
 
-  if (typeof body.object !== "string" || body.object.toLowerCase() !== "instagram") {
+  const normalizedBodyObject = bodyObject?.toLowerCase() ?? null;
+  const isSupportedWebhookObject =
+    normalizedBodyObject === "instagram" || normalizedBodyObject === "page";
+
+  if (!isSupportedWebhookObject) {
     logWebhook("warn", "request rejected", {
       reason: "unsupported_object",
-      bodyObject: typeof body.object === "string" ? body.object : null,
+      bodyObject: normalizedBodyObject,
       entryCount: entries.length,
     });
     return NextResponse.json({ error: "Unsupported webhook object." }, { status: 400 });
@@ -975,7 +1128,7 @@ export async function POST(request: Request) {
     const messagingEvents = normalizeEntryMessagingEvents(entry);
 
     logWebhook("info", "entry received", {
-      bodyObject: body.object,
+      bodyObject,
       entryIndex,
       entryId: normalizeInstagramIdentifier(entry.id ?? null),
       eventCount: messagingEvents.length,
@@ -989,7 +1142,7 @@ export async function POST(request: Request) {
       const messageId = normalizeInstagramIdentifier(event.message?.mid ?? null);
 
       logWebhook("info", "event received", {
-        bodyObject: body.object,
+        bodyObject,
         entryIndex,
         eventIndex,
         entryId,
@@ -1002,7 +1155,7 @@ export async function POST(request: Request) {
         if (!event.message) {
           logWebhook("info", "message skipped", {
             reason: "missing_message",
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1012,13 +1165,42 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: "missing_message",
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             payload: {
-              object: body.object,
+              object: bodyObject,
+              entry: { id: entryId, entryIndex },
+              event,
+            },
+          });
+          continue;
+        }
+
+        const classification = classifyMessagingEvent(entryId, event);
+
+        if ("status" in classification) {
+          logWebhook("warn", "message skipped", {
+            reason: classification.reason,
+            bodyObject,
+            entryIndex,
+            eventIndex,
+            entryId,
+            senderId,
+            recipientId,
+            messageId,
+          });
+          await persistWebhookDebugEvent(admin, {
+            reason: classification.reason,
+            bodyObject,
+            entryId,
+            senderId,
+            recipientId,
+            messageId,
+            payload: {
+              object: bodyObject,
               entry: { id: entryId, entryIndex },
               event,
             },
@@ -1029,24 +1211,20 @@ export async function POST(request: Request) {
         let match = await findAccountForEvent(
           admin,
           {
-            entryId,
-            senderId,
-            recipientId,
-            senderUsername: event.sender?.username ?? null,
-            recipientUsername: event.recipient?.username ?? null,
+            candidateIds: classification.ownedCandidateIds,
+            candidateUsername: classification.ownedUsername,
           },
         );
 
         if (!match) {
-          match = await findBootstrapAccountForEvent(admin, {
-            senderId,
-            recipientId,
+          match = await findAccountByRemoteIdentityForEvent(admin, {
+            candidateIds: classification.ownedCandidateIds,
           });
         }
 
         if (!match) {
           logWebhook("warn", "account match failed", {
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1057,13 +1235,13 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: "account_match_failed",
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             payload: {
-              object: body.object,
+              object: bodyObject,
               entry: {
                 id: entryId,
               },
@@ -1074,7 +1252,7 @@ export async function POST(request: Request) {
         }
 
         logWebhook("info", "account matched", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1086,12 +1264,12 @@ export async function POST(request: Request) {
           matchedValue: match.matchedValue,
         });
 
-        const persistence = await persistMessagingEvent(admin, match.account, entryId, match, event);
+        const persistence = await persistMessagingEvent(admin, match.account, classification, event);
 
         if (persistence.status === "skipped") {
           logWebhook("warn", "message skipped", {
             reason: persistence.reason,
-            bodyObject: body.object,
+            bodyObject,
             entryIndex,
             eventIndex,
             entryId,
@@ -1102,14 +1280,14 @@ export async function POST(request: Request) {
           });
           await persistWebhookDebugEvent(admin, {
             reason: persistence.reason,
-            bodyObject: body.object,
+            bodyObject,
             entryId,
             senderId,
             recipientId,
             messageId,
             matchedAccountId: match.account.id,
             payload: {
-              object: body.object,
+              object: bodyObject,
               entry: { id: entryId, entryIndex },
               event,
             },
@@ -1118,7 +1296,7 @@ export async function POST(request: Request) {
         }
 
         logWebhook("info", "message persisted", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1134,7 +1312,7 @@ export async function POST(request: Request) {
         });
       } catch (error) {
         logWebhook("error", "event failed", {
-          bodyObject: body.object,
+          bodyObject,
           entryIndex,
           eventIndex,
           entryId,
@@ -1145,13 +1323,13 @@ export async function POST(request: Request) {
         });
         await persistWebhookDebugEvent(admin, {
           reason: "event_failed",
-          bodyObject: body.object,
+          bodyObject,
           entryId,
           senderId,
           recipientId,
           messageId,
           payload: {
-            object: body.object,
+            object: bodyObject,
             entry: { id: entryId, entryIndex },
             event,
             error: error instanceof Error ? error.message : String(error),

@@ -16,17 +16,23 @@ function allAsync(db, sql, params = []) {
  * intended as a starting point and can be extended to compute more complex
  * KPIs such as response rates and follow‑up success.
  */
-async function computeSummary(db) {
+async function computeSummary(db, ownerId) {
   const now = Date.now();
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
   const startOfWeek = new Date(now - 7 * 24 * 60 * 60 * 1000);
   const startOfMonth = new Date(now - 30 * 24 * 60 * 60 * 1000);
+  const scopedChatsSql = `
+    SELECT c.*
+    FROM chats c
+    JOIN accounts a ON a.id = c.account_id
+    WHERE c.timestamp >= ? AND a.owner_id = ?
+  `;
 
   const [todayRows, weekRows, monthRows] = await Promise.all([
-    allAsync(db, 'SELECT * FROM chats WHERE timestamp >= ?', [startOfDay.getTime()]),
-    allAsync(db, 'SELECT * FROM chats WHERE timestamp >= ?', [startOfWeek.getTime()]),
-    allAsync(db, 'SELECT * FROM chats WHERE timestamp >= ?', [startOfMonth.getTime()]),
+    allAsync(db, scopedChatsSql, [startOfDay.getTime(), ownerId]),
+    allAsync(db, scopedChatsSql, [startOfWeek.getTime(), ownerId]),
+    allAsync(db, scopedChatsSql, [startOfMonth.getTime(), ownerId]),
   ]);
 
   function countMessages(rows, direction = null) {

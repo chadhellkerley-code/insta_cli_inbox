@@ -4,8 +4,12 @@ import { isFallbackInstagramUsername } from "@/lib/meta/instagram-username";
 
 export type UserProfile = {
   id: string;
+  email: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
   role: string | null;
   expires_at: string | null;
+  last_login_at: string | null;
 };
 
 export type InstagramAccountRecord = {
@@ -45,6 +49,7 @@ export type ConversationRecord = {
   contact_igsid: string;
   contact_username: string | null;
   contact_name: string | null;
+  contact_profile_picture_url?: string | null;
   labels: string[] | null;
   notes: string | null;
   last_message_text: string | null;
@@ -74,18 +79,6 @@ export type MessageRecord = {
   created_at: string | null;
 };
 
-export type ReminderRecord = {
-  id: string;
-  owner_id: string;
-  conversation_id: string;
-  title: string;
-  note: string | null;
-  remind_at: string;
-  status: "pending" | "dismissed" | string;
-  dismissed_at: string | null;
-  created_at: string | null;
-};
-
 export type DashboardMetrics = {
   todayInbound: number;
   todayOutbound: number;
@@ -95,7 +88,6 @@ export type DashboardMetrics = {
   qualifiedConversations: number;
   staleConversations: number;
   activeAccounts: number;
-  overdueReminders: number;
   replyRatio: number;
 };
 
@@ -126,6 +118,11 @@ export function getInstagramAccountDisplayName(username?: string | null) {
   }
 
   return `@${normalized}`;
+}
+
+export function hasHydratedInstagramContact(conversation: Pick<ConversationRecord, "contact_username">) {
+  const username = conversation.contact_username?.trim().replace(/^@+/, "") ?? null;
+  return Boolean(username && !isFallbackInstagramUsername(username));
 }
 
 export function getConversationDisplayName(conversation: ConversationRecord) {
@@ -189,7 +186,6 @@ export function computeDashboardMetrics(
   messages: MessageRecord[],
   conversations: ConversationRecord[],
   accounts: InstagramAccountRecord[],
-  reminders: ReminderRecord[],
 ): DashboardMetrics {
   const now = Date.now();
   const dayAgo = now - 24 * 60 * 60 * 1000;
@@ -230,12 +226,6 @@ export function computeDashboardMetrics(
 
     return new Date(conversation.last_message_at).getTime() < now - 14 * 24 * 60 * 60 * 1000;
   }).length;
-  const overdueReminders = reminders.filter(
-    (reminder) =>
-      reminder.status === "pending" &&
-      new Date(reminder.remind_at).getTime() <= now,
-  ).length;
-
   return {
     todayInbound: inboundToday,
     todayOutbound: outboundToday,
@@ -245,7 +235,6 @@ export function computeDashboardMetrics(
     qualifiedConversations,
     staleConversations,
     activeAccounts: accounts.length,
-    overdueReminders,
     replyRatio:
       inboundToday === 0 ? 100 : Math.min(999, (outboundToday / inboundToday) * 100),
   };
@@ -302,5 +291,5 @@ export function getDisplayName(user: User, profile: UserProfile | null) {
     return "Owner";
   }
 
-  return user.email?.split("@")[0] ?? "Usuario";
+  return profile?.full_name ?? user.user_metadata?.name ?? user.email?.split("@")[0] ?? "Usuario";
 }

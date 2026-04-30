@@ -30,7 +30,9 @@ export const INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT = "Acepta MP3, M4A/MP4 o WAV";
 
 type InstagramAudioMimeType = (typeof INSTAGRAM_AUDIO_ALLOWED_MIME_TYPES)[number];
 
-function normalizeMimeType(value: string | null | undefined): InstagramAudioMimeType | null {
+export function normalizeInstagramAudioMimeType(
+  value: string | null | undefined,
+): InstagramAudioMimeType | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -76,7 +78,7 @@ export function resolveInstagramAudioUpload(input: {
 }) {
   const extension = normalizeExtension(input.name);
   const mimeType =
-    normalizeMimeType(input.type) ??
+    normalizeInstagramAudioMimeType(input.type) ??
     (extension
       ? INSTAGRAM_AUDIO_EXTENSION_TO_MIME_TYPE[
           extension as keyof typeof INSTAGRAM_AUDIO_EXTENSION_TO_MIME_TYPE

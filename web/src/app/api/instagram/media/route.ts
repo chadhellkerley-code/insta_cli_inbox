@@ -5,6 +5,7 @@ import {
   INSTAGRAM_AUDIO_MAX_FILE_SIZE_BYTES,
   resolveInstagramAudioUpload,
 } from "@/lib/meta/audio";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import { META_MEDIA_BUCKET } from "@/lib/meta/config";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -110,6 +111,13 @@ export async function POST(request: Request) {
     const publicUrl = admin.storage
       .from(META_MEDIA_BUCKET)
       .getPublicUrl(path).data.publicUrl;
+
+    try {
+      await assertInstagramAudioUrlAccessible(publicUrl);
+    } catch (error) {
+      await admin.storage.from(META_MEDIA_BUCKET).remove([path]);
+      throw error;
+    }
 
     return NextResponse.json({
       ok: true,

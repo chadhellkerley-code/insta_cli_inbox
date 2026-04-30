@@ -35,6 +35,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
       .from("instagram_accounts")
       .select("id, owner_id")
       .eq("id", accountId)
+      .eq("owner_id", user.id)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
 
@@ -42,14 +43,11 @@ export async function DELETE(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Cuenta no encontrada." }, { status: 404 });
     }
 
-    if (account.owner_id !== user.id) {
-      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
-    }
-
     const deleteResult = await admin
       .from("instagram_accounts")
       .delete()
-      .eq("id", account.id);
+      .eq("id", account.id)
+      .eq("owner_id", user.id);
 
     if (deleteResult.error) {
       throw new Error(deleteResult.error.message);
@@ -58,7 +56,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return NextResponse.json({
       ok: true,
       message:
-        "La cuenta fue eliminada. Supabase borro tambien conversaciones, mensajes y recordatorios asociados.",
+        "La cuenta fue eliminada. Supabase borro tambien conversaciones y mensajes asociados.",
     });
   } catch (error) {
     return NextResponse.json(

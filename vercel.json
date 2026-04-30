@@ -1,0 +1,11 @@
+{
+  "installCommand": "npm install && npm --prefix web install",
+  "buildCommand": "npm run build",
+  "crons": [
+    {
+      "path": "/api/automation/dispatch",
+      "schedule": "*/2 * * * *"
+    }
+  ]
+}
+

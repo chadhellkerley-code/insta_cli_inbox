@@ -47,10 +47,22 @@ export default async function CuentasPage({
         <div>
           <h1>CONECTAR CUENTAS DE INSTAGRAM</h1>
           <p className="page-copy">
-            Cada cuenta se conecta con el consentimiento oficial en instagram.com
+            Conecta una cuenta directo desde Instagram y el sistema intenta guardar token
+            long-lived (60 dias) sin depender de Facebook Page.
           </p>
         </div>
-        <MetaConnectButton />
+        <div className="form-stack">
+          <MetaConnectButton
+            buttonLabel="Instagram directo (token 60 dias)"
+            startPath="/api/instagram/oauth/start"
+            redirectingLabel="Redirigiendo"
+          />
+          <MetaConnectButton
+            buttonLabel="Facebook / Meta (como antes)"
+            startPath="/api/meta/oauth/start"
+            redirectingLabel="Redirigiendo"
+          />
+        </div>
       </section>
 
       {error ? <div className="feedback error">{error}</div> : null}
@@ -151,6 +163,7 @@ export default async function CuentasPage({
           </div>
         )}
       </section>
+
     </div>
   );
 }

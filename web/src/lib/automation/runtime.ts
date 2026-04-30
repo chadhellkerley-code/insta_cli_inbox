@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  AUTOMATION_AI_MODEL,
+  decryptApiKey,
+  loadAiCredential,
+} from "@/lib/automation/ai-credentials";
 import { sendInstagramMessage } from "@/lib/meta/client";
+import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import {
   INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
   INSTAGRAM_MESSAGING_STATUS_READY,
@@ -8,6 +14,8 @@ import {
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 
 type QueryClient = Pick<SupabaseClient, "from">;
+const STAGE_MESSAGE_PART_GAP_MS = 1_000;
+const STANDARD_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type AutomationAgentRuntimeRow = {
   id: string;
@@ -17,6 +25,9 @@ type AutomationAgentRuntimeRow = {
   max_reply_delay_seconds: number;
   max_media_per_chat: number;
   is_active: boolean;
+  ai_enabled: boolean;
+  ai_prompt: string | null;
+  personality: string | null;
 };
 
 type AutomationStageRuntimeRow = {
@@ -24,9 +35,15 @@ type AutomationStageRuntimeRow = {
   agent_id: string;
   stage_order: number;
   name: string;
-  followup_enabled: boolean;
-  followup_delay_minutes: number;
-  followup_message: string | null;
+};
+
+type AutomationStageFollowupRuntimeRow = {
+  id: string;
+  stage_id: string;
+  followup_order: number;
+  is_active: boolean;
+  delay_hours: number;
+  message: string | null;
 };
 
 type AutomationStageMessageRuntimeRow = {
@@ -62,13 +79,35 @@ type AutomationJobRow = {
   run_id: string;
   stage_id: string;
   stage_message_id: string | null;
-  job_type: "stage_message" | "followup";
+  job_type: "stage_message" | "followup" | "ai_reply";
   status: "pending" | "processing" | "sent" | "skipped" | "failed" | "cancelled";
   scheduled_for: string;
   sent_at: string | null;
   attempt_count: number;
   last_error: string | null;
   payload: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type AutomationJobResult =
+  | "sent"
+  | "retry_scheduled"
+  | "cancelled_inactive_agent"
+  | "skipped_ai_disabled"
+  | "skipped_followup_answered"
+  | "skipped_missing_dependencies"
+  | "skipped_outside_automation_window"
+  | "failed";
+
+type AutomationProcessingSummary = {
+  claimed: number;
+  sent: number;
+  skipped: number;
+  cancelled: number;
+  retried: number;
+  failed: number;
+  cleaned: number;
 };
 
 type ConversationRuntimeRow = {
@@ -85,6 +124,22 @@ type AccountRuntimeRow = {
   instagram_app_user_id: string | null;
   access_token: string;
   token_expires_at: string | null;
+  token_lifecycle: string | null;
+};
+
+type ConversationMessageContextRow = {
+  direction: "in" | "out";
+  message_type: string;
+  text_content: string | null;
+  created_at: string | null;
+};
+
+type GenerateAutomationReplyOptions = {
+  apiKey: string;
+  aiPrompt: string | null;
+  personality: string | null;
+  inboundText: string;
+  conversationMessages?: ConversationMessageContextRow[];
 };
 
 function castRows<T>(value: unknown) {
@@ -114,14 +169,240 @@ function randomInteger(min: number, max: number) {
     return min;
   }
 
-  const delta = max - min + 1;
-  return min + Math.floor(Math.random() * delta);
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function buildAutomationAiSystemPrompt(options: Pick<
+  GenerateAutomationReplyOptions,
+  "aiPrompt" | "personality"
+>) {
+  const parts = [
+    "Responde como agente de atencion de Instagram.",
+    "Devuelve solo el texto final para enviar al cliente.",
+    normalizeOptionalString(options.personality)
+      ? `Personalidad: ${normalizeOptionalString(options.personality)}`
+      : null,
+    normalizeOptionalString(options.aiPrompt)
+      ? `Instrucciones: ${normalizeOptionalString(options.aiPrompt)}`
+      : null,
+  ].filter(Boolean);
+
+  return parts.join("\n");
+}
+
+function buildAutomationAiMessages(options: GenerateAutomationReplyOptions) {
+  const conversationMessages = options.conversationMessages ?? [];
+  const messages = conversationMessages
+    .map((message) => {
+      const textContent = normalizeOptionalString(message.text_content);
+      const sender = message.direction === "out" ? "El agente" : "El cliente";
+      const content =
+        textContent ??
+        (message.message_type === "audio"
+          ? `${sender} envio un audio.`
+          : `${sender} envio un mensaje de tipo ${message.message_type || "desconocido"}.`);
+
+      return {
+        role: message.direction === "out" ? ("assistant" as const) : ("user" as const),
+        content,
+      };
+    })
+    .filter((message) => normalizeOptionalString(message.content));
+
+  if (messages.length > 0) {
+    return messages;
+  }
+
+  return [
+    {
+      role: "user" as const,
+      content:
+        normalizeOptionalString(options.inboundText) ?? "El cliente envio un mensaje sin texto.",
+    },
+  ];
+}
+
+function readChatCompletionContent(payload: unknown) {
+  const content = (payload as {
+    choices?: Array<{
+      message?: {
+        content?: unknown;
+      };
+    }>;
+  })?.choices?.[0]?.message?.content;
+
+  return normalizeOptionalString(typeof content === "string" ? content : null);
+}
+
+export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${options.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: AUTOMATION_AI_MODEL,
+      messages: [
+        {
+          role: "system",
+          content: buildAutomationAiSystemPrompt(options),
+        },
+        ...buildAutomationAiMessages(options),
+      ],
+      temperature: 0.7,
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as unknown;
+
+  if (!response.ok) {
+    const errorMessage = (payload as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(errorMessage ?? `OpenAI respondio con HTTP ${response.status}.`);
+  }
+
+  const content = readChatCompletionContent(payload);
+
+  if (!content) {
+    throw new Error("OpenAI no devolvio contenido.");
+  }
+
+  return content;
+}
+
+async function generateAgentAiReply(
+  agent: AutomationAgentRuntimeRow,
+  ownerId: string,
+  inboundText: string | null | undefined,
+  conversationMessages?: ConversationMessageContextRow[],
+) {
+  if (!agent.ai_enabled) {
+    return null;
+  }
+
+  const credential = await loadAiCredential(ownerId);
+
+  if (!credential) {
+    throw new Error("IA activada sin API key configurada.");
+  }
+
+  return generateAutomationReply({
+    apiKey: decryptApiKey(credential),
+    aiPrompt: agent.ai_prompt,
+    personality: agent.personality,
+    inboundText: inboundText ?? "",
+    conversationMessages,
+  });
+}
+
+function createProcessingSummary(): AutomationProcessingSummary {
+  return {
+    claimed: 0,
+    sent: 0,
+    skipped: 0,
+    cancelled: 0,
+    retried: 0,
+    failed: 0,
+    cleaned: 0,
+  };
+}
+
+function addJobResultToSummary(
+  summary: AutomationProcessingSummary,
+  result: AutomationJobResult,
+) {
+  switch (result) {
+    case "sent":
+      summary.sent += 1;
+      break;
+    case "retry_scheduled":
+      summary.retried += 1;
+      break;
+    case "cancelled_inactive_agent":
+      summary.cancelled += 1;
+      break;
+    case "skipped_followup_answered":
+    case "skipped_ai_disabled":
+    case "skipped_missing_dependencies":
+    case "skipped_outside_automation_window":
+      summary.skipped += 1;
+      break;
+    default:
+      summary.failed += 1;
+      break;
+  }
+}
+
+function wait(milliseconds: number) {
+  if (milliseconds <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+function getJobPayloadNumber(job: AutomationJobRow, key: string) {
+  const value = job.payload?.[key];
+  const numberValue = typeof value === "number" ? value : Number(value ?? 0);
+
+  return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+function getStageMessagePartOrder(job: AutomationJobRow) {
+  return job.payload?.stageMessagePart === "audio" ? 1 : 0;
+}
+
+function compareNullableIso(left: string | null, right: string | null) {
+  const leftMs = toMillis(left) ?? 0;
+  const rightMs = toMillis(right) ?? 0;
+
+  return leftMs - rightMs;
+}
+
+function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
+  const textContent = normalizeOptionalString(stageMessage.text_content);
+  const mediaUrl = normalizeOptionalString(stageMessage.media_url);
+
+  if (stageMessage.message_type !== "audio") {
+    return [
+      {
+        messageType: "text" as const,
+        textContent,
+        mediaUrl: null,
+      },
+    ];
+  }
+
+  const parts: Array<{
+    messageType: "text" | "audio";
+    textContent: string | null;
+    mediaUrl: string | null;
+  }> = [];
+
+  if (textContent) {
+    parts.push({
+      messageType: "text",
+      textContent,
+      mediaUrl: null,
+    });
+  }
+
+  parts.push({
+    messageType: "audio",
+    textContent: null,
+    mediaUrl,
+  });
+
+  return parts;
 }
 
 async function loadActiveAgent(client: QueryClient, ownerId: string) {
   const result = await client
     .from("automation_agents")
-    .select("id, owner_id, name, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active")
+    .select(
+      "id, owner_id, name, personality, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active, ai_enabled, ai_prompt",
+    )
     .eq("owner_id", ownerId)
     .eq("is_active", true)
     .maybeSingle();
@@ -136,7 +417,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
 async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const stagesResult = await client
     .from("automation_agent_stages")
-    .select("id, agent_id, stage_order, name, followup_enabled, followup_delay_minutes, followup_message")
+    .select("id, agent_id, stage_order, name")
     .eq("agent_id", agentId)
     .order("stage_order", { ascending: true });
   const stages = castRows<AutomationStageRuntimeRow>(stagesResult.data);
@@ -144,11 +425,18 @@ async function loadStagesForAgent(client: QueryClient, agentId: string) {
   if (stagesResult.error || stages.length === 0) {
     return {
       stages: [],
+      followupsByStage: new Map<string, AutomationStageFollowupRuntimeRow[]>(),
       messagesByStage: new Map<string, AutomationStageMessageRuntimeRow[]>(),
     };
   }
 
   const stageIds = stages.map((stage) => stage.id);
+  const followupsResult = await client
+    .from("automation_stage_followups")
+    .select("id, stage_id, followup_order, is_active, delay_hours, message")
+    .in("stage_id", stageIds)
+    .order("followup_order", { ascending: true });
+  const followups = castRows<AutomationStageFollowupRuntimeRow>(followupsResult.data);
   const messagesResult = await client
     .from("automation_stage_messages")
     .select("id, stage_id, message_order, message_type, text_content, media_url, delay_seconds")
@@ -159,17 +447,27 @@ async function loadStagesForAgent(client: QueryClient, agentId: string) {
   if (messagesResult.error) {
     throw new Error(messagesResult.error.message);
   }
+  if (followupsResult.error) {
+    throw new Error(followupsResult.error.message);
+  }
 
   const messagesByStage = new Map<string, AutomationStageMessageRuntimeRow[]>();
+  const followupsByStage = new Map<string, AutomationStageFollowupRuntimeRow[]>();
 
   for (const message of messages) {
     const current = messagesByStage.get(message.stage_id) ?? [];
     current.push(message);
     messagesByStage.set(message.stage_id, current);
   }
+  for (const followup of followups) {
+    const current = followupsByStage.get(followup.stage_id) ?? [];
+    current.push(followup);
+    followupsByStage.set(followup.stage_id, current);
+  }
 
   return {
     stages,
+    followupsByStage,
     messagesByStage,
   };
 }
@@ -275,6 +573,89 @@ async function markRunCompleted(client: QueryClient, runId: string) {
     .eq("id", runId);
 }
 
+async function cancelAnsweredPendingResponseJobs(
+  client: QueryClient,
+  options: {
+    runId: string;
+    inboundAt: string;
+  },
+) {
+  const result = await client
+    .from("automation_jobs")
+    .update({
+      status: "cancelled",
+      last_error: "El cliente respondio antes de que se envie esta respuesta.",
+    } as never)
+    .eq("run_id", options.runId)
+    .in("job_type", ["followup", "ai_reply"])
+    .eq("status", "pending")
+    .lt("created_at", options.inboundAt);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
+async function scheduleCompletedFlowAiReply(
+  client: QueryClient,
+  options: {
+    agent: AutomationAgentRuntimeRow;
+    run: AutomationRunRow;
+    inboundText?: string | null;
+    inboundAt: string;
+    stageId: string | null;
+  },
+) {
+  if (!options.agent.ai_enabled) {
+    return { scheduled: false, reason: "ai_disabled" as const };
+  }
+
+  // Pre-flight: verify the API key exists before creating the job.
+  // Without this check the job would be scheduled, fail at runtime 3 times
+  // and end up in "failed" state with "IA activada sin API key configurada."
+  const credential = await loadAiCredential(options.run.owner_id);
+  if (!credential) {
+    return { scheduled: false, reason: "missing_api_key" as const };
+  }
+
+  if (isOutsideAutomationWindow(options.run)) {
+    return { scheduled: false, reason: "outside_automation_window" as const };
+  }
+
+  if (!options.stageId) {
+    return { scheduled: false, reason: "missing_dependencies" as const };
+  }
+
+  const inboundAtMs = toMillis(options.inboundAt) ?? Date.now();
+  const replyDelayMs =
+    randomInteger(options.agent.min_reply_delay_seconds, options.agent.max_reply_delay_seconds) *
+    1000;
+  const scheduledFor = new Date(Math.max(Date.now(), inboundAtMs + replyDelayMs)).toISOString();
+  const insertResult = await client.from("automation_jobs").insert({
+    owner_id: options.run.owner_id,
+    agent_id: options.run.agent_id,
+    account_id: options.run.account_id,
+    conversation_id: options.run.conversation_id,
+    run_id: options.run.id,
+    stage_id: options.stageId,
+    stage_message_id: null,
+    job_type: "ai_reply",
+    status: "pending",
+    scheduled_for: scheduledFor,
+    payload: {
+      messageType: "text",
+      inboundText: options.inboundText ?? null,
+      inboundAt: options.inboundAt,
+    },
+  } as never);
+
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message);
+  }
+
+  return { scheduled: true, reason: "scheduled" as const };
+}
+
 export async function scheduleAutomationForInboundMessage(
   client: QueryClient,
   options: {
@@ -283,6 +664,7 @@ export async function scheduleAutomationForInboundMessage(
     conversationId: string;
     createdAt: string;
     isInbound: boolean;
+    inboundText?: string | null;
   },
 ) {
   if (!options.isInbound) {
@@ -295,7 +677,7 @@ export async function scheduleAutomationForInboundMessage(
     return { scheduled: 0, reason: "no_active_agent" as const };
   }
 
-  const { stages, messagesByStage } = await loadStagesForAgent(client, agent.id);
+  const { stages, followupsByStage, messagesByStage } = await loadStagesForAgent(client, agent.id);
 
   if (stages.length === 0) {
     return { scheduled: 0, reason: "no_stages" as const };
@@ -309,6 +691,11 @@ export async function scheduleAutomationForInboundMessage(
     inboundAt: options.createdAt,
   });
 
+  await cancelAnsweredPendingResponseJobs(client, {
+    runId: run.id,
+    inboundAt: options.createdAt,
+  });
+
   if (await hasPendingStageMessages(client, run.id)) {
     return { scheduled: 0, reason: "stage_in_progress" as const };
   }
@@ -318,69 +705,114 @@ export async function scheduleAutomationForInboundMessage(
 
   if (!nextStage) {
     await markRunCompleted(client, run.id);
-    return { scheduled: 0, reason: "flow_completed" as const };
+    const aiReply = await scheduleCompletedFlowAiReply(client, {
+      agent,
+      run,
+      inboundText: options.inboundText,
+      inboundAt: options.createdAt,
+      stageId: stages[stages.length - 1]?.id ?? null,
+    });
+
+    return {
+      scheduled: aiReply.scheduled ? 1 : 0,
+      reason: aiReply.scheduled
+        ? ("flow_completed_ai_scheduled" as const)
+        : ("flow_completed" as const),
+      aiReplyReason: aiReply.reason,
+    };
   }
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
-  const startAtMs =
-    new Date(options.createdAt).getTime() +
-    randomInteger(agent.min_reply_delay_seconds, agent.max_reply_delay_seconds) * 1000;
+  const createdAtMs = toMillis(options.createdAt) ?? Date.now();
+  const startAtMs = Math.max(
+    Date.now(),
+    createdAtMs +
+      randomInteger(agent.min_reply_delay_seconds, agent.max_reply_delay_seconds) * 1000,
+  );
   let scheduledAtMs = startAtMs;
   let insertedCount = 0;
+  let insertedStageMessageCount = 0;
+  let insertedFollowupCount = 0;
   let usedAudio = sentAudioJobs;
   let lastScheduledIso = new Date(startAtMs).toISOString();
+  let lastInsertedDelaySeconds = 0;
 
   for (const stageMessage of stageMessages) {
-    if (insertedCount > 0) {
-      scheduledAtMs += stageMessage.delay_seconds * 1000;
-    }
-
     if (stageMessage.message_type === "audio" && usedAudio >= agent.max_media_per_chat) {
       continue;
     }
 
-    lastScheduledIso = new Date(scheduledAtMs).toISOString();
-
-    const insertResult = await client.from("automation_jobs").insert({
-      owner_id: options.ownerId,
-      agent_id: agent.id,
-      account_id: options.accountId,
-      conversation_id: options.conversationId,
-      run_id: run.id,
-      stage_id: nextStage.id,
-      stage_message_id: stageMessage.id,
-      job_type: "stage_message",
-      status: "pending",
-      scheduled_for: lastScheduledIso,
-      payload: {
-        stageOrder: nextStage.stage_order,
-        stageName: nextStage.name,
-        messageOrder: stageMessage.message_order,
-        messageType: stageMessage.message_type,
-        textContent: stageMessage.text_content,
-        mediaUrl: stageMessage.media_url,
-      },
-    } as never);
-
-    if (insertResult.error) {
-      throw new Error(insertResult.error.message);
+    if (insertedCount > 0) {
+      scheduledAtMs += lastInsertedDelaySeconds * 1000;
     }
 
-    insertedCount += 1;
+    lastScheduledIso = new Date(scheduledAtMs).toISOString();
+
+    const jobPayloads = buildStageMessageJobPayloads(stageMessage);
+    let lastPartScheduledAtMs = scheduledAtMs;
+
+    for (let payloadIndex = 0; payloadIndex < jobPayloads.length; payloadIndex += 1) {
+      const payload = jobPayloads[payloadIndex];
+      const partScheduledAtMs = scheduledAtMs + payloadIndex * STAGE_MESSAGE_PART_GAP_MS;
+      lastPartScheduledAtMs = partScheduledAtMs;
+      lastScheduledIso = new Date(partScheduledAtMs).toISOString();
+
+      const insertResult = await client.from("automation_jobs").insert({
+        owner_id: options.ownerId,
+        agent_id: agent.id,
+        account_id: options.accountId,
+        conversation_id: options.conversationId,
+        run_id: run.id,
+        stage_id: nextStage.id,
+        stage_message_id: stageMessage.id,
+        job_type: "stage_message",
+        status: "pending",
+        scheduled_for: lastScheduledIso,
+        payload: {
+          stageOrder: nextStage.stage_order,
+          stageName: nextStage.name,
+          messageOrder: stageMessage.message_order,
+          messageType: payload.messageType,
+          textContent: payload.textContent,
+          mediaUrl: payload.mediaUrl,
+          stageMessageType: stageMessage.message_type,
+          stageMessagePart:
+            payload.messageType === "text" && stageMessage.message_type === "audio"
+              ? "audio_text"
+              : payload.messageType,
+        },
+      } as never);
+
+      if (insertResult.error) {
+        throw new Error(insertResult.error.message);
+      }
+
+      insertedCount += 1;
+      insertedStageMessageCount += 1;
+    }
 
     if (stageMessage.message_type === "audio") {
       usedAudio += 1;
     }
+
+    scheduledAtMs =
+      lastPartScheduledAtMs + (jobPayloads.length > 1 ? STAGE_MESSAGE_PART_GAP_MS : 0);
+
+    lastInsertedDelaySeconds = stageMessage.delay_seconds;
   }
 
   if (insertedCount === 0) {
     return { scheduled: 0, reason: "no_deliverable_messages" as const };
   }
 
-  if (nextStage.followup_enabled && normalizeOptionalString(nextStage.followup_message)) {
+  const followups = (followupsByStage.get(nextStage.id) ?? [])
+    .filter((followup) => followup.is_active && normalizeOptionalString(followup.message))
+    .sort((left, right) => left.followup_order - right.followup_order);
+
+  for (const followup of followups) {
     const followupScheduledFor = new Date(
-      scheduledAtMs + nextStage.followup_delay_minutes * 60 * 1000,
+      scheduledAtMs + followup.delay_hours * 60 * 60 * 1000,
     ).toISOString();
     const insertFollowup = await client.from("automation_jobs").insert({
       owner_id: options.ownerId,
@@ -396,8 +828,9 @@ export async function scheduleAutomationForInboundMessage(
       payload: {
         stageOrder: nextStage.stage_order,
         stageName: nextStage.name,
+        followupOrder: followup.followup_order,
         messageType: "text",
-        textContent: nextStage.followup_message,
+        textContent: followup.message,
       },
     } as never);
 
@@ -406,6 +839,7 @@ export async function scheduleAutomationForInboundMessage(
     }
 
     insertedCount += 1;
+    insertedFollowupCount += 1;
   }
 
   await client
@@ -417,7 +851,15 @@ export async function scheduleAutomationForInboundMessage(
     } as never)
     .eq("id", run.id);
 
-  return { scheduled: insertedCount, reason: "scheduled" as const };
+  return {
+    scheduled: insertedCount,
+    stageMessageJobs: insertedStageMessageCount,
+    followupJobs: insertedFollowupCount,
+    reason: "scheduled" as const,
+    runId: run.id,
+    stageId: nextStage.id,
+    stageOrder: nextStage.stage_order,
+  };
 }
 
 async function claimPendingJob(client: QueryClient, jobId: string) {
@@ -467,11 +909,12 @@ async function loadRun(client: QueryClient, runId: string) {
   return castRow<AutomationRunRow>(result.data);
 }
 
-async function loadConversation(client: QueryClient, conversationId: string) {
+async function loadConversation(client: QueryClient, conversationId: string, ownerId: string) {
   const result = await client
     .from("instagram_conversations")
     .select("id, owner_id, account_id, contact_igsid")
     .eq("id", conversationId)
+    .eq("owner_id", ownerId)
     .maybeSingle();
 
   if (result.error) {
@@ -481,11 +924,14 @@ async function loadConversation(client: QueryClient, conversationId: string) {
   return castRow<ConversationRuntimeRow>(result.data);
 }
 
-async function loadAccount(client: QueryClient, accountId: string) {
+async function loadAccount(client: QueryClient, accountId: string, ownerId: string) {
   const result = await client
     .from("instagram_accounts")
-    .select("id, owner_id, instagram_account_id, instagram_app_user_id, access_token, token_expires_at")
+    .select(
+      "id, owner_id, instagram_account_id, instagram_app_user_id, access_token, token_expires_at, token_lifecycle",
+    )
     .eq("id", accountId)
+    .eq("owner_id", ownerId)
     .maybeSingle();
 
   if (result.error) {
@@ -495,10 +941,27 @@ async function loadAccount(client: QueryClient, accountId: string) {
   return castRow<AccountRuntimeRow>(result.data);
 }
 
+async function loadRecentConversationMessages(client: QueryClient, conversationId: string) {
+  const result = await client
+    .from("instagram_messages")
+    .select("direction, message_type, text_content, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return castRows<ConversationMessageContextRow>(result.data).reverse();
+}
+
 async function loadAgent(client: QueryClient, agentId: string) {
   const result = await client
     .from("automation_agents")
-    .select("id, owner_id, is_active")
+    .select(
+      "id, owner_id, name, personality, min_reply_delay_seconds, max_reply_delay_seconds, max_media_per_chat, is_active, ai_enabled, ai_prompt",
+    )
     .eq("id", agentId)
     .maybeSingle();
 
@@ -506,7 +969,7 @@ async function loadAgent(client: QueryClient, agentId: string) {
     throw new Error(result.error.message);
   }
 
-  return castRow<{ id: string; owner_id: string; is_active: boolean }>(result.data);
+  return castRow<AutomationAgentRuntimeRow>(result.data);
 }
 
 async function countRemainingStageMessageJobs(
@@ -530,6 +993,23 @@ async function countRemainingStageMessageJobs(
   return castRows<{ id: string }>(result.data).length;
 }
 
+async function loadLastStageOrder(client: QueryClient, agentId: string) {
+  const result = await client
+    .from("automation_agent_stages")
+    .select("stage_order")
+    .eq("agent_id", agentId)
+    .order("stage_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const stage = castRow<{ stage_order: number }>(result.data);
+  return stage?.stage_order ?? null;
+}
+
 async function maybeCompleteStage(
   client: QueryClient,
   run: AutomationRunRow,
@@ -546,48 +1026,81 @@ async function maybeCompleteStage(
     typeof job.payload?.stageOrder === "number"
       ? job.payload.stageOrder
       : Number(job.payload?.stageOrder ?? 0);
+  const completedStageOrder = Number.isFinite(stageOrder)
+    ? stageOrder
+    : run.last_completed_stage_order;
+  const lastStageOrder = await loadLastStageOrder(client, run.agent_id);
+  const flowCompleted =
+    lastStageOrder !== null && completedStageOrder >= lastStageOrder;
 
   await client
     .from("automation_runs")
     .update({
-      last_completed_stage_order: Number.isFinite(stageOrder) ? stageOrder : run.last_completed_stage_order,
+      last_completed_stage_order: completedStageOrder,
       active_stage_order: null,
       last_stage_completed_at: completedAt,
-      status: "active",
+      status: flowCompleted ? "completed" : "active",
     } as never)
     .eq("id", run.id);
 }
 
-async function sendAutomationJob(
+async function sendAutomationOutboundMessage(
   client: QueryClient,
-  job: AutomationJobRow,
-  run: AutomationRunRow,
   conversation: ConversationRuntimeRow,
   account: AccountRuntimeRow,
+  options: {
+    messageType: "text" | "audio";
+    textContent: string | null;
+    mediaUrl: string | null;
+  },
 ) {
   const managedToken = await ensureInstagramAccessToken({
     accessToken: account.access_token,
     expiresAt: account.token_expires_at,
+    lifecycle: account.token_lifecycle,
+    onTokenUpdate: async (nextToken) => {
+      const updateTokenResult = await client
+        .from("instagram_accounts")
+        .update({
+          access_token: nextToken.accessToken,
+          expires_in: nextToken.expiresIn,
+          expires_at: nextToken.expiresAt,
+          token_expires_at: nextToken.expiresAt,
+          token_obtained_at: nextToken.obtainedAt,
+          token_lifecycle: nextToken.lifecycle,
+          last_token_refresh_at: nextToken.obtainedAt,
+          updated_at: nextToken.obtainedAt,
+        } as never)
+        .eq("id", account.id)
+        .eq("owner_id", account.owner_id);
+
+      if (updateTokenResult.error) {
+        throw new Error(updateTokenResult.error.message);
+      }
+
+      account.access_token = nextToken.accessToken;
+      account.token_expires_at = nextToken.expiresAt;
+      account.token_lifecycle = nextToken.lifecycle;
+    },
   });
-  const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
-  const textContent = normalizeOptionalString(
-    typeof job.payload?.textContent === "string" ? job.payload.textContent : null,
-  );
-  const mediaUrl = normalizeOptionalString(
-    typeof job.payload?.mediaUrl === "string" ? job.payload.mediaUrl : null,
-  );
+  const messageType = options.messageType;
+  const textContent = normalizeOptionalString(options.textContent);
+  const mediaUrl = normalizeOptionalString(options.mediaUrl);
 
   if (messageType === "text" && !textContent) {
-    throw new Error("El job no tiene contenido de texto.");
+    throw new Error("El mensaje no tiene contenido de texto.");
   }
 
   if (messageType === "audio" && !mediaUrl) {
-    throw new Error("El job de audio no tiene media_url.");
+    throw new Error("El mensaje de audio no tiene media_url.");
+  }
+
+  if (messageType === "audio" && mediaUrl) {
+    await assertInstagramAudioUrlAccessible(mediaUrl);
   }
 
   const response = await sendInstagramMessage({
     accessToken: managedToken.accessToken,
-    instagramAccountId: account.instagram_account_id,
     recipientId: conversation.contact_igsid,
     text: textContent ?? undefined,
     messageType: messageType === "audio" ? "audio" : undefined,
@@ -595,12 +1108,15 @@ async function sendAutomationJob(
   });
   const nowIso = new Date().toISOString();
   const preview = textContent ?? (messageType === "audio" ? "Mensaje de audio" : "Mensaje");
+  const scopedMetaMessageId = response.message_id
+    ? `${conversation.account_id}:${response.message_id}`
+    : crypto.randomUUID();
 
   const messageInsert = await client.from("instagram_messages").insert({
     owner_id: conversation.owner_id,
     account_id: conversation.account_id,
     conversation_id: conversation.id,
-    meta_message_id: response.message_id ?? crypto.randomUUID(),
+    meta_message_id: scopedMetaMessageId,
     direction: "out",
     message_type: messageType,
     text_content: textContent,
@@ -625,7 +1141,8 @@ async function sendAutomationJob(
       unread_count: 0,
       updated_at: nowIso,
     } as never)
-    .eq("id", conversation.id);
+    .eq("id", conversation.id)
+    .eq("owner_id", conversation.owner_id);
 
   if (conversationUpdate.error) {
     throw new Error(conversationUpdate.error.message);
@@ -639,39 +1156,188 @@ async function sendAutomationJob(
       webhook_subscription_error: null,
       updated_at: nowIso,
     } as never)
-    .eq("id", account.id);
+    .eq("id", account.id)
+    .eq("owner_id", account.owner_id);
+
+  return {
+    sentAt: nowIso,
+  };
+}
+
+async function sendAutomationJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  run: AutomationRunRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+) {
+  const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
+  const textContent = normalizeOptionalString(
+    typeof job.payload?.textContent === "string" ? job.payload.textContent : null,
+  );
+  const mediaUrl = normalizeOptionalString(
+    typeof job.payload?.mediaUrl === "string" ? job.payload.mediaUrl : null,
+  );
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType,
+    textContent,
+    mediaUrl,
+  });
 
   await markJob(client, job.id, {
     status: "sent",
-    sent_at: nowIso,
+    sent_at: result.sentAt,
     attempt_count: (job.attempt_count ?? 0) + 1,
     last_error: null,
   });
 
   if (job.job_type === "stage_message") {
-    await maybeCompleteStage(client, run, job, nowIso);
+    await maybeCompleteStage(client, run, job, result.sentAt);
   }
 
   return { sent: true };
 }
 
-function shouldSkipFollowup(run: AutomationRunRow) {
-  const lastInboundMs = toMillis(run.last_inbound_at);
-  const lastStageCompletedMs = toMillis(run.last_stage_completed_at);
+async function sendAutomationAiReplyJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  run: AutomationRunRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+  agent: AutomationAgentRuntimeRow,
+) {
+  const conversationMessages = await loadRecentConversationMessages(client, conversation.id);
+  const inboundText =
+    typeof job.payload?.inboundText === "string" ? job.payload.inboundText : null;
+  const textContent = await generateAgentAiReply(
+    agent,
+    run.owner_id,
+    inboundText,
+    conversationMessages,
+  );
 
-  if (lastInboundMs === null || lastStageCompletedMs === null) {
+  if (!textContent) {
+    throw new Error("La IA no devolvio una respuesta para enviar.");
+  }
+
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType: "text",
+    textContent,
+    mediaUrl: null,
+  });
+
+  await markJob(client, job.id, {
+    status: "sent",
+    sent_at: result.sentAt,
+    attempt_count: (job.attempt_count ?? 0) + 1,
+    last_error: null,
+  });
+
+  await markRunCompleted(client, run.id);
+
+  return { sent: true };
+}
+
+function shouldSkipFollowup(run: AutomationRunRow, job: AutomationJobRow) {
+  const lastInboundMs = toMillis(run.last_inbound_at);
+  const followupCreatedMs = toMillis(job.created_at) ?? toMillis(job.scheduled_for);
+
+  if (lastInboundMs === null || followupCreatedMs === null) {
     return false;
   }
 
-  return lastInboundMs > lastStageCompletedMs;
+  return lastInboundMs > followupCreatedMs;
 }
 
-async function handleJob(client: QueryClient, job: AutomationJobRow) {
+function isOutsideAutomationWindow(run: AutomationRunRow) {
+  const lastInboundMs = toMillis(run.last_inbound_at);
+
+  if (lastInboundMs === null) {
+    return true;
+  }
+
+  return Date.now() - lastInboundMs > STANDARD_MESSAGING_WINDOW_MS;
+}
+
+async function cancelPendingJob(
+  client: QueryClient,
+  jobId: string,
+  reason: string,
+) {
+  const result = await client
+    .from("automation_jobs")
+    .update({
+      status: "cancelled",
+      last_error: reason,
+    } as never)
+    .eq("id", jobId)
+    .eq("status", "pending");
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
+async function cleanupObsoleteFollowups(
+  client: QueryClient,
+  options: {
+    limit: number;
+    ownerId?: string;
+  },
+) {
+  let jobsQuery = client
+    .from("automation_jobs")
+    .select("*")
+    .eq("job_type", "followup")
+    .eq("status", "pending");
+
+  if (options.ownerId) {
+    jobsQuery = jobsQuery.eq("owner_id", options.ownerId);
+  }
+
+  const jobsResult = await jobsQuery
+    .order("created_at", { ascending: true })
+    .limit(options.limit);
+  const jobs = castRows<AutomationJobRow>(jobsResult.data);
+
+  if (jobsResult.error) {
+    throw new Error(jobsResult.error.message);
+  }
+
+  let cleaned = 0;
+  const runsById = new Map<string, AutomationRunRow | null>();
+
+  for (const job of jobs) {
+    let run = runsById.get(job.run_id);
+
+    if (!runsById.has(job.run_id)) {
+      run = await loadRun(client, job.run_id);
+      runsById.set(job.run_id, run);
+    }
+
+    if (!run || !shouldSkipFollowup(run, job)) {
+      continue;
+    }
+
+    await cancelPendingJob(client, job.id, "El cliente respondio antes del followup.");
+    cleaned += 1;
+  }
+
+  return { cleaned };
+}
+
+async function handleJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  options?: {
+    retryDelayMs?: number;
+  },
+): Promise<AutomationJobResult> {
   const [agent, run, conversation, account] = await Promise.all([
     loadAgent(client, job.agent_id),
     loadRun(client, job.run_id),
-    loadConversation(client, job.conversation_id),
-    loadAccount(client, job.account_id),
+    loadConversation(client, job.conversation_id, job.owner_id),
+    loadAccount(client, job.account_id, job.owner_id),
   ]);
 
   if (!agent || !run || !conversation || !account) {
@@ -690,7 +1356,27 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
     return "cancelled_inactive_agent" as const;
   }
 
-  if (job.job_type === "followup" && shouldSkipFollowup(run)) {
+  if (job.job_type === "ai_reply" && !agent.ai_enabled) {
+    await markJob(client, job.id, {
+      status: "skipped",
+      last_error: "La IA ya no esta activa para este agente.",
+    });
+    return "skipped_ai_disabled" as const;
+  }
+
+  if (job.job_type === "ai_reply") {
+    const credential = await loadAiCredential(run.owner_id);
+    if (!credential) {
+      await markJob(client, job.id, {
+        status: "skipped",
+        last_error:
+          "No hay API key de IA configurada. Agrega una clave de OpenAI en Automatizaciones > IA.",
+      });
+      return "skipped_ai_disabled" as const;
+    }
+  }
+
+  if (job.job_type === "followup" && shouldSkipFollowup(run, job)) {
     await markJob(client, job.id, {
       status: "skipped",
       last_error: "El cliente respondio antes del followup.",
@@ -698,8 +1384,21 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
     return "skipped_followup_answered" as const;
   }
 
+  if (isOutsideAutomationWindow(run)) {
+    await markJob(client, job.id, {
+      status: "skipped",
+      last_error:
+        "Meta no permite automatizaciones fuera de las 24 horas desde el ultimo mensaje del cliente.",
+    });
+    return "skipped_outside_automation_window" as const;
+  }
+
   try {
-    await sendAutomationJob(client, job, run, conversation, account);
+    if (job.job_type === "ai_reply") {
+      await sendAutomationAiReplyJob(client, job, run, conversation, account, agent);
+    } else {
+      await sendAutomationJob(client, job, run, conversation, account);
+    }
     return "sent" as const;
   } catch (error) {
     const nextAttempt = (job.attempt_count ?? 0) + 1;
@@ -710,7 +1409,9 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
         status: "pending",
         attempt_count: nextAttempt,
         last_error: lastError,
-        scheduled_for: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        scheduled_for: new Date(
+          Date.now() + (options?.retryDelayMs ?? 5 * 60 * 1000),
+        ).toISOString(),
       });
       return "retry_scheduled" as const;
     }
@@ -724,6 +1425,185 @@ async function handleJob(client: QueryClient, job: AutomationJobRow) {
   }
 }
 
+async function loadNextPendingStageMessageJob(
+  client: QueryClient,
+  options: {
+    runId: string;
+    stageId: string;
+  },
+) {
+  const result = await client
+    .from("automation_jobs")
+    .select("*")
+    .eq("run_id", options.runId)
+    .eq("stage_id", options.stageId)
+    .eq("job_type", "stage_message")
+    .eq("status", "pending")
+    .order("scheduled_for", { ascending: true });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const jobs = castRows<AutomationJobRow>(result.data);
+
+  return (
+    jobs.sort((left, right) => {
+      const messageOrderDiff =
+        getJobPayloadNumber(left, "messageOrder") - getJobPayloadNumber(right, "messageOrder");
+
+      if (messageOrderDiff !== 0) {
+        return messageOrderDiff;
+      }
+
+      const partOrderDiff = getStageMessagePartOrder(left) - getStageMessagePartOrder(right);
+
+      if (partOrderDiff !== 0) {
+        return partOrderDiff;
+      }
+
+      const scheduledDiff = compareNullableIso(left.scheduled_for, right.scheduled_for);
+
+      if (scheduledDiff !== 0) {
+        return scheduledDiff;
+      }
+
+      return compareNullableIso(left.created_at, right.created_at);
+    })[0] ?? null
+  );
+}
+
+async function cancelPendingStageMessageJobs(
+  client: QueryClient,
+  options: {
+    runId: string;
+    stageId: string;
+    reason: string;
+  },
+) {
+  const result = await client
+    .from("automation_jobs")
+    .update({
+      status: "cancelled",
+      last_error: options.reason,
+    } as never)
+    .eq("run_id", options.runId)
+    .eq("stage_id", options.stageId)
+    .eq("job_type", "stage_message")
+    .eq("status", "pending");
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
+function shouldStopLiveStageExecution(result: AutomationJobResult) {
+  return result !== "sent" && result !== "retry_scheduled";
+}
+
+export async function processScheduledStageMessages(
+  client: QueryClient,
+  options: {
+    runId: string;
+    stageId: string;
+  },
+) {
+  const summary = createProcessingSummary();
+
+  while (true) {
+    const nextJob = await loadNextPendingStageMessageJob(client, options);
+
+    if (!nextJob) {
+      return summary;
+    }
+
+    const scheduledForMs = toMillis(nextJob.scheduled_for) ?? Date.now();
+    await wait(scheduledForMs - Date.now());
+
+    const claimedJob = await claimPendingJob(client, nextJob.id);
+
+    if (!claimedJob) {
+      continue;
+    }
+
+    summary.claimed += 1;
+    const result = await handleJob(client, claimedJob, { retryDelayMs: 10_000 });
+    addJobResultToSummary(summary, result);
+
+    if (shouldStopLiveStageExecution(result)) {
+      await cancelPendingStageMessageJobs(client, {
+        runId: options.runId,
+        stageId: options.stageId,
+        reason: "La ejecucion viva de la etapa se detuvo antes de completar todos los mensajes.",
+      });
+      return summary;
+    }
+  }
+}
+
+export async function runAutomationForInboundMessage(
+  client: QueryClient,
+  options: {
+    ownerId: string;
+    accountId: string;
+    conversationId: string;
+    createdAt: string;
+    isInbound: boolean;
+    inboundText?: string | null;
+  },
+) {
+  const scheduleResult = await scheduleAutomationForInboundMessage(client, options);
+
+  if (scheduleResult.reason !== "scheduled") {
+    return {
+      schedule: scheduleResult,
+      stageExecution: null,
+    };
+  }
+
+  const stageExecution = await processScheduledStageMessages(client, {
+    runId: scheduleResult.runId,
+    stageId: scheduleResult.stageId,
+  });
+
+  return {
+    schedule: scheduleResult,
+    stageExecution,
+  };
+}
+
+async function resetStuckStageMessageJobs(
+  client: QueryClient,
+  options: {
+    ownerId?: string;
+  },
+) {
+  // Stage messages are executed synchronously inside the webhook request.
+  // If that request is killed mid-flight (timeout, deployment restart, crash),
+  // the job stays in "processing" forever and hasPendingStageMessages() always
+  // returns true, permanently blocking further scheduling for that conversation.
+  // Resetting jobs stuck in "processing" for > 5 minutes unblocks the pipeline.
+  const STUCK_THRESHOLD_MS = 5 * 60 * 1000;
+  const stuckBefore = new Date(Date.now() - STUCK_THRESHOLD_MS).toISOString();
+
+  let query = client
+    .from("automation_jobs")
+    .update({
+      status: "pending",
+      last_error:
+        "Reiniciado por dispatch: job de etapa estaba en procesamiento por mas de 5 minutos.",
+    } as never)
+    .eq("job_type", "stage_message")
+    .eq("status", "processing")
+    .lt("updated_at", stuckBefore);
+
+  if (options.ownerId) {
+    query = query.eq("owner_id", options.ownerId);
+  }
+
+  await query;
+}
+
 export async function processDueAutomationJobs(
   client: QueryClient,
   options?: {
@@ -733,9 +1613,18 @@ export async function processDueAutomationJobs(
 ) {
   const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
   const nowIso = new Date().toISOString();
+
+  // Unblock any stage_message jobs that got stranded in "processing" state.
+  await resetStuckStageMessageJobs(client, { ownerId: options?.ownerId });
+
+  const cleanupSummary = await cleanupObsoleteFollowups(client, {
+    limit,
+    ownerId: options?.ownerId,
+  });
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
+    .in("job_type", ["followup", "ai_reply"])
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
@@ -750,14 +1639,8 @@ export async function processDueAutomationJobs(
     throw new Error(jobsResult.error.message);
   }
 
-  const summary = {
-    claimed: 0,
-    sent: 0,
-    skipped: 0,
-    cancelled: 0,
-    retried: 0,
-    failed: 0,
-  };
+  const summary = createProcessingSummary();
+  summary.cleaned = cleanupSummary.cleaned;
 
   for (const pendingJob of jobs) {
     const claimedJob = await claimPendingJob(client, pendingJob.id);
@@ -768,25 +1651,7 @@ export async function processDueAutomationJobs(
 
     summary.claimed += 1;
     const result = await handleJob(client, claimedJob);
-
-    switch (result) {
-      case "sent":
-        summary.sent += 1;
-        break;
-      case "retry_scheduled":
-        summary.retried += 1;
-        break;
-      case "cancelled_inactive_agent":
-        summary.cancelled += 1;
-        break;
-      case "skipped_followup_answered":
-      case "skipped_missing_dependencies":
-        summary.skipped += 1;
-        break;
-      default:
-        summary.failed += 1;
-        break;
-    }
+    addJobResultToSummary(summary, result);
   }
 
   return summary;

@@ -11,9 +11,11 @@ type AdminClient = ReturnType<typeof import("@/lib/supabase/admin").createAdminC
 
 type InstagramAccountProfileTarget = {
   id: string;
+  owner_id?: string | null;
   instagram_account_id: string;
   access_token: string;
   token_expires_at?: string | null;
+  token_lifecycle?: string | null;
   username?: string | null;
   name?: string | null;
   profile_picture_url?: string | null;
@@ -35,6 +37,7 @@ type InstagramContactProfileTarget = {
   owner_id: string;
   access_token: string;
   token_expires_at?: string | null;
+  token_lifecycle?: string | null;
   last_oauth_at?: string | null;
 };
 
@@ -43,6 +46,8 @@ type ResolvedInstagramContact = {
   contactName: string | null;
   profilePictureUrl: string | null;
 };
+
+const EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS = 60 * 60 * 1000;
 
 function isMissingInstagramContactsTableError(error: unknown) {
   const message =
@@ -115,6 +120,20 @@ function hasNewerOauthThanLastFetch(options: {
   return oauthMs > fetchMs;
 }
 
+function isOlderThan(value: string | null | undefined, ageMs: number) {
+  if (!value) {
+    return true;
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  if (Number.isNaN(timestamp)) {
+    return true;
+  }
+
+  return Date.now() - timestamp >= ageMs;
+}
+
 export function getInstagramContactDisplayProfile(contact: {
   contact_username?: string | null;
   contact_name?: string | null;
@@ -130,6 +149,7 @@ export function getInstagramContactDisplayProfile(contact: {
 export async function syncInstagramAccountProfile(options: {
   admin: AdminClient;
   account: InstagramAccountProfileTarget;
+  ownerId?: string;
 }) {
   const oauthConfig = getMetaOauthConfig();
 
@@ -146,9 +166,39 @@ export async function syncInstagramAccountProfile(options: {
     };
   }
 
+  const ownerId = options.ownerId ?? options.account.owner_id;
+  if (!ownerId) {
+    throw new Error("No pudimos actualizar la cuenta sin owner_id.");
+  }
+
   const managedToken = await ensureInstagramAccessToken({
     accessToken: options.account.access_token,
     expiresAt: options.account.token_expires_at ?? null,
+    lifecycle: options.account.token_lifecycle ?? null,
+    onTokenUpdate: async (nextToken) => {
+      const updateTokenResult = await options.admin
+        .from("instagram_accounts")
+        .update({
+          access_token: nextToken.accessToken,
+          expires_in: nextToken.expiresIn,
+          expires_at: nextToken.expiresAt,
+          token_expires_at: nextToken.expiresAt,
+          token_obtained_at: nextToken.obtainedAt,
+          token_lifecycle: nextToken.lifecycle,
+          last_token_refresh_at: nextToken.obtainedAt,
+          updated_at: nextToken.obtainedAt,
+        } as never)
+        .eq("id", options.account.id)
+        .eq("owner_id", ownerId);
+
+      if (updateTokenResult.error) {
+        throw new Error(updateTokenResult.error.message);
+      }
+
+      options.account.access_token = nextToken.accessToken;
+      options.account.token_expires_at = nextToken.expiresAt;
+      options.account.token_lifecycle = nextToken.lifecycle;
+    },
   });
   const profile = await fetchInstagramAccountProfile({
     accessToken: managedToken.accessToken,
@@ -196,7 +246,8 @@ export async function syncInstagramAccountProfile(options: {
   const updateResult = await options.admin
     .from("instagram_accounts")
     .update(updatePayload as never)
-    .eq("id", options.account.id);
+    .eq("id", options.account.id)
+    .eq("owner_id", ownerId);
 
   if (updateResult.error) {
     throw new Error(updateResult.error.message);
@@ -254,7 +305,11 @@ export async function resolveInstagramContactProfile(options: {
     hasNewerOauthThanLastFetch({
       lastOauthAt: options.account.last_oauth_at,
       lastProfileFetchAt: existing.last_profile_fetch_at,
-    });
+    }) ||
+    isOlderThan(
+      existing.last_profile_fetch_at,
+      EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS,
+    );
 
   if (!shouldRetryFetch && existing) {
     return getInstagramContactDisplayProfile(existing);
@@ -266,6 +321,31 @@ export async function resolveInstagramContactProfile(options: {
     const managedToken = await ensureInstagramAccessToken({
       accessToken: options.account.access_token,
       expiresAt: options.account.token_expires_at ?? null,
+      lifecycle: options.account.token_lifecycle ?? null,
+      onTokenUpdate: async (nextToken) => {
+        const updateTokenResult = await options.admin
+          .from("instagram_accounts")
+          .update({
+            access_token: nextToken.accessToken,
+            expires_in: nextToken.expiresIn,
+            expires_at: nextToken.expiresAt,
+            token_expires_at: nextToken.expiresAt,
+            token_obtained_at: nextToken.obtainedAt,
+            token_lifecycle: nextToken.lifecycle,
+            last_token_refresh_at: nextToken.obtainedAt,
+            updated_at: nextToken.obtainedAt,
+          } as never)
+          .eq("id", options.account.id)
+          .eq("owner_id", options.account.owner_id);
+
+        if (updateTokenResult.error) {
+          throw new Error(updateTokenResult.error.message);
+        }
+
+        options.account.access_token = nextToken.accessToken;
+        options.account.token_expires_at = nextToken.expiresAt;
+        options.account.token_lifecycle = nextToken.lifecycle;
+      },
     });
     const profile = await fetchInstagramUserProfile({
       accessToken: managedToken.accessToken,
@@ -309,6 +389,13 @@ export async function resolveInstagramContactProfile(options: {
     return resolved;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    console.warn("[instagram-contact-profile] profile fetch failed", {
+      accountId: options.account.id,
+      ownerId: options.account.owner_id,
+      contactIgsid: options.contactIgsid,
+      error: message,
+    });
 
     if (!canUseContactsCache) {
       return existing

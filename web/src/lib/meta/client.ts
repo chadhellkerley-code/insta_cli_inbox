@@ -61,6 +61,12 @@ type ShortLivedTokenResponse = {
   expires_in?: number;
 };
 
+type LongLivedTokenResponse = {
+  access_token?: string;
+  token_type?: string;
+  expires_in?: number;
+};
+
 export type InstagramWebhookActivationResult = {
   pageId: string;
   pageName: string | null;
@@ -136,6 +142,11 @@ function getMetaErrorMessage(payload: unknown) {
 
 async function readMetaJson(response: Response) {
   return (await response.json().catch(() => null)) as unknown;
+}
+
+function resolveInstagramGraphHostFromConfig() {
+  const oauthConfig = getMetaOauthConfig();
+  return new URL(oauthConfig.graphBaseUrl).origin;
 }
 
 function normalizeOptionalString(value: unknown) {
@@ -233,6 +244,60 @@ export async function exchangeCodeForShortLivedToken(
     user_id: normalizeMetaIdentifier(tokenPayload.user_id) ?? undefined,
     permissions: normalizePermissions(tokenPayload.permissions),
     expires_in: tokenPayload.expires_in,
+  };
+}
+
+export async function exchangeInstagramTokenForLongLivedToken(options: {
+  shortLivedAccessToken: string;
+}) {
+  const { appSecret } = getMetaServerEnv();
+  const url = new URL(`${resolveInstagramGraphHostFromConfig()}/access_token`);
+  url.searchParams.set("grant_type", "ig_exchange_token");
+  url.searchParams.set("client_secret", appSecret);
+  url.searchParams.set("access_token", options.shortLivedAccessToken);
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as LongLivedTokenResponse | null;
+
+  assertMetaResponseOk(response, payload, "Long-lived token exchange failed");
+
+  if (!payload?.access_token) {
+    throw new Error("Meta did not return a long-lived access token.");
+  }
+
+  return {
+    accessToken: payload.access_token,
+    expiresIn: payload.expires_in ?? null,
+    tokenType: normalizeOptionalString(payload.token_type),
+  };
+}
+
+export async function refreshInstagramLongLivedAccessToken(options: {
+  accessToken: string;
+}) {
+  const url = new URL(`${resolveInstagramGraphHostFromConfig()}/refresh_access_token`);
+  url.searchParams.set("grant_type", "ig_refresh_token");
+  url.searchParams.set("access_token", options.accessToken);
+
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const payload = (await readMetaJson(response)) as LongLivedTokenResponse | null;
+
+  assertMetaResponseOk(response, payload, "Long-lived token refresh failed");
+
+  if (!payload?.access_token) {
+    throw new Error("Meta did not return a refreshed long-lived access token.");
+  }
+
+  return {
+    accessToken: payload.access_token,
+    expiresIn: payload.expires_in ?? null,
+    tokenType: normalizeOptionalString(payload.token_type),
   };
 }
 
@@ -464,14 +529,14 @@ export async function activateInstagramAccountWebhooks(options: {
 
 export async function sendInstagramMessage(options: {
   accessToken: string;
-  instagramAccountId: string;
   recipientId: string;
   text?: string;
   messageType?: "audio" | "image" | "video" | "file";
   mediaUrl?: string;
+  tag?: "HUMAN_AGENT";
 }) {
   const oauthConfig = getMetaOauthConfig();
-  const url = new URL(`${oauthConfig.graphBaseUrl}/${options.instagramAccountId}/messages`);
+  const url = new URL(`${oauthConfig.graphBaseUrl}/me/messages`);
 
   const message =
     options.messageType && options.mediaUrl
@@ -509,6 +574,12 @@ export async function sendInstagramMessage(options: {
         id: options.recipientId,
       },
       message,
+      ...(options.tag
+        ? {
+            messaging_type: "MESSAGE_TAG",
+            tag: options.tag,
+          }
+        : {}),
     }),
     cache: "no-store",
   });

@@ -57,8 +57,16 @@ async function saveChat(
  * Fetch chats for a given thread id from local SQLite. Results are ordered
  * ascending by timestamp.
  */
-async function getChatsByThread(db, threadId) {
-  return allAsync(db, 'SELECT * FROM chats WHERE thread_id = ? ORDER BY timestamp ASC', [threadId]);
+async function getChatsByThread(db, threadId, ownerId) {
+  return allAsync(
+    db,
+    `SELECT c.*
+     FROM chats c
+     JOIN accounts a ON a.id = c.account_id
+     WHERE c.thread_id = ? AND a.owner_id = ?
+     ORDER BY c.timestamp ASC`,
+    [threadId, ownerId],
+  );
 }
 
 /**
