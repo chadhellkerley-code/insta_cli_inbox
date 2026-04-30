@@ -8,9 +8,10 @@ type UpdateReminderBody = {
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { reminderId: string } },
+  { params }: { params: Promise<{ reminderId: string }> },
 ) {
-  const supabase = createClient();
+  const { reminderId } = await params;
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -28,7 +29,7 @@ export async function PATCH(
       status,
       dismissed_at: status === "dismissed" ? new Date().toISOString() : null,
     } as never)
-    .eq("id", params.reminderId)
+    .eq("id", reminderId)
     .eq("owner_id", user.id);
 
   if (result.error) {

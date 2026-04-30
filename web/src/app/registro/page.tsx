@@ -29,7 +29,7 @@ function readParam(value: string | string[] | undefined) {
 async function registerAction(formData: FormData) {
   "use server";
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -87,7 +87,7 @@ export default async function RegistroPage({
 }: {
   searchParams?: SearchParams;
 }) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

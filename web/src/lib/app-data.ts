@@ -292,7 +292,7 @@ async function selectOwnedAccountsWithAdmin(
 }
 
 export async function requireUserContext() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -268,7 +268,7 @@ export function InboxRealtimeShell({
   initialMessages,
   initialSelectedConversationId,
 }: InboxRealtimeShellProps) {
-  const clientRef = useRef<ReturnType<typeof createClient>>();
+  const clientRef = useRef<ReturnType<typeof createClient> | null>(null);
   const selectedConversationRef = useRef<string | null>(initialSelectedConversationId);
   const labelMenuRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState(initialAccounts);
@@ -415,7 +415,7 @@ export function InboxRealtimeShell({
     return () => {
       cancelled = true;
     };
-  }, [initialMessages, initialSelectedConversationId, selectedConversationId]);
+  }, [initialMessages, initialSelectedConversationId, selectedConversationId, userId]);
 
   useEffect(() => {
     const supabase = clientRef.current!;

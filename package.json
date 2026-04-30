@@ -2,6 +2,9 @@
   "name": "insta-cli-inbox",
   "version": "0.1.0",
   "description": "Insta CLI Inbox - Next.js CRM with Instagram Graph API and Supabase",
+  "engines": {
+    "node": ">=20.19.0 <23"
+  },
   "scripts": {
     "dev": "npm --prefix web run dev",
     "build": "npm --prefix web run build",

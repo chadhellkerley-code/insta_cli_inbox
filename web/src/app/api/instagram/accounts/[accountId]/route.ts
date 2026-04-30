@@ -9,14 +9,15 @@ type AccountLookup = {
 };
 
 type RouteContext = {
-  params: {
+  params: Promise<{
     accountId: string;
-  };
+  }>;
 };
 
 export async function DELETE(_request: Request, context: RouteContext) {
-  const accountId = context.params.accountId?.trim();
-  const supabase = createClient();
+  const { accountId: rawAccountId } = await context.params;
+  const accountId = rawAccountId?.trim();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

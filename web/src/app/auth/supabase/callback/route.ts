@@ -48,7 +48,7 @@ async function upsertProfile(user: User) {
   } catch (error) {
     console.warn("[supabase-auth] admin profile upsert failed, using user session", error);
 
-    const supabase = createClient();
+    const supabase = await createClient();
     const { error: sessionError } = await supabase
       .from("profiles")
       .upsert(payload as never, { onConflict: "id" });
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = await createClient();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
