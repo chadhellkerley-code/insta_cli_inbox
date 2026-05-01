@@ -25,11 +25,15 @@ type AutomationAgentsManagerProps = {
 type ModalMode = "create" | "edit";
 
 type AiCredentialState = {
+  provider: string;
+  model: string;
   hasApiKey: boolean;
   apiKeyLast4: string | null;
 };
 
 const DEFAULT_AI_CREDENTIAL: AiCredentialState = {
+  provider: "openai",
+  model: "gpt-4o-mini",
   hasApiKey: false,
   apiKeyLast4: null,
 };
@@ -88,6 +92,8 @@ export function AutomationAgentsManager({
   const [aiCredential, setAiCredential] =
     useState<AiCredentialState>(DEFAULT_AI_CREDENTIAL);
   const [aiCredentialDraft, setAiCredentialDraft] = useState({
+    provider: DEFAULT_AI_CREDENTIAL.provider,
+    model: DEFAULT_AI_CREDENTIAL.model,
     apiKey: "",
   });
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -114,6 +120,8 @@ export function AutomationAgentsManager({
     });
     const payload = (await response.json().catch(() => null)) as
       | {
+          provider?: string | null;
+          model?: string | null;
           hasApiKey?: boolean;
           apiKeyLast4?: string | null;
           error?: string;
@@ -125,6 +133,8 @@ export function AutomationAgentsManager({
     }
 
     const nextCredential = {
+      provider: payload.provider ?? DEFAULT_AI_CREDENTIAL.provider,
+      model: payload.model ?? DEFAULT_AI_CREDENTIAL.model,
       hasApiKey: Boolean(payload.hasApiKey),
       apiKeyLast4: payload.apiKeyLast4 ?? null,
     };
@@ -132,6 +142,8 @@ export function AutomationAgentsManager({
     setAiCredential(nextCredential);
     setAiCredentialDraft((current) => ({
       ...current,
+      provider: nextCredential.provider,
+      model: nextCredential.model,
       apiKey: "",
     }));
   }
@@ -519,6 +531,8 @@ export function AutomationAgentsManager({
       });
       const payload = (await response.json().catch(() => null)) as
         | {
+            provider?: string | null;
+            model?: string | null;
             hasApiKey?: boolean;
             apiKeyLast4?: string | null;
             error?: string;
@@ -530,6 +544,8 @@ export function AutomationAgentsManager({
       }
 
       const nextCredential = {
+        provider: payload.provider ?? aiCredentialDraft.provider,
+        model: payload.model ?? aiCredentialDraft.model,
         hasApiKey: true,
         apiKeyLast4: payload.apiKeyLast4 ?? null,
       };
@@ -537,6 +553,8 @@ export function AutomationAgentsManager({
       setAiCredential(nextCredential);
       setAiCredentialDraft((current) => ({
         ...current,
+        provider: nextCredential.provider,
+        model: nextCredential.model,
         apiKey: "",
       }));
       showFeedback(
@@ -1163,7 +1181,39 @@ export function AutomationAgentsManager({
                     {flowDraft.aiEnabled ? (
                       <div className="stage-followup-grid">
                         <div className="field">
-                          <span className="field-label">API key de OpenAI</span>
+                          <span className="field-label">Proveedor</span>
+                          <select
+                            className="text-input"
+                            value={aiCredentialDraft.provider}
+                            onChange={(event) =>
+                              setAiCredentialDraft((current) => ({
+                                ...current,
+                                provider: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="openai">OpenAI</option>
+                            <option value="groq">Groq</option>
+                          </select>
+                        </div>
+
+                        <div className="field">
+                          <span className="field-label">Modelo</span>
+                          <input
+                            className="text-input"
+                            value={aiCredentialDraft.model}
+                            onChange={(event) =>
+                              setAiCredentialDraft((current) => ({
+                                ...current,
+                                model: event.target.value,
+                              }))
+                            }
+                            placeholder="Modelo del proveedor"
+                          />
+                        </div>
+
+                        <div className="field">
+                          <span className="field-label">API key</span>
                           <input
                             className="text-input"
                             type="password"
@@ -1209,7 +1259,7 @@ export function AutomationAgentsManager({
                     ) : (
                       <p className="muted">
                         Activa IA si quieres usar un prompt propio y una API key cifrada
-                        de OpenAI.
+                        del usuario.
                       </p>
                     )}
                   </article>

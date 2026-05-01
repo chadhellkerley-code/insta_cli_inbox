@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 
-import {
-  AUTOMATION_AI_MODEL,
-  AUTOMATION_AI_PROVIDER,
-  loadAiCredential,
-  saveAiCredential,
-} from "@/lib/automation/ai-credentials";
+import { loadAiCredential, saveAiCredential } from "@/lib/automation/ai-credentials";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -24,8 +19,8 @@ export async function GET() {
     const credential = await loadAiCredential(user.id);
 
     return NextResponse.json({
-      provider: AUTOMATION_AI_PROVIDER,
-      model: AUTOMATION_AI_MODEL,
+      provider: credential?.provider ?? null,
+      model: credential?.model ?? null,
       hasApiKey: Boolean(credential),
       apiKeyLast4: credential?.api_key_last4 ?? null,
     });
@@ -49,6 +44,8 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as
     | {
+        provider?: unknown;
+        model?: unknown;
         apiKey?: unknown;
       }
     | null;
@@ -58,11 +55,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const credential = await saveAiCredential(user.id, String(body.apiKey ?? ""));
+    const credential = await saveAiCredential(
+      user.id,
+      String(body.provider ?? ""),
+      String(body.model ?? ""),
+      String(body.apiKey ?? ""),
+    );
 
     return NextResponse.json({
-      provider: AUTOMATION_AI_PROVIDER,
-      model: AUTOMATION_AI_MODEL,
+      provider: credential.provider,
+      model: credential.model,
       hasApiKey: true,
       apiKeyLast4: credential.api_key_last4,
     });
