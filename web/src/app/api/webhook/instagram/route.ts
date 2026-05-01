@@ -17,11 +17,12 @@ import {
   INSTAGRAM_MESSAGING_STATUS_READY,
   INSTAGRAM_WEBHOOK_STATUS_READY,
 } from "@/lib/meta/account-status";
-import { scheduleAutomationForInboundMessage } from "@/lib/automation/runtime";
+import { runAutomationForInboundMessage } from "@/lib/automation/runtime";
 import { resolveInstagramContactProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type MessagingEvent = {
   sender?: { id?: string; username?: string };
@@ -1006,7 +1007,7 @@ async function persistMessagingEvent(
 
   if (isInbound) {
     try {
-      await scheduleAutomationForInboundMessage(admin, {
+      await runAutomationForInboundMessage(admin, {
         ownerId: account.owner_id,
         accountId: account.id,
         conversationId,
@@ -1015,7 +1016,7 @@ async function persistMessagingEvent(
         inboundText: event.message.text ?? null,
       });
     } catch (error) {
-      console.warn("[instagram-webhook] automation scheduling skipped", {
+      console.warn("[instagram-webhook] automation processing skipped", {
         accountId: account.id,
         conversationId,
         error: error instanceof Error ? error.message : String(error),

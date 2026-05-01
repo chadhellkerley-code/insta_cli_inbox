@@ -11,6 +11,7 @@ import type {
 import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 
 type QueryClient = Pick<SupabaseClient, "from">;
+const MAX_LIVE_REPLY_DELAY_SECONDS = 45;
 
 function normalizeString(value: unknown) {
   if (typeof value !== "string") {
@@ -117,13 +118,13 @@ async function validateAutomationAudioMessages(input: AutomationAgentInput) {
 export function sanitizeAutomationAgentInput(input: AutomationAgentInput): AutomationAgentInput {
   const minReplyDelaySeconds = clampInteger(input.minReplyDelaySeconds, {
     min: 0,
-    max: 3600,
+    max: MAX_LIVE_REPLY_DELAY_SECONDS,
     fallback: 30,
   });
   const maxReplyDelaySeconds = clampInteger(input.maxReplyDelaySeconds, {
     min: minReplyDelaySeconds,
-    max: 7200,
-    fallback: Math.max(minReplyDelaySeconds, 90),
+    max: MAX_LIVE_REPLY_DELAY_SECONDS,
+    fallback: MAX_LIVE_REPLY_DELAY_SECONDS,
   });
   const maxMediaPerChat = clampInteger(input.maxMediaPerChat, {
     min: 0,

@@ -39,6 +39,7 @@ La configuracion de webhooks de Instagram se hace desde Meta App Dashboard. Dura
 - Los agentes y flujos se guardan en Supabase.
 - Solo puede haber un agente activo por usuario.
 - La API key de IA es solo de OpenAI, se guarda cifrada en `automation_ai_credentials`; el frontend solo ve si existe y sus ultimos 4 caracteres. El modelo queda fijo en el backend.
-- Cuando entra un mensaje inbound, el webhook agenda la etapa actual y ejecuta sus mensajes en vivo respetando el delay inicial y los `delaySeconds` entre mensajes.
-- Los followups siguen quedando como jobs programados via `/api/automation/dispatch`.
-- Desde la UI, el dispatcher puede correr con la sesion del usuario. Desde GitHub Actions o cualquier scheduler externo necesita `CRON_SECRET`; en Vercel, la ruta usa `SUPABASE_SERVICE_ROLE_KEY` para ejecutar sin sesion de usuario.
+- Cuando entra un mensaje inbound, el webhook agenda la etapa actual. Si los mensajes pendientes de esa etapa entran dentro del presupuesto live de 45 segundos, los ejecuta ahi mismo respetando el delay inicial y los `delaySeconds` entre mensajes.
+- Si la etapa supera ese presupuesto, queda pendiente para `/api/automation/dispatch`.
+- Los followups siempre quedan como jobs programados via `/api/automation/dispatch`.
+- Desde la UI, el dispatcher puede correr con la sesion del usuario. Desde GitHub Actions o cualquier scheduler externo necesita `CRON_SECRET`; en Vercel, la ruta usa `SUPABASE_SERVICE_ROLE_KEY` para ejecutar sin sesion de usuario. GitHub Actions corre cada 5 minutos como fallback operativo, no como precision de segundos.

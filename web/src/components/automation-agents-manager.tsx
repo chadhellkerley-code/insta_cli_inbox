@@ -33,6 +33,7 @@ const DEFAULT_AI_CREDENTIAL: AiCredentialState = {
   hasApiKey: false,
   apiKeyLast4: null,
 };
+const MAX_LIVE_REPLY_DELAY_SECONDS = 45;
 
 function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
   return {
@@ -1376,6 +1377,7 @@ export function AutomationAgentsManager({
                   className="text-input"
                   type="number"
                   min={0}
+                  max={MAX_LIVE_REPLY_DELAY_SECONDS}
                   value={modalDraft.minReplyDelaySeconds}
                   onChange={(event) =>
                     setModalDraft((current) => ({
@@ -1392,6 +1394,7 @@ export function AutomationAgentsManager({
                   className="text-input"
                   type="number"
                   min={0}
+                  max={MAX_LIVE_REPLY_DELAY_SECONDS}
                   value={modalDraft.maxReplyDelaySeconds}
                   onChange={(event) =>
                     setModalDraft((current) => ({
@@ -1420,8 +1423,8 @@ export function AutomationAgentsManager({
             </div>
 
             <p className="muted">
-              El agente usa un retraso aleatorio entre el minimo y el maximo, y los
-              followups de cada etapa se configuran en horas.
+              Para respuesta inmediata automatica, usa hasta 45 segundos. Los jobs
+              pendientes quedan cubiertos por el dispatcher.
             </p>
 
             <div className="automation-modal-actions">

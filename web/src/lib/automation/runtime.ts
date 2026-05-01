@@ -16,6 +16,8 @@ import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 type QueryClient = Pick<SupabaseClient, "from">;
 const STAGE_MESSAGE_PART_GAP_MS = 1_000;
 const STANDARD_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_LIVE_REPLY_DELAY_SECONDS = 45;
+const LIVE_STAGE_EXECUTION_BUDGET_MS = MAX_LIVE_REPLY_DELAY_SECONDS * 1000;
 
 type AutomationAgentRuntimeRow = {
   id: string;
@@ -173,6 +175,14 @@ function randomInteger(min: number, max: number) {
   }
 
   return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function clampLiveReplyDelaySeconds(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.min(MAX_LIVE_REPLY_DELAY_SECONDS, Math.max(0, Math.round(value)));
 }
 
 function buildAutomationAiSystemPrompt(options: Pick<
@@ -753,10 +763,14 @@ export async function scheduleAutomationForInboundMessage(
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
   const stageMessages = messagesByStage.get(nextStage.id) ?? [];
   const createdAtMs = toMillis(options.createdAt) ?? Date.now();
+  const minReplyDelaySeconds = clampLiveReplyDelaySeconds(agent.min_reply_delay_seconds);
+  const maxReplyDelaySeconds = Math.max(
+    minReplyDelaySeconds,
+    clampLiveReplyDelaySeconds(agent.max_reply_delay_seconds),
+  );
   const startAtMs = Math.max(
     Date.now(),
-    createdAtMs +
-      randomInteger(agent.min_reply_delay_seconds, agent.max_reply_delay_seconds) * 1000,
+    createdAtMs + randomInteger(minReplyDelaySeconds, maxReplyDelaySeconds) * 1000,
   );
   let scheduledAtMs = startAtMs;
   let insertedCount = 0;
@@ -1544,6 +1558,37 @@ async function cancelPendingStageMessageJobs(
   }
 }
 
+async function canExecuteStageLive(
+  client: QueryClient,
+  options: {
+    runId: string;
+    stageId: string;
+  },
+) {
+  const result = await client
+    .from("automation_jobs")
+    .select("scheduled_for")
+    .eq("run_id", options.runId)
+    .eq("stage_id", options.stageId)
+    .eq("job_type", "stage_message")
+    .eq("status", "pending")
+    .order("scheduled_for", { ascending: false })
+    .limit(1);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const lastPendingJob = castRows<Pick<AutomationJobRow, "scheduled_for">>(result.data)[0];
+  const lastScheduledMs = toMillis(lastPendingJob?.scheduled_for);
+
+  if (!lastScheduledMs) {
+    return false;
+  }
+
+  return lastScheduledMs - Date.now() <= LIVE_STAGE_EXECUTION_BUDGET_MS;
+}
+
 function shouldStopLiveStageExecution(result: AutomationJobResult) {
   return result !== "sent" && result !== "retry_scheduled";
 }
@@ -1602,6 +1647,18 @@ export async function runAutomationForInboundMessage(
   const scheduleResult = await scheduleAutomationForInboundMessage(client, options);
 
   if (scheduleResult.reason !== "scheduled") {
+    return {
+      schedule: scheduleResult,
+      stageExecution: null,
+    };
+  }
+
+  const shouldExecuteLive = await canExecuteStageLive(client, {
+    runId: scheduleResult.runId,
+    stageId: scheduleResult.stageId,
+  });
+
+  if (!shouldExecuteLive) {
     return {
       schedule: scheduleResult,
       stageExecution: null,
