@@ -646,58 +646,6 @@ async function cancelAnsweredPendingResponseJobs(
   }
 }
 
-async function scheduleCompletedFlowAiReply(
-  client: QueryClient,
-  options: {
-    agent: AutomationAgentRuntimeRow;
-    run: AutomationRunRow;
-    inboundText?: string | null;
-    inboundAt: string;
-    stageId: string | null;
-  },
-) {
-  if (!options.agent.ai_enabled) {
-    return { scheduled: false, reason: "ai_disabled" as const };
-  }
-
-  if (isOutsideAutomationWindow(options.run)) {
-    return { scheduled: false, reason: "outside_automation_window" as const };
-  }
-
-  if (!options.stageId) {
-    return { scheduled: false, reason: "missing_dependencies" as const };
-  }
-
-  const inboundAtMs = toMillis(options.inboundAt) ?? Date.now();
-  const replyDelayMs =
-    randomInteger(options.agent.min_reply_delay_seconds, options.agent.max_reply_delay_seconds) *
-    1000;
-  const scheduledFor = new Date(Math.max(Date.now(), inboundAtMs + replyDelayMs)).toISOString();
-  const insertResult = await client.from("automation_jobs").insert({
-    owner_id: options.run.owner_id,
-    agent_id: options.run.agent_id,
-    account_id: options.run.account_id,
-    conversation_id: options.run.conversation_id,
-    run_id: options.run.id,
-    stage_id: options.stageId,
-    stage_message_id: null,
-    job_type: "ai_reply",
-    status: "pending",
-    scheduled_for: scheduledFor,
-    payload: {
-      messageType: "text",
-      inboundText: options.inboundText ?? null,
-      inboundAt: options.inboundAt,
-    },
-  } as never);
-
-  if (insertResult.error) {
-    throw new Error(insertResult.error.message);
-  }
-
-  return { scheduled: true, reason: "scheduled" as const };
-}
-
 export async function scheduleAutomationForInboundMessage(
   client: QueryClient,
   options: {
