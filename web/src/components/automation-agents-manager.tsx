@@ -63,6 +63,7 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
         messageType: message.messageType,
         textContent: message.textContent,
         mediaUrl: message.mediaUrl,
+        generationPrompt: message.generationPrompt ?? "",
         delaySeconds: message.delaySeconds,
       })),
     })),
@@ -445,6 +446,7 @@ export function AutomationAgentsManager({
               messageType: "text",
               textContent: "",
               mediaUrl: "",
+              generationPrompt: "",
               delaySeconds: 0,
             },
           ],
@@ -469,6 +471,7 @@ export function AutomationAgentsManager({
           messageType: "text",
           textContent: "",
           mediaUrl: "",
+          generationPrompt: "",
           delaySeconds: 0,
         },
       ],
@@ -896,6 +899,22 @@ export function AutomationAgentsManager({
                                   >
                                     Audio
                                   </button>
+                                  <button
+                                    type="button"
+                                    className={
+                                      message.messageType === "smart_text"
+                                        ? "chip active"
+                                        : "chip"
+                                    }
+                                    onClick={() =>
+                                      updateMessage(stageIndex, messageIndex, (currentMessage) => ({
+                                        ...currentMessage,
+                                        messageType: "smart_text",
+                                      }))
+                                    }
+                                  >
+                                    Texto inteligente
+                                  </button>
                                 </div>
 
                                 {message.messageType === "text" ? (
@@ -910,7 +929,9 @@ export function AutomationAgentsManager({
                                     }
                                     placeholder="Escribe el mensaje de esta etapa"
                                   />
-                                ) : (
+                                ) : null}
+
+                                {message.messageType === "audio" ? (
                                   <div className="audio-builder">
                                     <div className="audio-builder-actions">
                                       <button
@@ -1002,9 +1023,54 @@ export function AutomationAgentsManager({
                                             ? "La etapa enviara primero el texto y despues el audio."
                                             : "Audio listo para enviarse en esta etapa."
                                           : `Puedes grabar o subir un audio para esta etapa. ${INSTAGRAM_AUDIO_ACCEPT_HELPER_TEXT}.`}
+                                      </p>
+                                    </div>
+                                ) : null}
+
+                                {message.messageType === "smart_text" ? (
+                                  <div className="smart-text-builder">
+                                    <div className="field">
+                                      <span className="field-label">Prompt</span>
+                                      <textarea
+                                        className="text-area smart-text-prompt"
+                                        value={message.generationPrompt ?? ""}
+                                        onChange={(event) =>
+                                          updateMessage(
+                                            stageIndex,
+                                            messageIndex,
+                                            (currentMessage) => ({
+                                              ...currentMessage,
+                                              generationPrompt: event.target.value,
+                                            }),
+                                          )
+                                        }
+                                        placeholder="Instruccion especifica para generar este mensaje"
+                                      />
+                                    </div>
+                                    <div className="stage-footer-actions">
+                                      <button
+                                        type="button"
+                                        className="button button-secondary"
+                                        onClick={() =>
+                                          updateMessage(
+                                            stageIndex,
+                                            messageIndex,
+                                            (currentMessage) => ({
+                                              ...currentMessage,
+                                              generationPrompt: "",
+                                            }),
+                                          )
+                                        }
+                                      >
+                                        Eliminar prompt
+                                      </button>
+                                    </div>
+                                    <p className="muted">
+                                      Usa el prompt general del agente como contexto base y
+                                      este prompt como instruccion especifica del mensaje.
                                     </p>
                                   </div>
-                                )}
+                                ) : null}
 
                                 <div className="field">
                                   <span className="field-label">

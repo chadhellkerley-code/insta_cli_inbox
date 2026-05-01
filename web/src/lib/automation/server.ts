@@ -66,6 +66,16 @@ function ensureAudioMessageUrl(value: unknown) {
   return normalized;
 }
 
+function ensureSmartTextPrompt(value: unknown) {
+  const normalized = normalizeString(value);
+
+  if (!normalized) {
+    throw new Error("Cada texto inteligente necesita un prompt.");
+  }
+
+  return normalized;
+}
+
 async function validateAutomationAudioMessages(input: AutomationAgentInput) {
   const validationCache = new Map<string, Promise<unknown>>();
   const validations: Promise<unknown>[] = [];
@@ -172,7 +182,12 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         name: ensureStageName(stage.name, stageIndex),
         followups,
         messages: messages.map((message) => {
-          const messageType = message.messageType === "audio" ? "audio" : "text";
+          const messageType =
+            message.messageType === "audio"
+              ? "audio"
+              : message.messageType === "smart_text"
+                ? "smart_text"
+                : "text";
 
           return {
             id: normalizeString(message.id) || undefined,
@@ -180,9 +195,15 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
             textContent:
               messageType === "text"
                 ? ensureTextMessageContent(message.textContent)
-                : normalizeString(message.textContent),
+                : messageType === "audio"
+                  ? normalizeString(message.textContent)
+                  : "",
             mediaUrl:
               messageType === "audio" ? ensureAudioMessageUrl(message.mediaUrl) : "",
+            generationPrompt:
+              messageType === "smart_text"
+                ? ensureSmartTextPrompt(message.generationPrompt)
+                : "",
             delaySeconds: clampInteger(message.delaySeconds, {
               min: 0,
               max: 60 * 60 * 24,
@@ -263,6 +284,7 @@ function mapAutomationAgents(
             messageType: message.message_type,
             textContent: message.text_content ?? "",
             mediaUrl: message.media_url ?? "",
+            generationPrompt: message.generation_prompt ?? "",
             delaySeconds: message.delay_seconds,
           })),
       }))
@@ -508,6 +530,7 @@ export async function saveAutomationAgent(
         message_type: message.messageType,
         text_content: normalizeOptionalString(message.textContent),
         media_url: normalizeOptionalString(message.mediaUrl),
+        generation_prompt: normalizeOptionalString(message.generationPrompt),
         delay_seconds: message.delaySeconds,
       } as never);
 

@@ -1751,6 +1751,11 @@ main {
   flex-wrap: wrap;
 }
 
+.stage-message-options .chip {
+  min-height: 36px;
+  justify-content: center;
+}
+
 .agent-card-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1849,10 +1854,20 @@ main {
 }
 
 .audio-builder,
+.smart-text-builder,
 .stage-followup {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.smart-text-builder {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.smart-text-prompt {
+  min-height: 132px;
 }
 
 .stage-followup {

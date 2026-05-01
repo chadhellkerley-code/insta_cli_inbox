@@ -50,9 +50,10 @@ type AutomationStageMessageRuntimeRow = {
   id: string;
   stage_id: string;
   message_order: number;
-  message_type: "text" | "audio";
+  message_type: "text" | "audio" | "smart_text";
   text_content: string | null;
   media_url: string | null;
+  generation_prompt: string | null;
   delay_seconds: number;
 };
 
@@ -141,6 +142,7 @@ type GenerateAutomationReplyOptions = {
   apiKey: string;
   aiPrompt: string | null;
   personality: string | null;
+  generationPrompt?: string | null;
   inboundText: string;
   conversationMessages?: ConversationMessageContextRow[];
 };
@@ -177,7 +179,7 @@ function randomInteger(min: number, max: number) {
 
 function buildAutomationAiSystemPrompt(options: Pick<
   GenerateAutomationReplyOptions,
-  "aiPrompt" | "personality"
+  "aiPrompt" | "personality" | "generationPrompt"
 >) {
   const parts = [
     "Responde como agente de atencion de Instagram.",
@@ -187,6 +189,12 @@ function buildAutomationAiSystemPrompt(options: Pick<
       : null,
     normalizeOptionalString(options.aiPrompt)
       ? `Instrucciones: ${normalizeOptionalString(options.aiPrompt)}`
+      : null,
+    normalizeOptionalString(options.generationPrompt)
+      ? [
+          "Instruccion especifica de este mensaje:",
+          normalizeOptionalString(options.generationPrompt),
+        ].join(" ")
       : null,
   ].filter(Boolean);
 
@@ -308,6 +316,32 @@ async function generateAgentAiReply(
   });
 }
 
+async function generateAgentSmartText(
+  agent: AutomationAgentRuntimeRow,
+  ownerId: string,
+  generationPrompt: string,
+  inboundText: string | null | undefined,
+  conversationMessages?: ConversationMessageContextRow[],
+) {
+  const credential = await loadAiCredential(ownerId);
+
+  if (!credential) {
+    throw new Error("Texto inteligente sin API key configurada.");
+  }
+
+  return generateAutomationReply({
+    ownerId,
+    provider: credential.provider,
+    model: credential.model,
+    apiKey: decryptApiKey(credential),
+    aiPrompt: agent.ai_prompt,
+    personality: agent.personality,
+    generationPrompt,
+    inboundText: inboundText ?? "",
+    conversationMessages,
+  });
+}
+
 function createProcessingSummary(): AutomationProcessingSummary {
   return {
     claimed: 0,
@@ -377,6 +411,18 @@ function compareNullableIso(left: string | null, right: string | null) {
 function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
   const textContent = normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
+  const generationPrompt = normalizeOptionalString(stageMessage.generation_prompt);
+
+  if (stageMessage.message_type === "smart_text") {
+    return [
+      {
+        messageType: "smart_text" as const,
+        textContent: null,
+        mediaUrl: null,
+        generationPrompt,
+      },
+    ];
+  }
 
   if (stageMessage.message_type !== "audio") {
     return [
@@ -384,14 +430,16 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
         messageType: "text" as const,
         textContent,
         mediaUrl: null,
+        generationPrompt: null,
       },
     ];
   }
 
   const parts: Array<{
-    messageType: "text" | "audio";
+    messageType: "text" | "audio" | "smart_text";
     textContent: string | null;
     mediaUrl: string | null;
+    generationPrompt: string | null;
   }> = [];
 
   if (textContent) {
@@ -399,6 +447,7 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
       messageType: "text",
       textContent,
       mediaUrl: null,
+      generationPrompt: null,
     });
   }
 
@@ -406,6 +455,7 @@ function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntim
     messageType: "audio",
     textContent: null,
     mediaUrl,
+    generationPrompt: null,
   });
 
   return parts;
@@ -453,7 +503,7 @@ async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const followups = castRows<AutomationStageFollowupRuntimeRow>(followupsResult.data);
   const messagesResult = await client
     .from("automation_stage_messages")
-    .select("id, stage_id, message_order, message_type, text_content, media_url, delay_seconds")
+    .select("id, stage_id, message_order, message_type, text_content, media_url, generation_prompt, delay_seconds")
     .in("stage_id", stageIds)
     .order("message_order", { ascending: true });
   const messages = castRows<AutomationStageMessageRuntimeRow>(messagesResult.data);
@@ -719,20 +769,10 @@ export async function scheduleAutomationForInboundMessage(
 
   if (!nextStage) {
     await markRunCompleted(client, run.id);
-    const aiReply = await scheduleCompletedFlowAiReply(client, {
-      agent,
-      run,
-      inboundText: options.inboundText,
-      inboundAt: options.createdAt,
-      stageId: stages[stages.length - 1]?.id ?? null,
-    });
 
     return {
-      scheduled: aiReply.scheduled ? 1 : 0,
-      reason: aiReply.scheduled
-        ? ("flow_completed_ai_scheduled" as const)
-        : ("flow_completed" as const),
-      aiReplyReason: aiReply.reason,
+      scheduled: 0,
+      reason: "flow_completed" as const,
     };
   }
 
@@ -790,6 +830,8 @@ export async function scheduleAutomationForInboundMessage(
           messageType: payload.messageType,
           textContent: payload.textContent,
           mediaUrl: payload.mediaUrl,
+          generationPrompt: payload.generationPrompt,
+          inboundText: options.inboundText ?? null,
           stageMessageType: stageMessage.message_type,
           stageMessagePart:
             payload.messageType === "text" && stageMessage.message_type === "audio"
@@ -1161,14 +1203,39 @@ async function sendAutomationJob(
   run: AutomationRunRow,
   conversation: ConversationRuntimeRow,
   account: AccountRuntimeRow,
+  agent: AutomationAgentRuntimeRow,
 ) {
-  const messageType = job.payload?.messageType === "audio" ? "audio" : "text";
-  const textContent = normalizeOptionalString(
+  const rawMessageType = job.payload?.messageType;
+  const messageType = rawMessageType === "audio" ? "audio" : "text";
+  let textContent = normalizeOptionalString(
     typeof job.payload?.textContent === "string" ? job.payload.textContent : null,
   );
   const mediaUrl = normalizeOptionalString(
     typeof job.payload?.mediaUrl === "string" ? job.payload.mediaUrl : null,
   );
+
+  if (rawMessageType === "smart_text") {
+    const generationPrompt = normalizeOptionalString(
+      typeof job.payload?.generationPrompt === "string" ? job.payload.generationPrompt : null,
+    );
+
+    if (!generationPrompt) {
+      throw new Error("El texto inteligente no tiene prompt.");
+    }
+
+    const conversationMessages = await loadRecentConversationMessages(client, conversation.id);
+    const inboundText =
+      typeof job.payload?.inboundText === "string" ? job.payload.inboundText : null;
+
+    textContent = await generateAgentSmartText(
+      agent,
+      run.owner_id,
+      generationPrompt,
+      inboundText,
+      conversationMessages,
+    );
+  }
+
   const result = await sendAutomationOutboundMessage(client, conversation, account, {
     messageType,
     textContent,
@@ -1180,6 +1247,15 @@ async function sendAutomationJob(
     sent_at: result.sentAt,
     attempt_count: (job.attempt_count ?? 0) + 1,
     last_error: null,
+    ...(rawMessageType === "smart_text"
+      ? {
+          payload: {
+            ...(job.payload ?? {}),
+            messageType: "text",
+            generatedText: textContent,
+          },
+        }
+      : {}),
   });
 
   if (job.job_type === "stage_message") {
@@ -1388,7 +1464,7 @@ async function handleJob(
     if (job.job_type === "ai_reply") {
       await sendAutomationAiReplyJob(client, job, run, conversation, account, agent);
     } else {
-      await sendAutomationJob(client, job, run, conversation, account);
+      await sendAutomationJob(client, job, run, conversation, account, agent);
     }
     return "sent" as const;
   } catch (error) {
@@ -1615,7 +1691,7 @@ export async function processDueAutomationJobs(
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
-    .in("job_type", ["followup", "ai_reply"])
+    .eq("job_type", "followup")
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
