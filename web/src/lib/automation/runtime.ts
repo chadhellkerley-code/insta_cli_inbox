@@ -394,6 +394,54 @@ function compareNullableIso(left: string | null, right: string | null) {
   return leftMs - rightMs;
 }
 
+function getJobTypePriority(job: AutomationJobRow) {
+  if (job.job_type === "stage_message") {
+    return 0;
+  }
+
+  if (job.job_type === "followup") {
+    return 1;
+  }
+
+  return 2;
+}
+
+function compareDueAutomationJobs(left: AutomationJobRow, right: AutomationJobRow) {
+  const scheduledDiff = compareNullableIso(left.scheduled_for, right.scheduled_for);
+
+  if (scheduledDiff !== 0) {
+    return scheduledDiff;
+  }
+
+  const stageOrderDiff =
+    getJobPayloadNumber(left, "stageOrder") - getJobPayloadNumber(right, "stageOrder");
+
+  if (stageOrderDiff !== 0) {
+    return stageOrderDiff;
+  }
+
+  const typePriorityDiff = getJobTypePriority(left) - getJobTypePriority(right);
+
+  if (typePriorityDiff !== 0) {
+    return typePriorityDiff;
+  }
+
+  const messageOrderDiff =
+    getJobPayloadNumber(left, "messageOrder") - getJobPayloadNumber(right, "messageOrder");
+
+  if (messageOrderDiff !== 0) {
+    return messageOrderDiff;
+  }
+
+  const partOrderDiff = getStageMessagePartOrder(left) - getStageMessagePartOrder(right);
+
+  if (partOrderDiff !== 0) {
+    return partOrderDiff;
+  }
+
+  return compareNullableIso(left.created_at, right.created_at);
+}
+
 function buildStageMessageJobPayloads(stageMessage: AutomationStageMessageRuntimeRow) {
   const textContent = normalizeOptionalString(stageMessage.text_content);
   const mediaUrl = normalizeOptionalString(stageMessage.media_url);
@@ -1587,7 +1635,7 @@ export async function processDueAutomationJobs(
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
-    .eq("job_type", "followup")
+    .in("job_type", ["stage_message", "followup"])
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
@@ -1596,7 +1644,7 @@ export async function processDueAutomationJobs(
   }
 
   const jobsResult = await jobsQuery.order("scheduled_for", { ascending: true }).limit(limit);
-  const jobs = castRows<AutomationJobRow>(jobsResult.data);
+  const jobs = castRows<AutomationJobRow>(jobsResult.data).sort(compareDueAutomationJobs);
 
   if (jobsResult.error) {
     throw new Error(jobsResult.error.message);
@@ -1615,6 +1663,14 @@ export async function processDueAutomationJobs(
     summary.claimed += 1;
     const result = await handleJob(client, claimedJob);
     addJobResultToSummary(summary, result);
+
+    if (claimedJob.job_type === "stage_message" && shouldStopLiveStageExecution(result)) {
+      await cancelPendingStageMessageJobs(client, {
+        runId: claimedJob.run_id,
+        stageId: claimedJob.stage_id,
+        reason: "La ejecucion diferida de la etapa se detuvo antes de completar todos los mensajes.",
+      });
+    }
   }
 
   return summary;
