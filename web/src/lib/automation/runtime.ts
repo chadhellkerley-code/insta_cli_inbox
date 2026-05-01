@@ -137,6 +137,7 @@ type ConversationMessageContextRow = {
 
 type GenerateAutomationReplyOptions = {
   apiKey: string;
+  model?: string | null;
   aiPrompt: string | null;
   personality: string | null;
   generationPrompt?: string | null;
@@ -250,7 +251,7 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: AUTOMATION_AI_MODEL,
+      model: normalizeOptionalString(options.model) ?? AUTOMATION_AI_MODEL,
       messages: [
         {
           role: "system",
@@ -294,6 +295,7 @@ async function generateAgentAiReply(
   }
 
   return generateAutomationReply({
+    model: credential.model,
     apiKey: decryptApiKey(credential),
     aiPrompt: agent.ai_prompt,
     personality: agent.personality,
@@ -316,8 +318,6 @@ async function generateAgentSmartText(
   }
 
   return generateAutomationReply({
-    ownerId,
-    provider: credential.provider,
     model: credential.model,
     apiKey: decryptApiKey(credential),
     aiPrompt: agent.ai_prompt,
