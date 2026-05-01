@@ -1,6 +1,13 @@
 "use client";
 
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   INSTAGRAM_AUDIO_ACCEPT_ATTRIBUTE,
@@ -33,8 +40,29 @@ type InboxRealtimeShellProps = {
 type SendMode = "text" | "audio";
 type TimeFilter = "all" | "plus12" | "between6and12" | "under6" | "new";
 type StatusFilter = "all" | "active" | "handoff";
+type DeleteTarget =
+  | { type: "conversation"; id: string }
+  | { type: "message"; id: string; conversationId: string };
+type DeleteContextMenu = {
+  x: number;
+  y: number;
+  target: DeleteTarget;
+};
+type DeleteResponsePayload = {
+  error?: string;
+  conversation?: {
+    id: string;
+    last_message_text: string | null;
+    last_message_type: string | null;
+    last_message_at: string | null;
+    updated_at: string | null;
+  };
+};
 
 const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
+const DELETE_CONTEXT_MENU_WIDTH = 150;
+const DELETE_CONTEXT_MENU_HEIGHT = 44;
+const DELETE_CONTEXT_MENU_MARGIN = 8;
 const HOUR_MS = 60 * 60 * 1000;
 
 const TIME_FILTERS: Array<{
@@ -131,6 +159,26 @@ function normalizeSortableDate(value: string | null | undefined) {
 
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getClampedContextMenuPosition(clientX: number, clientY: number) {
+  if (typeof window === "undefined") {
+    return { x: clientX, y: clientY };
+  }
+
+  const maxX = Math.max(
+    DELETE_CONTEXT_MENU_MARGIN,
+    window.innerWidth - DELETE_CONTEXT_MENU_WIDTH - DELETE_CONTEXT_MENU_MARGIN,
+  );
+  const maxY = Math.max(
+    DELETE_CONTEXT_MENU_MARGIN,
+    window.innerHeight - DELETE_CONTEXT_MENU_HEIGHT - DELETE_CONTEXT_MENU_MARGIN,
+  );
+
+  return {
+    x: Math.min(Math.max(DELETE_CONTEXT_MENU_MARGIN, clientX), maxX),
+    y: Math.min(Math.max(DELETE_CONTEXT_MENU_MARGIN, clientY), maxY),
+  };
 }
 
 function getConversationAgeHours(conversation: ConversationRecord) {
@@ -269,6 +317,7 @@ export function InboxRealtimeShell({
   const clientRef = useRef<ReturnType<typeof createClient>>();
   const selectedConversationRef = useRef<string | null>(initialSelectedConversationId);
   const labelMenuRef = useRef<HTMLDivElement>(null);
+  const deleteContextMenuRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState(initialAccounts);
   const [conversations, setConversations] = useState(
     sortConversations(initialConversations),
@@ -292,6 +341,10 @@ export function InboxRealtimeShell({
   const [sendMode, setSendMode] = useState<SendMode>("text");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<DeleteContextMenu | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   if (!clientRef.current) {
     clientRef.current = createClient();
@@ -332,6 +385,61 @@ export function InboxRealtimeShell({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [labelMenuOpen]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+
+      if (
+        target instanceof Node &&
+        deleteContextMenuRef.current &&
+        !deleteContextMenuRef.current.contains(target)
+      ) {
+        setContextMenu(null);
+      }
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+
+    const closeContextMenu = () => setContextMenu(null);
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", closeContextMenu, true);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", closeContextMenu, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!deleteTarget || isDeleting) {
+      return;
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setDeleteTarget(null);
+        setDeleteError(null);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [deleteTarget, isDeleting]);
 
   const selectedConversation =
     conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
@@ -412,7 +520,7 @@ export function InboxRealtimeShell({
     return () => {
       cancelled = true;
     };
-  }, [initialMessages, initialSelectedConversationId, selectedConversationId]);
+  }, [initialMessages, initialSelectedConversationId, selectedConversationId, userId]);
 
   useEffect(() => {
     const supabase = clientRef.current!;
@@ -623,6 +731,22 @@ export function InboxRealtimeShell({
     });
   }, [accountUsernameMap, activeLabels, conversations, search, statusFilter, timeFilter]);
 
+  function getFallbackConversationId(deletedConversationId: string) {
+    const visibleIndex = filteredConversations.findIndex(
+      (conversation) => conversation.id === deletedConversationId,
+    );
+    const visibleFallback =
+      visibleIndex >= 0
+        ? (filteredConversations[visibleIndex + 1] ?? filteredConversations[visibleIndex - 1])
+        : null;
+
+    return (
+      visibleFallback?.id ??
+      conversations.find((conversation) => conversation.id !== deletedConversationId)?.id ??
+      null
+    );
+  }
+
   function toggleActiveLabel(label: string) {
     setActiveLabels((current) => {
       if (current.includes(label)) {
@@ -766,6 +890,112 @@ export function InboxRealtimeShell({
       );
     } finally {
       setSendingMessage(false);
+    }
+  }
+
+  function openDeleteContextMenu(
+    event: MouseEvent<HTMLElement>,
+    target: DeleteTarget,
+  ) {
+    event.preventDefault();
+    const position = getClampedContextMenuPosition(event.clientX, event.clientY);
+
+    setLabelMenuOpen(false);
+    setDeleteError(null);
+    setContextMenu({
+      ...position,
+      target,
+    });
+  }
+
+  function closeDeleteContextMenu() {
+    setContextMenu(null);
+  }
+
+  function openDeleteDialog(target: DeleteTarget) {
+    closeDeleteContextMenu();
+    setDeleteError(null);
+    setDeleteTarget(target);
+  }
+
+  function closeDeleteDialog() {
+    if (isDeleting) {
+      return;
+    }
+
+    setDeleteTarget(null);
+    setDeleteError(null);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget || isDeleting) {
+      return;
+    }
+
+    const target = deleteTarget;
+    const fallbackConversationId =
+      target.type === "conversation" ? getFallbackConversationId(target.id) : null;
+    const endpoint =
+      target.type === "conversation"
+        ? `/api/instagram/conversations/${target.id}`
+        : `/api/instagram/messages/${target.id}`;
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const response = await fetch(endpoint, { method: "DELETE" });
+      const payload = (await response.json().catch(() => null)) as
+        | DeleteResponsePayload
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "No pudimos eliminar los datos.");
+      }
+
+      if (target.type === "conversation") {
+        setConversations((current) => removeById(current, target.id));
+
+        if (selectedConversationRef.current === target.id) {
+          selectedConversationRef.current = fallbackConversationId;
+          setSelectedConversationId(fallbackConversationId);
+
+          if (!fallbackConversationId) {
+            setMessages([]);
+          }
+        }
+      } else {
+        setMessages((current) => removeById(current, target.id));
+
+        const updatedConversation = payload?.conversation;
+
+        if (updatedConversation) {
+          setConversations((current) =>
+            sortConversations(
+              current.map((conversation) =>
+                conversation.id === updatedConversation.id
+                  ? {
+                      ...conversation,
+                      last_message_text: updatedConversation.last_message_text,
+                      last_message_type: updatedConversation.last_message_type,
+                      last_message_at: updatedConversation.last_message_at,
+                      updated_at: updatedConversation.updated_at,
+                    }
+                  : conversation,
+              ),
+            ),
+          );
+        }
+      }
+
+      setDeleteTarget(null);
+    } catch (error) {
+      console.error("No pudimos eliminar datos del inbox.", error);
+      setDeleteError(
+        error instanceof Error ? error.message : "No pudimos eliminar los datos.",
+      );
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -915,6 +1145,12 @@ export function InboxRealtimeShell({
                     : "thread-card"
                 }
                 onClick={() => setSelectedConversationId(conversation.id)}
+                onContextMenu={(event) =>
+                  openDeleteContextMenu(event, {
+                    type: "conversation",
+                    id: conversation.id,
+                  })
+                }
               >
                 {conversation.contact_profile_picture_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -1011,6 +1247,13 @@ export function InboxRealtimeShell({
                       message.direction === "out"
                         ? "message-bubble outgoing"
                         : "message-bubble incoming"
+                    }
+                    onContextMenu={(event) =>
+                      openDeleteContextMenu(event, {
+                        type: "message",
+                        id: message.id,
+                        conversationId: message.conversation_id,
+                      })
                     }
                   >
                     <div className="message-meta">
@@ -1207,6 +1450,71 @@ export function InboxRealtimeShell({
           )}
         </aside>
       </section>
+
+      {contextMenu ? (
+        <div
+          ref={deleteContextMenuRef}
+          className="delete-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          role="menu"
+          aria-label="Opciones de eliminacion"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => openDeleteDialog(contextMenu.target)}
+          >
+            Eliminar
+          </button>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div
+          className="delete-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeDeleteDialog();
+            }
+          }}
+        >
+          <div
+            className="surface delete-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-modal-title"
+            aria-describedby="delete-modal-description"
+          >
+            <div>
+              <span className="eyebrow">Eliminar</span>
+              <h3 id="delete-modal-title">Eliminar del inbox</h3>
+            </div>
+            <p id="delete-modal-description">
+              Seguro que quieres eliminar sabiendo que se perderan los datos de aqui en el inbox?
+            </p>
+            {deleteError ? <p className="feedback error">{deleteError}</p> : null}
+            <div className="delete-modal-actions">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={closeDeleteDialog}
+                disabled={isDeleting}
+              >
+                No
+              </button>
+              <button
+                type="button"
+                className="button button-danger"
+                onClick={() => void confirmDelete()}
+                disabled={isDeleting}
+              >
+                {isDeleting ? "Eliminando..." : "Si"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

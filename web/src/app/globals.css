@@ -2562,6 +2562,69 @@ main {
   white-space: pre-wrap;
 }
 
+.delete-context-menu {
+  position: fixed;
+  z-index: 60;
+  width: 150px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #171821;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+.delete-context-menu button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  color: #fecaca;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.delete-context-menu button:hover,
+.delete-context-menu button:focus-visible {
+  outline: none;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.delete-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 5, 8, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.delete-modal {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.delete-modal p {
+  color: var(--muted-strong);
+  line-height: 1.55;
+}
+
+.delete-modal .feedback {
+  margin-top: 0;
+}
+
+.delete-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .message-meta {
   display: flex;
   justify-content: space-between;
@@ -2726,7 +2789,8 @@ html[data-theme="light"] .agent-card.selected {
 
 html[data-theme="light"] .inbox-filter-row .chip,
 html[data-theme="light"] .time-filter-group,
-html[data-theme="light"] .label-filter-menu {
+html[data-theme="light"] .label-filter-menu,
+html[data-theme="light"] .delete-context-menu {
   color: var(--muted-strong);
   background: rgba(255, 255, 255, 0.82);
   border-color: var(--line);
@@ -2743,6 +2807,11 @@ html[data-theme="light"] .time-filter-group .chip {
 }
 
 html[data-theme="light"] .time-filter-group .chip:hover {
+  background: rgba(221, 42, 123, 0.08);
+}
+
+html[data-theme="light"] .delete-context-menu button:hover,
+html[data-theme="light"] .delete-context-menu button:focus-visible {
   background: rgba(221, 42, 123, 0.08);
 }
 
@@ -2993,6 +3062,20 @@ html[data-theme="light"] .message-meta {
   .automation-modal-backdrop {
     align-items: flex-end;
     padding: 12px;
+  }
+
+  .delete-modal-backdrop {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .delete-modal {
+    padding: 18px;
+  }
+
+  .delete-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 
   .automation-empty-canvas {
