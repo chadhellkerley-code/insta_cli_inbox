@@ -40,9 +40,10 @@ export type AutomationStageMessageRecord = {
   owner_id: string;
   stage_id: string;
   message_order: number;
-  message_type: "text" | "audio";
+  message_type: "text" | "audio" | "smart_text";
   text_content: string | null;
   media_url: string | null;
+  generation_prompt: string | null;
   delay_seconds: number;
   created_at: string | null;
   updated_at: string | null;
@@ -50,9 +51,10 @@ export type AutomationStageMessageRecord = {
 
 export type AutomationStageMessageInput = {
   id?: string;
-  messageType: "text" | "audio";
+  messageType: "text" | "audio" | "smart_text";
   textContent: string;
   mediaUrl: string;
+  generationPrompt: string;
   delaySeconds: number;
 };
 
@@ -107,9 +109,10 @@ export type AutomationAgent = {
     messages: Array<{
       id: string;
       order: number;
-      messageType: "text" | "audio";
+      messageType: "text" | "audio" | "smart_text";
       textContent: string;
       mediaUrl: string;
+      generationPrompt: string;
       delaySeconds: number;
     }>;
   }>;
@@ -136,6 +139,7 @@ export function createEmptyAgentDraft(): AutomationAgentInput {
             messageType: "text",
             textContent: "Hola, gracias por escribirnos.",
             mediaUrl: "",
+            generationPrompt: "",
             delaySeconds: 0,
           },
         ],
