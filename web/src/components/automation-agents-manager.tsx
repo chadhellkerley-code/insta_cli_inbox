@@ -73,6 +73,12 @@ function getAgentCardSummary(agent: AutomationAgent) {
   return `${agent.stages.length} etapas · ${totalMessages} mensajes · ${totalFollowups} followups`;
 }
 
+function hasSmartTextMessages(agent: AutomationAgentInput) {
+  return agent.stages.some((stage) =>
+    stage.messages.some((message) => message.messageType === "smart_text"),
+  );
+}
+
 export function AutomationAgentsManager({
   initialAgents,
 }: AutomationAgentsManagerProps) {
@@ -107,6 +113,8 @@ export function AutomationAgentsManager({
   const selectedAgent =
     agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const activeAgentsCount = agents.filter((agent) => agent.isActive).length;
+  const flowHasSmartText = flowDraft ? hasSmartTextMessages(flowDraft) : false;
+  const showAiCredentialSettings = Boolean(flowDraft?.aiEnabled || flowHasSmartText);
 
   async function loadAiCredentialStatus() {
     const response = await fetch("/api/automation/ai-credentials", {
@@ -366,6 +374,13 @@ export function AutomationAgentsManager({
               retried: number;
               failed: number;
             };
+            recentErrors?: Array<{
+              status: string;
+              lastError: string;
+              attemptCount: number;
+              messageType: string | null;
+              stageName: string | null;
+            }>;
             error?: string;
           }
         | null;
@@ -374,9 +389,20 @@ export function AutomationAgentsManager({
         throw new Error(payload?.error || "No pudimos procesar los jobs.");
       }
 
+      const recentError = payload.recentErrors?.[0];
+      const message = [
+        `Dispatcher ejecutado. Enviados: ${payload.summary.sent}`,
+        `reintentados: ${payload.summary.retried}`,
+        `fallidos: ${payload.summary.failed}`,
+        `omitidos: ${payload.summary.skipped}`,
+        `cancelados: ${payload.summary.cancelled}`,
+      ].join(", ") + ".";
+
       showFeedback(
-        `Dispatcher ejecutado. Enviados: ${payload.summary.sent}, reintentados: ${payload.summary.retried}.`,
-        "success",
+        recentError
+          ? `${message} Ultimo error (${recentError.messageType ?? "mensaje"}): ${recentError.lastError}`
+          : message,
+        recentError ? "error" : "success",
       );
     } catch (error) {
       showFeedback(
@@ -1050,6 +1076,9 @@ export function AutomationAgentsManager({
                                     <p className="muted">
                                       Usa el prompt general del agente como contexto base y
                                       este prompt como instruccion especifica del mensaje.
+                                      {!aiCredential.hasApiKey
+                                        ? " Usa la API key global de OpenAI configurada abajo."
+                                        : ""}
                                     </p>
                                   </div>
                                 ) : null}
@@ -1226,7 +1255,7 @@ export function AutomationAgentsManager({
                       </button>
                     </div>
 
-                    {flowDraft.aiEnabled ? (
+                    {showAiCredentialSettings ? (
                       <div className="stage-followup-grid">
                         <div className="field">
                           <span className="field-label">API key de OpenAI</span>
@@ -1253,7 +1282,9 @@ export function AutomationAgentsManager({
                           <p className="muted">
                             {aiCredential.hasApiKey && aiCredential.apiKeyLast4
                               ? `API key configurada: ****${aiCredential.apiKeyLast4}`
-                              : "La API key se guarda cifrada en el servidor."}
+                              : flowHasSmartText
+                                ? "No detectamos una API key guardada para este usuario. Texto inteligente usa una sola key global, no una por mensaje."
+                                : "La API key se guarda cifrada en el servidor."}
                           </p>
                         </div>
 
@@ -1270,6 +1301,12 @@ export function AutomationAgentsManager({
                             }
                             placeholder="Prompt para guiar las respuestas con IA"
                           />
+                          {flowHasSmartText && !flowDraft.aiEnabled ? (
+                            <p className="muted">
+                              Texto inteligente usa este prompt como contexto, aunque las
+                              respuestas automaticas con IA esten inactivas.
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                     ) : (
