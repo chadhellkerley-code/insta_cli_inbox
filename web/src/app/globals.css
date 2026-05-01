@@ -1875,6 +1875,27 @@ main {
   border-top: 1px solid var(--line);
 }
 
+.automatic-schedule-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: var(--radius-lg);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.automatic-schedule-card h3 {
+  letter-spacing: -0.04em;
+}
+
+.automatic-schedule-card p {
+  max-width: 58ch;
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .stage-followup-grid,
 .automation-modal-grid {
   display: grid;
@@ -2703,6 +2724,7 @@ html[data-theme="light"] .ai-card,
 html[data-theme="light"] .agent-card,
 html[data-theme="light"] .stage-card,
 html[data-theme="light"] .stage-message-card,
+html[data-theme="light"] .automatic-schedule-card,
 html[data-theme="light"] .thread-card,
 html[data-theme="light"] .message-bubble,
 html[data-theme="light"] .sidebar-user,
@@ -3092,8 +3114,13 @@ html[data-theme="light"] .message-meta {
   .automation-flow-shell,
   .automation-agents-pane,
   .automation-intro,
+  .automatic-schedule-card,
   .stage-card,
   .agent-card {
     padding: 16px;
+  }
+
+  .automatic-schedule-card {
+    flex-direction: column;
   }
 }

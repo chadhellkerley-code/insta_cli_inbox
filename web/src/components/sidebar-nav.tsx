@@ -8,6 +8,7 @@ const links = [
   { href: "/cuentas", label: "Cuentas" },
   { href: "/inbox", label: "Inbox" },
   { href: "/automatizaciones", label: "Automatizaciones" },
+  { href: "/setting", label: "Setting" },
 ];
 
 export function SidebarNav() {

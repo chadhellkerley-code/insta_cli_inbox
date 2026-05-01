@@ -1224,6 +1224,18 @@ export function AutomationAgentsManager({
                             </div>
                           )}
                         </div>
+
+                        <div className="automatic-schedule-card">
+                          <div>
+                            <span className="eyebrow">Agenda automatica</span>
+                            <h3>Agenda automatica</h3>
+                            <p>
+                              Este sector esta creado con el fin de agendar en
+                              automatico al lead totalmente listo
+                            </p>
+                          </div>
+                          <span className="pill">Proximamente</span>
+                        </div>
                       </article>
                     ))}
                   </div>
