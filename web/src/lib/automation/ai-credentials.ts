@@ -6,8 +6,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
+export const AUTOMATION_AI_PROVIDER = "openai";
+export const AUTOMATION_AI_MODEL = "gpt-4o-mini";
 
-export type AiCredentialProvider = "openai" | "groq";
+export type AiCredentialProvider = typeof AUTOMATION_AI_PROVIDER;
 
 export type AiCredentialRow = {
   id: string;
@@ -26,24 +28,18 @@ function normalizeString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function normalizeProvider(value: unknown): AiCredentialProvider {
-  const provider = normalizeString(value).toLowerCase();
+function ensureOpenAiApiKey(value: unknown) {
+  const normalizedApiKey = normalizeString(value);
 
-  if (provider === "openai" || provider === "groq") {
-    return provider;
+  if (!normalizedApiKey) {
+    throw new Error("La API key de OpenAI es obligatoria.");
   }
 
-  throw new Error("Proveedor de IA invalido.");
-}
-
-function normalizeModel(value: unknown) {
-  const model = normalizeString(value);
-
-  if (!model) {
-    throw new Error("El modelo de IA es obligatorio.");
+  if (!normalizedApiKey.startsWith("sk-") || normalizedApiKey.length < 20) {
+    throw new Error("La API key no parece ser una credencial valida de OpenAI.");
   }
 
-  return model;
+  return normalizedApiKey;
 }
 
 function getEncryptionKey() {
@@ -72,11 +68,7 @@ function getEncryptionKey() {
 }
 
 export function encryptApiKey(apiKey: string) {
-  const normalizedApiKey = normalizeString(apiKey);
-
-  if (!normalizedApiKey) {
-    throw new Error("La API key es obligatoria.");
-  }
+  const normalizedApiKey = ensureOpenAiApiKey(apiKey);
 
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, getEncryptionKey(), iv);
@@ -111,8 +103,6 @@ export function decryptApiKey(row: AiCredentialRow) {
 
 export async function saveAiCredential(
   ownerId: string,
-  provider: string,
-  model: string,
   apiKey: string,
 ) {
   const normalizedOwnerId = normalizeString(ownerId);
@@ -123,8 +113,8 @@ export async function saveAiCredential(
 
   const payload = {
     owner_id: normalizedOwnerId,
-    provider: normalizeProvider(provider),
-    model: normalizeModel(model),
+    provider: AUTOMATION_AI_PROVIDER,
+    model: AUTOMATION_AI_MODEL,
     ...encryptApiKey(apiKey),
   };
   const admin = createAdminClient();

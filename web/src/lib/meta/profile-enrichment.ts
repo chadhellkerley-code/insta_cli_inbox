@@ -11,7 +11,6 @@ type AdminClient = ReturnType<typeof import("@/lib/supabase/admin").createAdminC
 
 type InstagramAccountProfileTarget = {
   id: string;
-  owner_id?: string | null;
   instagram_account_id: string;
   access_token: string;
   token_expires_at?: string | null;
@@ -149,7 +148,6 @@ export function getInstagramContactDisplayProfile(contact: {
 export async function syncInstagramAccountProfile(options: {
   admin: AdminClient;
   account: InstagramAccountProfileTarget;
-  ownerId?: string;
 }) {
   const oauthConfig = getMetaOauthConfig();
 
@@ -164,11 +162,6 @@ export async function syncInstagramAccountProfile(options: {
         tokenLifecycle: "oauth",
       }),
     };
-  }
-
-  const ownerId = options.ownerId ?? options.account.owner_id;
-  if (!ownerId) {
-    throw new Error("No pudimos actualizar la cuenta sin owner_id.");
   }
 
   const managedToken = await ensureInstagramAccessToken({
@@ -188,8 +181,7 @@ export async function syncInstagramAccountProfile(options: {
           last_token_refresh_at: nextToken.obtainedAt,
           updated_at: nextToken.obtainedAt,
         } as never)
-        .eq("id", options.account.id)
-        .eq("owner_id", ownerId);
+        .eq("id", options.account.id);
 
       if (updateTokenResult.error) {
         throw new Error(updateTokenResult.error.message);
@@ -246,8 +238,7 @@ export async function syncInstagramAccountProfile(options: {
   const updateResult = await options.admin
     .from("instagram_accounts")
     .update(updatePayload as never)
-    .eq("id", options.account.id)
-    .eq("owner_id", ownerId);
+    .eq("id", options.account.id);
 
   if (updateResult.error) {
     throw new Error(updateResult.error.message);
@@ -335,8 +326,7 @@ export async function resolveInstagramContactProfile(options: {
             last_token_refresh_at: nextToken.obtainedAt,
             updated_at: nextToken.obtainedAt,
           } as never)
-          .eq("id", options.account.id)
-          .eq("owner_id", options.account.owner_id);
+          .eq("id", options.account.id);
 
         if (updateTokenResult.error) {
           throw new Error(updateTokenResult.error.message);

@@ -9,14 +9,13 @@ import {
 import { createClient } from "@/lib/supabase/server";
 
 type Params = {
-  params: Promise<{
+  params: {
     agentId: string;
-  }>;
+  };
 };
 
 export async function GET(_request: Request, { params }: Params) {
-  const { agentId } = await params;
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -26,7 +25,7 @@ export async function GET(_request: Request, { params }: Params) {
   }
 
   const agents = await loadAutomationAgents(supabase, user.id);
-  const agent = agents.find((item) => item.id === agentId) ?? null;
+  const agent = agents.find((item) => item.id === params.agentId) ?? null;
 
   if (!agent) {
     return NextResponse.json({ error: "Agente no encontrado." }, { status: 404 });
@@ -36,8 +35,7 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 export async function PUT(request: Request, { params }: Params) {
-  const { agentId } = await params;
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -55,7 +53,7 @@ export async function PUT(request: Request, { params }: Params) {
   try {
     const agent = await saveAutomationAgent(supabase, user.id, {
       ...body,
-      id: agentId,
+      id: params.agentId,
     });
 
     return NextResponse.json({ agent });
@@ -68,8 +66,7 @@ export async function PUT(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
-  const { agentId } = await params;
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -79,7 +76,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   }
 
   try {
-    await deleteAutomationAgent(supabase, user.id, agentId);
+    await deleteAutomationAgent(supabase, user.id, params.agentId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

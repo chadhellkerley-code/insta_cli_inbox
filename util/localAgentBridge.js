@@ -124,7 +124,7 @@ async function resolveAccountsForJob(db, supabase, payload, agentId) {
   }
 
   const localAccount =
-    (await getAccountByRemoteId(db, remoteAccount.id, remoteAccount.owner_id || null)) ||
+    (await getAccountByRemoteId(db, remoteAccount.id)) ||
     (await getAccountByUsername(db, remoteAccount.username, remoteAccount.owner_id || null)) ||
     (await upsertLocalAccountFromRemote(db, remoteAccount));
 
@@ -216,13 +216,12 @@ async function markJobFailed(supabase, jobId, errorMessage) {
   }
 }
 
-async function updateRemoteAccountStatus(supabase, remoteAccount, status) {
+async function updateRemoteAccountStatus(supabase, remoteAccountId, status) {
   try {
     const { error } = await supabase
       .from('accounts')
       .update({ status })
-      .eq('id', remoteAccount.id)
-      .eq('owner_id', remoteAccount.owner_id);
+      .eq('id', remoteAccountId);
 
     if (error) {
       throw error;
@@ -306,7 +305,7 @@ async function processJob(db, supabase, agentId, job) {
 
   if (job.type === 'login_account') {
     const result = await loginAccount(db, localAccount);
-    await updateRemoteAccountStatus(supabase, remoteAccount, 'active');
+    await updateRemoteAccountStatus(supabase, remoteAccount.id, 'active');
     return {
       account_id: remoteAccount.id,
       username: remoteAccount.username,
@@ -340,7 +339,7 @@ async function processJob(db, supabase, agentId, job) {
       totalMessages += messages.length;
     }
 
-    await updateRemoteAccountStatus(supabase, remoteAccount, 'active');
+    await updateRemoteAccountStatus(supabase, remoteAccount.id, 'active');
     return {
       account_id: remoteAccount.id,
       username: remoteAccount.username,
@@ -369,7 +368,7 @@ async function processJob(db, supabase, agentId, job) {
       tags: null,
     });
 
-    await updateRemoteAccountStatus(supabase, remoteAccount, 'active');
+    await updateRemoteAccountStatus(supabase, remoteAccount.id, 'active');
     return {
       account_id: remoteAccount.id,
       username: remoteAccount.username,

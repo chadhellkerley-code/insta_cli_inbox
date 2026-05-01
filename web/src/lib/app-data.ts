@@ -5,7 +5,6 @@ import { syncInstagramUsernamesFromStoredRuntimeMetadata } from "@/lib/meta/inst
 import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { hasHydratedInstagramContact } from "@/lib/shared-data";
 export type {
   ConversationRecord,
   DashboardMetrics,
@@ -25,7 +24,6 @@ export {
   getDisplayName,
   getInstagramAccountDisplayName,
   getMessagePreview,
-  hasHydratedInstagramContact,
 } from "@/lib/shared-data";
 import type {
   ConversationRecord,
@@ -292,7 +290,7 @@ async function selectOwnedAccountsWithAdmin(
 }
 
 export async function requireUserContext() {
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -391,7 +389,6 @@ export async function loadOwnedAccounts(
         const result = await syncInstagramAccountProfile({
           admin,
           account,
-          ownerId: userId,
         });
 
         return result.updated;
@@ -472,7 +469,7 @@ export async function loadConversations(
   );
 
   if (contactIds.length === 0) {
-    return conversations.filter(hasHydratedInstagramContact);
+    return conversations;
   }
 
   const { data: contactsData, error: contactsError } = await supabase
@@ -493,7 +490,7 @@ export async function loadConversations(
       });
     }
 
-    return conversations.filter(hasHydratedInstagramContact);
+    return conversations;
   }
 
   const contacts = castRows<InstagramContactRecord>(contactsData);
@@ -513,7 +510,7 @@ export async function loadConversations(
       contact_profile_picture_url:
         contact.profile_picture_url ?? conversation.contact_profile_picture_url ?? null,
     };
-  }).filter(hasHydratedInstagramContact);
+  });
 }
 
 export async function loadConversationMessages(

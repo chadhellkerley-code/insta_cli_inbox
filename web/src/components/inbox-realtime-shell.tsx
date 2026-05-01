@@ -19,7 +19,6 @@ import {
   getConversationPreview,
   getInstagramAccountDisplayName,
   getMessagePreview,
-  hasHydratedInstagramContact,
 } from "@/lib/shared-data";
 import { createClient } from "@/lib/supabase/client";
 
@@ -34,7 +33,6 @@ type InboxRealtimeShellProps = {
 type SendMode = "text" | "audio";
 type TimeFilter = "all" | "plus12" | "between6and12" | "under6" | "new";
 type StatusFilter = "all" | "active" | "handoff";
-type AccountFilter = "all" | string; // "all" or an account UUID
 
 const BACKGROUND_REFRESH_INTERVAL_MS = 12_000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -207,7 +205,7 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
   );
 
   if (contactIds.length === 0) {
-    return sortConversations(conversations.filter(hasHydratedInstagramContact));
+    return sortConversations(conversations);
   }
 
   const contactsResult = await client
@@ -217,7 +215,7 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
     .in("contact_igsid", contactIds);
 
   if (contactsResult.error || !contactsResult.data) {
-    return sortConversations(conversations.filter(hasHydratedInstagramContact));
+    return sortConversations(conversations);
   }
 
   const contacts = contactsResult.data as InstagramContactLite[];
@@ -238,7 +236,7 @@ async function loadConversationRows(client: ReturnType<typeof createClient>, use
     } satisfies ConversationRecord;
   });
 
-  return sortConversations(mergedConversations.filter(hasHydratedInstagramContact));
+  return sortConversations(mergedConversations);
 }
 
 async function loadMessageRows(
@@ -268,7 +266,7 @@ export function InboxRealtimeShell({
   initialMessages,
   initialSelectedConversationId,
 }: InboxRealtimeShellProps) {
-  const clientRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const clientRef = useRef<ReturnType<typeof createClient>>();
   const selectedConversationRef = useRef<string | null>(initialSelectedConversationId);
   const labelMenuRef = useRef<HTMLDivElement>(null);
   const [accounts, setAccounts] = useState(initialAccounts);
@@ -284,7 +282,6 @@ export function InboxRealtimeShell({
   const [labelMenuOpen, setLabelMenuOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [accountFilter, setAccountFilter] = useState<AccountFilter>("all");
   const [labelsDraft, setLabelsDraft] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
@@ -415,7 +412,7 @@ export function InboxRealtimeShell({
     return () => {
       cancelled = true;
     };
-  }, [initialMessages, initialSelectedConversationId, selectedConversationId, userId]);
+  }, [initialMessages, initialSelectedConversationId, selectedConversationId]);
 
   useEffect(() => {
     const supabase = clientRef.current!;
@@ -553,15 +550,6 @@ export function InboxRealtimeShell({
           setConversations((current) => {
             const previousConversation = current.find((item) => item.id === conversation.id);
             const nextConversation = mergeConversationIdentity(previousConversation, conversation);
-            if (!hasHydratedInstagramContact(nextConversation)) {
-              if (selectedConversationRef.current === conversation.id) {
-                setSelectedConversationId(null);
-                setMessages([]);
-              }
-
-              return removeById(current, conversation.id);
-            }
-
             return sortConversations(upsertById(current, nextConversation));
           });
         },
@@ -612,8 +600,6 @@ export function InboxRealtimeShell({
 
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
-      const matchesAccount =
-        accountFilter === "all" || conversation.account_id === accountFilter;
       const displayName = getConversationDisplayName(conversation).toLowerCase();
       const accountUsername = getInstagramAccountDisplayName(
         accountUsernameMap.get(conversation.account_id) ?? conversation.account_username,
@@ -633,9 +619,9 @@ export function InboxRealtimeShell({
       const matchesTime = conversationMatchesTimeFilter(conversation, timeFilter);
       const matchesStatus = conversationMatchesStatusFilter(conversation, statusFilter);
 
-      return matchesAccount && matchesSearch && matchesLabel && matchesTime && matchesStatus;
+      return matchesSearch && matchesLabel && matchesTime && matchesStatus;
     });
-  }, [accountFilter, accountUsernameMap, activeLabels, conversations, search, statusFilter, timeFilter]);
+  }, [accountUsernameMap, activeLabels, conversations, search, statusFilter, timeFilter]);
 
   function toggleActiveLabel(label: string) {
     setActiveLabels((current) => {
@@ -829,29 +815,6 @@ export function InboxRealtimeShell({
               />
             </div>
           </div>
-
-          {accounts.length > 1 ? (
-            <div className="tag-row inbox-filter-row account-filter-row">
-              <button
-                type="button"
-                className={accountFilter === "all" ? "chip active" : "chip"}
-                onClick={() => setAccountFilter("all")}
-              >
-                Todas las cuentas
-              </button>
-              {accounts.map((account) => (
-                <button
-                  key={account.id}
-                  type="button"
-                  className={accountFilter === account.id ? "chip active" : "chip"}
-                  onClick={() => setAccountFilter(account.id)}
-                  title={account.username}
-                >
-                  {getInstagramAccountDisplayName(account.username)}
-                </button>
-              ))}
-            </div>
-          ) : null}
 
           <div className="time-filter-wrap" ref={labelMenuRef}>
             <div className="time-filter-group" role="group" aria-label="Filtros por tiempo">

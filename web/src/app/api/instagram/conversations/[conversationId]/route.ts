@@ -9,10 +9,9 @@ type UpdateConversationBody = {
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ conversationId: string }> },
+  { params }: { params: { conversationId: string } },
 ) {
-  const { conversationId } = await params;
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -42,7 +41,7 @@ export async function PATCH(
       notes,
       updated_at: new Date().toISOString(),
     } as never)
-    .eq("id", conversationId)
+    .eq("id", params.conversationId)
     .eq("owner_id", user.id);
 
   if (result.error) {

@@ -71,7 +71,6 @@ export async function runInstagramPostOauthActivation(
 export async function persistInstagramAccountReadiness(options: {
   admin: AdminClient;
   accountId: string;
-  ownerId: string;
   readiness: InstagramAccountReadinessResult;
 }) {
   const updatedAt = options.readiness.lastWebhookCheckAt ?? new Date().toISOString();
@@ -89,8 +88,7 @@ export async function persistInstagramAccountReadiness(options: {
         updated_at: updatedAt,
       } as never,
     )
-    .eq("id", options.accountId)
-    .eq("owner_id", options.ownerId);
+    .eq("id", options.accountId);
 
   if (updateResult.error) {
     throw new Error(updateResult.error.message);

@@ -2,7 +2,6 @@ export const INSTAGRAM_FALLBACK_USERNAME_PREFIX = "ig_";
 
 type AccountUsernameRecord = {
   id: string;
-  owner_id?: string | null;
   instagram_user_id?: string | null;
   instagram_account_id: string;
   instagram_app_user_id?: string | null;
@@ -156,7 +155,6 @@ export async function syncInstagramUsername(options: {
   admin: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>;
   account: AccountUsernameRecord;
   candidateUsername?: string | null;
-  ownerId?: string;
   source: string;
 }) {
   const currentUsername = normalizeInstagramUsername(options.account.username);
@@ -173,13 +171,8 @@ export async function syncInstagramUsername(options: {
 
   const fallbackUsername = currentUsername;
   const realUsername = nextUsername;
-  const ownerId = options.ownerId ?? options.account.owner_id;
 
   if (fallbackUsername === realUsername) {
-    return false;
-  }
-
-  if (!ownerId) {
     return false;
   }
 
@@ -190,7 +183,6 @@ export async function syncInstagramUsername(options: {
       updated_at: new Date().toISOString(),
     } as never)
     .eq("id", options.account.id)
-    .eq("owner_id", ownerId)
     .eq("username", fallbackUsername)
     .select("id, username")
     .maybeSingle();
@@ -284,7 +276,6 @@ export async function syncInstagramUsernamesFromStoredRuntimeMetadata(options: {
         admin: options.admin,
         account,
         candidateUsername: candidate.username,
-        ownerId: options.ownerId,
         source: candidate.source,
       })
     ) {

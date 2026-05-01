@@ -21,8 +21,8 @@ router.get('/', ensureAuth, async (req, res) => {
     // Aggregate latest message per thread
     const rows = await new Promise((resolve, reject) => {
       const sql =
-        'SELECT c.thread_id, c.account_id, c.username, MAX(c.timestamp) AS last_timestamp, SUM(CASE WHEN c.tags LIKE "%qualified%" THEN 1 ELSE 0 END) AS qualified_count FROM chats c JOIN accounts a ON a.id = c.account_id WHERE a.owner_id = ? GROUP BY c.thread_id, c.account_id, c.username ORDER BY last_timestamp DESC';
-      db.all(sql, [req.session.user.id], (err, rows) => {
+        'SELECT thread_id, account_id, username, MAX(timestamp) AS last_timestamp, SUM(CASE WHEN tags LIKE "%qualified%" THEN 1 ELSE 0 END) AS qualified_count FROM chats GROUP BY thread_id, account_id, username ORDER BY last_timestamp DESC';
+      db.all(sql, [], (err, rows) => {
         if (err) return reject(err);
         resolve(rows);
       });
@@ -42,7 +42,7 @@ router.get('/', ensureAuth, async (req, res) => {
       threads = threads.filter((t) => t.last_timestamp < twoWeeksAgo);
     }
     // Fetch accounts to map names
-    const accounts = await getAccounts(db, req.session.user.id);
+    const accounts = await getAccounts(db);
     const accountsMap = {};
     accounts.forEach((acc) => {
       accountsMap[acc.id] = acc.username;
@@ -72,7 +72,7 @@ router.get('/thread/:threadId', ensureAuth, async (req, res) => {
   const db = req.db;
   const threadId = req.params.threadId;
   try {
-    const chats = await getChatsByThread(db, threadId, req.session.user.id);
+    const chats = await getChatsByThread(db, threadId);
     // Determine account
     const accountId = chats.length > 0 ? chats[0].account_id : null;
     // If no local chats, attempt to fetch from IG directly (optional)
@@ -103,7 +103,7 @@ router.post('/thread/:threadId/send', ensureAuth, async (req, res) => {
   const threadId = req.params.threadId;
   const { accountId, message } = req.body;
   try {
-    const account = await getAccountById(db, accountId, req.session.user.id);
+    const account = await getAccountById(db, accountId);
     if (!account) {
       throw new Error('Cuenta no encontrada');
     }
@@ -111,8 +111,8 @@ router.post('/thread/:threadId/send', ensureAuth, async (req, res) => {
     let sessionData = null;
     const sessionRows = await new Promise((resolve, reject) => {
       db.all(
-        'SELECT s.* FROM sessions s JOIN accounts a ON a.id = s.account_id WHERE s.account_id = ? AND a.owner_id = ? ORDER BY s.created_at DESC LIMIT 1',
-        [accountId, req.session.user.id],
+        'SELECT * FROM sessions WHERE account_id = ? ORDER BY created_at DESC LIMIT 1',
+        [accountId],
         (err, rows) => {
           if (err) return reject(err);
           resolve(rows);
@@ -153,7 +153,7 @@ router.post('/thread/:threadId/send', ensureAuth, async (req, res) => {
   } catch (err) {
     console.error('Send message error:', err.message);
     // fallback: show thread with error
-    const chats = await getChatsByThread(db, threadId, req.session.user.id);
+    const chats = await getChatsByThread(db, threadId);
     res.render('thread', {
       user: req.session.user,
       threadId,

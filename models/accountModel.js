@@ -90,7 +90,7 @@ async function addAccount(db, supabase, account) {
   });
 }
 
-async function getAccounts(db, ownerId) {
+async function getAccounts(db) {
   const rows = await allAsync(
     db,
     `SELECT
@@ -101,29 +101,18 @@ async function getAccounts(db, ownerId) {
         WHERE s.account_id = a.id
       ) AS has_session
     FROM accounts a
-    WHERE a.owner_id = ?
     ORDER BY a.created_at DESC`,
-    [ownerId],
   );
   return rows;
 }
 
-async function getAccountById(db, id, ownerId) {
-  const rows = await allAsync(db, 'SELECT * FROM accounts WHERE id = ? AND owner_id = ?', [id, ownerId]);
+async function getAccountById(db, id) {
+  const rows = await allAsync(db, 'SELECT * FROM accounts WHERE id = ?', [id]);
   return rows[0] || null;
 }
 
-async function getAccountByRemoteId(db, remoteId, ownerId = null) {
-  const params = [remoteId];
-  let sql = 'SELECT * FROM accounts WHERE remote_id = ?';
-
-  if (ownerId) {
-    sql += ' AND owner_id = ?';
-    params.push(ownerId);
-  }
-
-  sql += ' LIMIT 1';
-  const rows = await allAsync(db, sql, params);
+async function getAccountByRemoteId(db, remoteId) {
+  const rows = await allAsync(db, 'SELECT * FROM accounts WHERE remote_id = ? LIMIT 1', [remoteId]);
   return rows[0] || null;
 }
 
@@ -143,7 +132,7 @@ async function getAccountByUsername(db, username, ownerId = null) {
 
 async function upsertLocalAccountFromRemote(db, account) {
   const existing =
-    (account.id ? await getAccountByRemoteId(db, account.id, account.owner_id || null) : null) ||
+    (account.id ? await getAccountByRemoteId(db, account.id) : null) ||
     (await getAccountByUsername(db, account.username, account.owner_id || null));
 
   if (!existing) {
@@ -161,7 +150,7 @@ async function upsertLocalAccountFromRemote(db, account) {
       remote_id: account.id || null,
     });
 
-    return getAccountByRemoteId(db, account.id, account.owner_id || null);
+    return getAccountByRemoteId(db, account.id);
   }
 
   await runAsync(
@@ -178,7 +167,7 @@ async function upsertLocalAccountFromRemote(db, account) {
          agent_id = ?,
          owner_id = ?,
          remote_id = ?
-     WHERE id = ? AND owner_id = ?`,
+     WHERE id = ?`,
     [
       account.username,
       account.password || null,
@@ -192,14 +181,13 @@ async function upsertLocalAccountFromRemote(db, account) {
       account.owner_id || null,
       account.id || existing.remote_id || null,
       existing.id,
-      account.owner_id || existing.owner_id || null,
     ],
   );
 
-  return getAccountById(db, existing.id, account.owner_id || null);
+  return getAccountById(db, existing.id);
 }
 
-async function updateAccount(db, id, ownerId, account) {
+async function updateAccount(db, id, account) {
   const result = await runAsync(
     db,
     `UPDATE accounts
@@ -209,7 +197,7 @@ async function updateAccount(db, id, ownerId, account) {
          proxy_port = ?,
          proxy_username = ?,
          proxy_password = ?
-     WHERE id = ? AND owner_id = ?`,
+     WHERE id = ?`,
     [
       account.password,
       account.twofactor || null,
@@ -218,23 +206,16 @@ async function updateAccount(db, id, ownerId, account) {
       account.proxy_username || null,
       account.proxy_password || null,
       id,
-      ownerId,
     ],
   );
 
   return result.changes || 0;
 }
 
-async function deleteAccount(db, id, ownerId) {
-  const existing = await getAccountById(db, id, ownerId);
-
-  if (!existing) {
-    return 0;
-  }
-
+async function deleteAccount(db, id) {
   await runAsync(db, 'DELETE FROM sessions WHERE account_id = ?', [id]);
   await runAsync(db, 'DELETE FROM chats WHERE account_id = ?', [id]);
-  const result = await runAsync(db, 'DELETE FROM accounts WHERE id = ? AND owner_id = ?', [id, ownerId]);
+  const result = await runAsync(db, 'DELETE FROM accounts WHERE id = ?', [id]);
   return result.changes || 0;
 }
 

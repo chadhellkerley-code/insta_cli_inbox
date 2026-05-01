@@ -9,15 +9,14 @@ type AccountLookup = {
 };
 
 type RouteContext = {
-  params: Promise<{
+  params: {
     accountId: string;
-  }>;
+  };
 };
 
 export async function DELETE(_request: Request, context: RouteContext) {
-  const { accountId: rawAccountId } = await context.params;
-  const accountId = rawAccountId?.trim();
-  const supabase = await createClient();
+  const accountId = context.params.accountId?.trim();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -36,7 +35,6 @@ export async function DELETE(_request: Request, context: RouteContext) {
       .from("instagram_accounts")
       .select("id, owner_id")
       .eq("id", accountId)
-      .eq("owner_id", user.id)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
 
@@ -44,11 +42,14 @@ export async function DELETE(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Cuenta no encontrada." }, { status: 404 });
     }
 
+    if (account.owner_id !== user.id) {
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+    }
+
     const deleteResult = await admin
       .from("instagram_accounts")
       .delete()
-      .eq("id", account.id)
-      .eq("owner_id", user.id);
+      .eq("id", account.id);
 
     if (deleteResult.error) {
       throw new Error(deleteResult.error.message);

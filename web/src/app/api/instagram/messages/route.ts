@@ -90,7 +90,7 @@ function logInstagramMessage(
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -163,7 +163,6 @@ export async function POST(request: Request) {
       .from("instagram_conversations")
       .select("id, owner_id, account_id, contact_igsid")
       .eq("id", conversationId)
-      .eq("owner_id", user.id)
       .maybeSingle();
     const conversation = conversationResult.data as ConversationLookup | null;
 
@@ -178,13 +177,22 @@ export async function POST(request: Request) {
       contactIgsid: conversation.contact_igsid,
     });
 
+    if (conversation.owner_id !== user.id) {
+      logInstagramMessage("warn", "request rejected", {
+        reason: "conversation_owner_mismatch",
+        userId: user.id,
+        conversationId: conversation.id,
+        ownerId: conversation.owner_id,
+      });
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+    }
+
     const accountResult = await admin
       .from("instagram_accounts")
       .select(
         "id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, account_type, access_token, token_expires_at, token_lifecycle, last_oauth_at",
       )
       .eq("id", conversation.account_id)
-      .eq("owner_id", user.id)
       .maybeSingle();
     const account = accountResult.data as AccountLookup | null;
 
@@ -218,8 +226,7 @@ export async function POST(request: Request) {
             last_token_refresh_at: nextToken.obtainedAt,
             updated_at: nextToken.obtainedAt,
           } as never)
-          .eq("id", account.id)
-          .eq("owner_id", user.id);
+          .eq("id", account.id);
 
         if (tokenUpdate.error) {
           throw new Error(tokenUpdate.error.message);
@@ -268,8 +275,7 @@ export async function POST(request: Request) {
           account_type: resolvedAccountType,
           updated_at: nowIso,
         } as never)
-        .eq("id", account.id)
-        .eq("owner_id", user.id);
+        .eq("id", account.id);
 
       if (accountUpdate.error) {
         throw new Error(accountUpdate.error.message);
@@ -315,7 +321,6 @@ export async function POST(request: Request) {
     const lastInboundResult = await admin
       .from("instagram_messages")
       .select("sent_at, created_at")
-      .eq("owner_id", user.id)
       .eq("conversation_id", conversation.id)
       .eq("direction", "in")
       .order("sent_at", { ascending: false, nullsFirst: false })
@@ -430,8 +435,7 @@ export async function POST(request: Request) {
         unread_count: 0,
         updated_at: createdAt,
       } as never)
-      .eq("id", conversation.id)
-      .eq("owner_id", user.id);
+      .eq("id", conversation.id);
 
     if (conversationUpdate.error) {
       throw new Error(conversationUpdate.error.message);
@@ -445,8 +449,7 @@ export async function POST(request: Request) {
         webhook_subscription_error: null,
         updated_at: createdAt,
       } as never)
-      .eq("id", account.id)
-      .eq("owner_id", user.id);
+      .eq("id", account.id);
 
     if (readinessUpdate.error) {
       throw new Error(readinessUpdate.error.message);

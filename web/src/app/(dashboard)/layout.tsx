@@ -15,7 +15,7 @@ export default async function DashboardLayout({
   async function logoutAction() {
     "use server";
 
-    const supabase = await createClient();
+    const supabase = createClient();
     await supabase.auth.signOut();
     redirect("/login");
   }

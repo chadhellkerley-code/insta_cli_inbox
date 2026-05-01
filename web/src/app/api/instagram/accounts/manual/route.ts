@@ -106,7 +106,7 @@ async function normalizeManualToken(accessToken: string) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -156,7 +156,6 @@ export async function POST(request: Request) {
       .select(
         "id, owner_id, instagram_user_id, instagram_account_id, page_id, instagram_app_user_id, username, name, account_type, profile_picture_url",
       )
-      .eq("owner_id", user.id)
       .or(lookupFilters.join(","));
     const existingAccounts = (existingResult.data as ExistingAccountLookup[] | null) ?? [];
     const existing = pickExistingInstagramAccount(existingAccounts, {
@@ -219,7 +218,6 @@ export async function POST(request: Request) {
           .from("instagram_accounts")
           .update(updateMutation as never)
           .eq("id", existing.id)
-          .eq("owner_id", user.id)
           .select("id, owner_id, instagram_user_id, instagram_account_id, instagram_app_user_id")
           .maybeSingle()
       : await admin
@@ -269,7 +267,6 @@ export async function POST(request: Request) {
     await persistInstagramAccountReadiness({
       admin,
       accountId: upsertedAccount.id,
-      ownerId: user.id,
       readiness,
     });
 

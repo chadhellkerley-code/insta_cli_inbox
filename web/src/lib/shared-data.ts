@@ -120,11 +120,6 @@ export function getInstagramAccountDisplayName(username?: string | null) {
   return `@${normalized}`;
 }
 
-export function hasHydratedInstagramContact(conversation: Pick<ConversationRecord, "contact_username">) {
-  const username = conversation.contact_username?.trim().replace(/^@+/, "") ?? null;
-  return Boolean(username && !isFallbackInstagramUsername(username));
-}
-
 export function getConversationDisplayName(conversation: ConversationRecord) {
   const username = conversation.contact_username?.trim().replace(/^@+/, "") ?? null;
   const name = conversation.contact_name?.trim() ?? null;

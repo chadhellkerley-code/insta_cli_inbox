@@ -21,11 +21,7 @@ export default async function DashboardPage() {
   ]);
 
   const enrichedConversations = enrichConversationsWithAccounts(conversations, accounts);
-  const visibleConversationIds = new Set(enrichedConversations.map((conversation) => conversation.id));
-  const visibleMessages = messages.filter((message) =>
-    visibleConversationIds.has(message.conversation_id),
-  );
-  const metrics = computeDashboardMetrics(visibleMessages, enrichedConversations, accounts);
+  const metrics = computeDashboardMetrics(messages, enrichedConversations, accounts);
 
   return (
     <div className="page-stack">

@@ -5,7 +5,7 @@ import { loadAutomationAgents, saveAutomationAgent } from "@/lib/automation/serv
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -19,7 +19,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
+  const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

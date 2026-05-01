@@ -3,8 +3,8 @@ import { cookies } from "next/headers";
 
 import { getSupabasePublicEnv } from "@/lib/supabase/config";
 
-export async function createClient() {
-  const cookieStore = await cookies();
+export function createClient() {
+  const cookieStore = cookies();
   const { supabaseUrl, supabaseAnonKey } = getSupabasePublicEnv();
 
   return createServerClient(

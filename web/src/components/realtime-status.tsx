@@ -47,7 +47,7 @@ export function RealtimeStatus({
   initialConnectedAccounts,
   initialRecentWebhookAt,
 }: RealtimeStatusProps) {
-  const clientRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const clientRef = useRef<ReturnType<typeof createClient>>();
   const [connectedAccounts, setConnectedAccounts] = useState(initialConnectedAccounts);
   const [recentWebhookAt, setRecentWebhookAt] = useState(initialRecentWebhookAt);
 

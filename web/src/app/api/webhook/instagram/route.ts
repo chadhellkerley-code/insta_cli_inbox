@@ -466,6 +466,67 @@ async function findAccountForEvent(
   return null;
 }
 
+async function findBootstrapAccountForEvent(
+  admin: ReturnType<typeof createAdminClient>,
+  options: {
+    senderId: string | null;
+    recipientId: string | null;
+  },
+) {
+  const recipientId = normalizeInstagramIdentifier(options.recipientId);
+
+  if (!recipientId) {
+    return null;
+  }
+
+  const result = await admin
+    .from("instagram_accounts")
+    .select(
+      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
+    );
+  const accounts = (result.data as AccountLookup[] | null) ?? [];
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const senderId = normalizeInstagramIdentifier(options.senderId);
+  const candidates = accounts.filter((account) => {
+    const storedIds = new Set(
+      collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
+    );
+    const currentAppUserId = normalizeInstagramIdentifier(account.instagram_app_user_id);
+    const canBootstrapAppUserId =
+      !currentAppUserId ||
+      currentAppUserId === normalizeInstagramIdentifier(account.instagram_user_id) ||
+      currentAppUserId === normalizeInstagramIdentifier(account.instagram_account_id);
+
+    if (!canBootstrapAppUserId) {
+      return false;
+    }
+
+    if (storedIds.has(recipientId)) {
+      return false;
+    }
+
+    if (senderId && storedIds.has(senderId)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (candidates.length !== 1) {
+    return null;
+  }
+
+  return {
+    account: candidates[0],
+    matchedBy: "bootstrap:recipient_id",
+    matchedValue: recipientId,
+  } satisfies AccountMatchResult;
+}
+
 async function findAccountByRemoteIdentityForEvent(
   admin: ReturnType<typeof createAdminClient>,
   options: {
@@ -630,8 +691,7 @@ async function backfillInstagramAppUserId(
       instagram_app_user_id: nextAppUserId,
       updated_at: new Date().toISOString(),
     } as never)
-    .eq("id", account.id)
-    .eq("owner_id", account.owner_id);
+    .eq("id", account.id);
 
   if (update.error) {
     console.warn("[instagram-webhook] instagram_app_user_id backfill skipped", {
@@ -765,13 +825,9 @@ function resolveConversationContactUsername(
   isInbound: boolean,
 ) {
   if (isInbound) {
-    // For inbound: sender = contact, recipient = owned account.
-    // Never use recipient.username as fallback — that would store the owned
-    // account's own handle as the contact name.
-    return event.sender?.username ?? null;
+    return event.sender?.username ?? event.recipient?.username ?? null;
   }
 
-  // For outbound echo events: sender = owned account, recipient = contact.
   const recipientUsername = event.recipient?.username ?? null;
 
   if (recipientUsername && recipientUsername !== account.username) {
@@ -895,18 +951,6 @@ async function persistMessagingEvent(
     event,
     isInbound,
   );
-
-  if (!contactProfile.contactUsername) {
-    // Log but do NOT drop the message. The conversation is stored with
-    // contact_username = null so it is hidden from the inbox filter until
-    // a later webhook (or background retry after EMPTY_CONTACT_PROFILE_RETRY_AFTER_MS)
-    // successfully resolves the username and updates the row.
-    logWebhook("warn", "contact username not yet resolved — storing without username", {
-      accountId: account.id,
-      contactIgsid,
-    });
-  }
-
   const conversationId = await upsertConversationForMessage(admin, {
     accountId: account.id,
     ownerId: account.owner_id,
@@ -956,8 +1000,7 @@ async function persistMessagingEvent(
       status: INSTAGRAM_ACCOUNT_STATUS_MESSAGING_READY,
       updated_at: new Date().toISOString(),
     } as never)
-    .eq("id", account.id)
-    .eq("owner_id", account.owner_id);
+    .eq("id", account.id);
 
   await enrichAccountUsernameFromEvent(admin, account, event);
 
@@ -1215,6 +1258,13 @@ export async function POST(request: Request) {
             candidateUsername: classification.ownedUsername,
           },
         );
+
+        if (!match) {
+          match = await findBootstrapAccountForEvent(admin, {
+            senderId,
+            recipientId,
+          });
+        }
 
         if (!match) {
           match = await findAccountByRemoteIdentityForEvent(admin, {

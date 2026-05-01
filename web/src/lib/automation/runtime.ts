@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  AUTOMATION_AI_MODEL,
   decryptApiKey,
   loadAiCredential,
-  type AiCredentialProvider,
 } from "@/lib/automation/ai-credentials";
 import { sendInstagramMessage } from "@/lib/meta/client";
 import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
@@ -135,9 +135,6 @@ type ConversationMessageContextRow = {
 };
 
 type GenerateAutomationReplyOptions = {
-  ownerId: string;
-  provider: AiCredentialProvider;
-  model: string;
   apiKey: string;
   aiPrompt: string | null;
   personality: string | null;
@@ -225,14 +222,6 @@ function buildAutomationAiMessages(options: GenerateAutomationReplyOptions) {
   ];
 }
 
-function getAiEndpoint(provider: AiCredentialProvider) {
-  if (provider === "groq") {
-    return "https://api.groq.com/openai/v1/chat/completions";
-  }
-
-  return "https://api.openai.com/v1/chat/completions";
-}
-
 function readChatCompletionContent(payload: unknown) {
   const content = (payload as {
     choices?: Array<{
@@ -246,14 +235,14 @@ function readChatCompletionContent(payload: unknown) {
 }
 
 export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
-  const response = await fetch(getAiEndpoint(options.provider), {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "authorization": `Bearer ${options.apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: options.model,
+      model: AUTOMATION_AI_MODEL,
       messages: [
         {
           role: "system",
@@ -268,13 +257,13 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
 
   if (!response.ok) {
     const errorMessage = (payload as { error?: { message?: string } } | null)?.error?.message;
-    throw new Error(errorMessage ?? `Proveedor IA respondio con HTTP ${response.status}.`);
+    throw new Error(errorMessage ?? `OpenAI respondio con HTTP ${response.status}.`);
   }
 
   const content = readChatCompletionContent(payload);
 
   if (!content) {
-    throw new Error("El proveedor IA no devolvio contenido.");
+    throw new Error("OpenAI no devolvio contenido.");
   }
 
   return content;
@@ -297,9 +286,6 @@ async function generateAgentAiReply(
   }
 
   return generateAutomationReply({
-    ownerId,
-    provider: credential.provider,
-    model: credential.model,
     apiKey: decryptApiKey(credential),
     aiPrompt: agent.ai_prompt,
     personality: agent.personality,
@@ -624,14 +610,6 @@ async function scheduleCompletedFlowAiReply(
     return { scheduled: false, reason: "ai_disabled" as const };
   }
 
-  // Pre-flight: verify the API key exists before creating the job.
-  // Without this check the job would be scheduled, fail at runtime 3 times
-  // and end up in "failed" state with "IA activada sin API key configurada."
-  const credential = await loadAiCredential(options.run.owner_id);
-  if (!credential) {
-    return { scheduled: false, reason: "missing_api_key" as const };
-  }
-
   if (isOutsideAutomationWindow(options.run)) {
     return { scheduled: false, reason: "outside_automation_window" as const };
   }
@@ -923,12 +901,11 @@ async function loadRun(client: QueryClient, runId: string) {
   return castRow<AutomationRunRow>(result.data);
 }
 
-async function loadConversation(client: QueryClient, conversationId: string, ownerId: string) {
+async function loadConversation(client: QueryClient, conversationId: string) {
   const result = await client
     .from("instagram_conversations")
     .select("id, owner_id, account_id, contact_igsid")
     .eq("id", conversationId)
-    .eq("owner_id", ownerId)
     .maybeSingle();
 
   if (result.error) {
@@ -938,14 +915,13 @@ async function loadConversation(client: QueryClient, conversationId: string, own
   return castRow<ConversationRuntimeRow>(result.data);
 }
 
-async function loadAccount(client: QueryClient, accountId: string, ownerId: string) {
+async function loadAccount(client: QueryClient, accountId: string) {
   const result = await client
     .from("instagram_accounts")
     .select(
       "id, owner_id, instagram_account_id, instagram_app_user_id, access_token, token_expires_at, token_lifecycle",
     )
     .eq("id", accountId)
-    .eq("owner_id", ownerId)
     .maybeSingle();
 
   if (result.error) {
@@ -1007,6 +983,23 @@ async function countRemainingStageMessageJobs(
   return castRows<{ id: string }>(result.data).length;
 }
 
+async function loadLastStageOrder(client: QueryClient, agentId: string) {
+  const result = await client
+    .from("automation_agent_stages")
+    .select("stage_order")
+    .eq("agent_id", agentId)
+    .order("stage_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const stage = castRow<{ stage_order: number }>(result.data);
+  return stage?.stage_order ?? null;
+}
+
 async function maybeCompleteStage(
   client: QueryClient,
   run: AutomationRunRow,
@@ -1023,14 +1016,20 @@ async function maybeCompleteStage(
     typeof job.payload?.stageOrder === "number"
       ? job.payload.stageOrder
       : Number(job.payload?.stageOrder ?? 0);
+  const completedStageOrder = Number.isFinite(stageOrder)
+    ? stageOrder
+    : run.last_completed_stage_order;
+  const lastStageOrder = await loadLastStageOrder(client, run.agent_id);
+  const flowCompleted =
+    lastStageOrder !== null && completedStageOrder >= lastStageOrder;
 
   await client
     .from("automation_runs")
     .update({
-      last_completed_stage_order: Number.isFinite(stageOrder) ? stageOrder : run.last_completed_stage_order,
+      last_completed_stage_order: completedStageOrder,
       active_stage_order: null,
       last_stage_completed_at: completedAt,
-      status: "active",
+      status: flowCompleted ? "completed" : "active",
     } as never)
     .eq("id", run.id);
 }
@@ -1062,8 +1061,7 @@ async function sendAutomationOutboundMessage(
           last_token_refresh_at: nextToken.obtainedAt,
           updated_at: nextToken.obtainedAt,
         } as never)
-        .eq("id", account.id)
-        .eq("owner_id", account.owner_id);
+        .eq("id", account.id);
 
       if (updateTokenResult.error) {
         throw new Error(updateTokenResult.error.message);
@@ -1132,8 +1130,7 @@ async function sendAutomationOutboundMessage(
       unread_count: 0,
       updated_at: nowIso,
     } as never)
-    .eq("id", conversation.id)
-    .eq("owner_id", conversation.owner_id);
+    .eq("id", conversation.id);
 
   if (conversationUpdate.error) {
     throw new Error(conversationUpdate.error.message);
@@ -1147,8 +1144,7 @@ async function sendAutomationOutboundMessage(
       webhook_subscription_error: null,
       updated_at: nowIso,
     } as never)
-    .eq("id", account.id)
-    .eq("owner_id", account.owner_id);
+    .eq("id", account.id);
 
   return {
     sentAt: nowIso,
@@ -1327,8 +1323,8 @@ async function handleJob(
   const [agent, run, conversation, account] = await Promise.all([
     loadAgent(client, job.agent_id),
     loadRun(client, job.run_id),
-    loadConversation(client, job.conversation_id, job.owner_id),
-    loadAccount(client, job.account_id, job.owner_id),
+    loadConversation(client, job.conversation_id),
+    loadAccount(client, job.account_id),
   ]);
 
   if (!agent || !run || !conversation || !account) {
@@ -1353,18 +1349,6 @@ async function handleJob(
       last_error: "La IA ya no esta activa para este agente.",
     });
     return "skipped_ai_disabled" as const;
-  }
-
-  if (job.job_type === "ai_reply") {
-    const credential = await loadAiCredential(run.owner_id);
-    if (!credential) {
-      await markJob(client, job.id, {
-        status: "skipped",
-        last_error:
-          "No hay API key de IA configurada. Agrega una clave de OpenAI en Automatizaciones > IA.",
-      });
-      return "skipped_ai_disabled" as const;
-    }
   }
 
   if (job.job_type === "followup" && shouldSkipFollowup(run, job)) {
@@ -1563,38 +1547,6 @@ export async function runAutomationForInboundMessage(
   };
 }
 
-async function resetStuckStageMessageJobs(
-  client: QueryClient,
-  options: {
-    ownerId?: string;
-  },
-) {
-  // Stage messages are executed synchronously inside the webhook request.
-  // If that request is killed mid-flight (timeout, deployment restart, crash),
-  // the job stays in "processing" forever and hasPendingStageMessages() always
-  // returns true, permanently blocking further scheduling for that conversation.
-  // Resetting jobs stuck in "processing" for > 5 minutes unblocks the pipeline.
-  const STUCK_THRESHOLD_MS = 5 * 60 * 1000;
-  const stuckBefore = new Date(Date.now() - STUCK_THRESHOLD_MS).toISOString();
-
-  let query = client
-    .from("automation_jobs")
-    .update({
-      status: "pending",
-      last_error:
-        "Reiniciado por dispatch: job de etapa estaba en procesamiento por mas de 5 minutos.",
-    } as never)
-    .eq("job_type", "stage_message")
-    .eq("status", "processing")
-    .lt("updated_at", stuckBefore);
-
-  if (options.ownerId) {
-    query = query.eq("owner_id", options.ownerId);
-  }
-
-  await query;
-}
-
 export async function processDueAutomationJobs(
   client: QueryClient,
   options?: {
@@ -1604,10 +1556,6 @@ export async function processDueAutomationJobs(
 ) {
   const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
   const nowIso = new Date().toISOString();
-
-  // Unblock any stage_message jobs that got stranded in "processing" state.
-  await resetStuckStageMessageJobs(client, { ownerId: options?.ownerId });
-
   const cleanupSummary = await cleanupObsoleteFollowups(client, {
     limit,
     ownerId: options?.ownerId,
