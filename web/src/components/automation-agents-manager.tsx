@@ -50,6 +50,7 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
       id: stage.id,
       name: stage.name,
       autoScheduleEnabled: stage.autoScheduleEnabled,
+      autoScheduleMode: stage.autoScheduleMode,
       followups: stage.followups.map((followup) => ({
         id: followup.id,
         isActive: followup.isActive,
@@ -457,6 +458,7 @@ export function AutomationAgentsManager({
         {
           name: `Etapa ${current.stages.length + 1}`,
           autoScheduleEnabled: false,
+          autoScheduleMode: "link",
           followups: [],
           messages: [
             {
@@ -1230,10 +1232,15 @@ export function AutomationAgentsManager({
                         <div className="automatic-schedule-card">
                           <div>
                             <span className="eyebrow">Agenda automatica</span>
-                            <h3>Agenda automatica</h3>
+                            <h3>
+                              {stage.autoScheduleMode === "auto_booking"
+                                ? "Reservar automaticamente"
+                                : "Enviar link de Calendly"}
+                            </h3>
                             <p>
-                              Este sector esta creado con el fin de agendar en
-                              automatico al lead totalmente listo
+                              {stage.autoScheduleMode === "auto_booking"
+                                ? "Intenta crear una reserva real cuando detecta horario confirmado, email, nombre y timezone. Si Calendly no autoriza la reserva, envia el link."
+                                : "Mantiene el flujo actual: envia un link unico de Calendly para que el lead elija su horario."}
                             </p>
                           </div>
                           <button
@@ -1252,6 +1259,46 @@ export function AutomationAgentsManager({
                           >
                             {stage.autoScheduleEnabled ? "Activo" : "Inactivo"}
                           </button>
+                          <div className="schedule-mode-control">
+                            <button
+                              type="button"
+                              className={
+                                stage.autoScheduleMode === "link"
+                                  ? "mode-option active"
+                                  : "mode-option"
+                              }
+                              onClick={() =>
+                                updateStage(stageIndex, (currentStage) => ({
+                                  ...currentStage,
+                                  autoScheduleMode: "link",
+                                }))
+                              }
+                            >
+                              Enviar link
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                stage.autoScheduleMode === "auto_booking"
+                                  ? "mode-option active"
+                                  : "mode-option"
+                              }
+                              onClick={() =>
+                                updateStage(stageIndex, (currentStage) => ({
+                                  ...currentStage,
+                                  autoScheduleMode: "auto_booking",
+                                }))
+                              }
+                            >
+                              Reservar
+                            </button>
+                          </div>
+                          {stage.autoScheduleMode === "auto_booking" ? (
+                            <p className="schedule-requirements">
+                              Requiere Calendly conectado, reunion por defecto, email del lead
+                              y permisos scheduled_events:write.
+                            </p>
+                          ) : null}
                         </div>
                       </article>
                     ))}

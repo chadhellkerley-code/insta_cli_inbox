@@ -10,7 +10,7 @@ export const CALENDLY_OAUTH_CALLBACK_PATH = "/api/calendly/oauth/callback";
 const STATE_TTL_SECONDS = 10 * 60;
 const TOKEN_REFRESH_SKEW_SECONDS = 5 * 60;
 const DEFAULT_CALENDLY_OAUTH_SCOPES =
-  "users:read event_types:read scheduling_links:write";
+  "users:read event_types:read scheduled_events:read scheduled_events:write scheduling_links:write";
 
 type CalendlyOauthStatePayload = {
   v: 1;
@@ -61,6 +61,41 @@ type RawCalendlySchedulingLinkResponse = {
     owner_type?: string;
   };
 };
+
+type RawCalendlyAvailableTimesResponse = {
+  collection?: Array<{
+    start_time?: string;
+    status?: string;
+    invitees_remaining?: number | null;
+    scheduling_url?: string | null;
+  }>;
+};
+
+type RawCalendlyInviteeBookingResponse = {
+  resource?: {
+    uri?: string;
+    event?: string;
+    status?: string;
+    cancel_url?: string | null;
+    reschedule_url?: string | null;
+    name?: string | null;
+    email?: string | null;
+    timezone?: string | null;
+    start_time?: string | null;
+  };
+};
+
+export class CalendlyApiError extends Error {
+  status: number;
+  payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message);
+    this.name = "CalendlyApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
 
 function readOptionalEnv(value: string | undefined) {
   const trimmed = value?.trim();
@@ -356,7 +391,11 @@ async function getCalendlyApi<T>(path: string, accessToken: string) {
   const payload = await readCalendlyJson(response);
 
   if (!response.ok) {
-    throw new Error(getCalendlyErrorMessage(payload, "Calendly API request failed."));
+    throw new CalendlyApiError(
+      getCalendlyErrorMessage(payload, "Calendly API request failed."),
+      response.status,
+      payload,
+    );
   }
 
   return payload as T;
@@ -379,7 +418,11 @@ async function postCalendlyApi<T>(
   const payload = await readCalendlyJson(response);
 
   if (!response.ok) {
-    throw new Error(getCalendlyErrorMessage(payload, "Calendly API request failed."));
+    throw new CalendlyApiError(
+      getCalendlyErrorMessage(payload, "Calendly API request failed."),
+      response.status,
+      payload,
+    );
   }
 
   return payload as T;
@@ -451,5 +494,78 @@ export async function createCalendlySchedulingLink(options: {
     bookingUrl,
     owner: payload.resource?.owner ?? options.eventTypeUri,
     ownerType: payload.resource?.owner_type ?? "EventType",
+  };
+}
+
+export async function listCalendlyAvailableTimes(options: {
+  accessToken: string;
+  eventTypeUri: string;
+  startTime: string;
+  endTime: string;
+}) {
+  const params = new URLSearchParams();
+
+  params.set("event_type", options.eventTypeUri);
+  params.set("start_time", options.startTime);
+  params.set("end_time", options.endTime);
+
+  const payload = await getCalendlyApi<RawCalendlyAvailableTimesResponse>(
+    `/event_type_available_times?${params.toString()}`,
+    options.accessToken,
+  );
+
+  return (payload.collection ?? [])
+    .map((availableTime) => ({
+      startTime: availableTime.start_time ?? "",
+      status: availableTime.status ?? null,
+      inviteesRemaining:
+        typeof availableTime.invitees_remaining === "number"
+          ? availableTime.invitees_remaining
+          : null,
+      schedulingUrl: availableTime.scheduling_url ?? null,
+    }))
+    .filter((availableTime) => availableTime.startTime);
+}
+
+export async function createCalendlyInviteeBooking(options: {
+  accessToken: string;
+  eventTypeUri: string;
+  startTime: string;
+  invitee: {
+    name: string;
+    email: string;
+    timezone: string;
+  };
+}) {
+  const payload = await postCalendlyApi<RawCalendlyInviteeBookingResponse>(
+    "/invitees",
+    options.accessToken,
+    {
+      event_type: options.eventTypeUri,
+      start_time: options.startTime,
+      invitee: {
+        name: options.invitee.name,
+        email: options.invitee.email,
+        timezone: options.invitee.timezone,
+      },
+    },
+  );
+  const resource = payload.resource;
+
+  if (!resource?.uri) {
+    throw new Error("Calendly did not return the created invitee.");
+  }
+
+  return {
+    uri: resource.uri,
+    eventUri: resource.event ?? null,
+    status: resource.status ?? null,
+    cancelUrl: resource.cancel_url ?? null,
+    rescheduleUrl: resource.reschedule_url ?? null,
+    name: resource.name ?? options.invitee.name,
+    email: resource.email ?? options.invitee.email,
+    timezone: resource.timezone ?? options.invitee.timezone,
+    startTime: resource.start_time ?? options.startTime,
+    rawPayload: payload,
   };
 }

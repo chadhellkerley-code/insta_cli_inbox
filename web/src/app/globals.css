@@ -1891,8 +1891,9 @@ main {
 }
 
 .automatic-schedule-card {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 14px;
   padding: 16px;
   border: 1px solid rgba(56, 189, 248, 0.2);
@@ -1909,6 +1910,38 @@ main {
   margin-top: 6px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.schedule-mode-control {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.mode-option {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: calc(var(--radius-md) - 3px);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mode-option.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.schedule-requirements {
+  grid-column: 1 / -1;
+  max-width: none;
+  margin-top: 0;
 }
 
 .stage-followup-grid,

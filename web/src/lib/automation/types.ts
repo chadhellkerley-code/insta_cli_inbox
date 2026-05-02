@@ -1,3 +1,5 @@
+export type AutoScheduleMode = "link" | "auto_booking";
+
 export type AutomationAgentRecord = {
   id: string;
   owner_id: string;
@@ -20,6 +22,7 @@ export type AutomationStageRecord = {
   stage_order: number;
   name: string;
   auto_schedule_enabled: boolean | null;
+  auto_schedule_mode: AutoScheduleMode | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -63,6 +66,7 @@ export type AutomationStageInput = {
   id?: string;
   name: string;
   autoScheduleEnabled: boolean;
+  autoScheduleMode: AutoScheduleMode;
   followups: Array<{
     id?: string;
     isActive: boolean;
@@ -97,12 +101,13 @@ export type AutomationAgent = {
   aiPrompt: string;
   createdAt: string | null;
   updatedAt: string | null;
-    stages: Array<{
-      id: string;
-      name: string;
-      order: number;
-      autoScheduleEnabled: boolean;
-      followups: Array<{
+  stages: Array<{
+    id: string;
+    name: string;
+    order: number;
+    autoScheduleEnabled: boolean;
+    autoScheduleMode: AutoScheduleMode;
+    followups: Array<{
       id: string;
       order: number;
       isActive: boolean;
@@ -137,6 +142,7 @@ export function createEmptyAgentDraft(): AutomationAgentInput {
       {
         name: "Etapa 1",
         autoScheduleEnabled: false,
+        autoScheduleMode: "link",
         followups: [],
         messages: [
           {

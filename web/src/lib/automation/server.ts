@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type {
+  AutoScheduleMode,
   AutomationAgent,
   AutomationAgentInput,
   AutomationAgentRecord,
@@ -45,6 +46,10 @@ function ensureAgentName(value: unknown) {
 function ensureStageName(value: unknown, index: number) {
   const normalized = normalizeString(value);
   return normalized || `Etapa ${index + 1}`;
+}
+
+function normalizeAutoScheduleMode(value: unknown): AutoScheduleMode {
+  return value === "auto_booking" ? "auto_booking" : "link";
 }
 
 function ensureTextMessageContent(value: unknown) {
@@ -182,6 +187,7 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
         id: normalizeString(stage.id) || undefined,
         name: ensureStageName(stage.name, stageIndex),
         autoScheduleEnabled: Boolean(stage.autoScheduleEnabled),
+        autoScheduleMode: normalizeAutoScheduleMode(stage.autoScheduleMode),
         followups,
         messages: messages.map((message) => {
           const messageType =
@@ -270,6 +276,7 @@ function mapAutomationAgents(
         name: stage.name,
         order: stage.stage_order,
         autoScheduleEnabled: Boolean(stage.auto_schedule_enabled),
+        autoScheduleMode: normalizeAutoScheduleMode(stage.auto_schedule_mode),
         followups: (followupsByStage.get(stage.id) ?? [])
           .sort((left, right) => left.followup_order - right.followup_order)
           .map((followup) => ({
@@ -499,6 +506,7 @@ export async function saveAutomationAgent(
         stage_order: stageIndex + 1,
         name: stage.name,
         auto_schedule_enabled: stage.autoScheduleEnabled,
+        auto_schedule_mode: stage.autoScheduleMode,
       } as never)
       .select("id")
       .maybeSingle();

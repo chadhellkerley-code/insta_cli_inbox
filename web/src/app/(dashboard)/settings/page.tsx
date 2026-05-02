@@ -214,6 +214,12 @@ export default function SettingsPage() {
               {connection?.needs_reconnect ? (
                 <p>La conexion necesita reconectarse.</p>
               ) : null}
+              {connection?.connected ? (
+                <p>
+                  Para reservar automaticamente, reconecta Calendly despues de
+                  actualizar los permisos OAuth.
+                </p>
+              ) : null}
             </div>
 
             <a href="/api/calendly/oauth/start" className="button button-primary">
@@ -235,7 +241,8 @@ export default function SettingsPage() {
                 </strong>
                 <p>
                   Elige la reunion que usara la agenda automatica cuando el lead
-                  este listo.
+                  este listo. El modo reservar automaticamente requiere email,
+                  horario claro y permisos scheduled_events:write.
                 </p>
               </div>
 

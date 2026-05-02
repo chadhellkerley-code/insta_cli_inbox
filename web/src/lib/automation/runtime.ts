@@ -6,8 +6,11 @@ import {
   loadAiCredential,
 } from "@/lib/automation/ai-credentials";
 import {
+  CalendlyApiError,
   calendlyTokenNeedsRefresh,
+  createCalendlyInviteeBooking,
   createCalendlySchedulingLink,
+  listCalendlyAvailableTimes,
   refreshCalendlyToken,
 } from "@/lib/calendly/oauth";
 import { sendInstagramMessage } from "@/lib/meta/client";
@@ -43,6 +46,7 @@ type AutomationStageRuntimeRow = {
   stage_order: number;
   name: string;
   auto_schedule_enabled: boolean | null;
+  auto_schedule_mode: "link" | "auto_booking" | null;
 };
 
 type AutomationStageFollowupRuntimeRow = {
@@ -88,7 +92,12 @@ type AutomationJobRow = {
   run_id: string;
   stage_id: string;
   stage_message_id: string | null;
-  job_type: "stage_message" | "followup" | "ai_reply" | "calendly_schedule";
+  job_type:
+    | "stage_message"
+    | "followup"
+    | "ai_reply"
+    | "calendly_schedule"
+    | "calendly_booking";
   status: "pending" | "processing" | "sent" | "skipped" | "failed" | "cancelled";
   scheduled_for: string;
   sent_at: string | null;
@@ -157,6 +166,39 @@ type ConversationMessageContextRow = {
   created_at: string | null;
 };
 
+type ConversationBookingIntentRow = {
+  id: string;
+  owner_id: string;
+  account_id: string;
+  conversation_id: string;
+  run_id: string | null;
+  agent_id: string | null;
+  stage_id: string | null;
+  job_id: string | null;
+  event_type_uri: string | null;
+  wants_booking: boolean | null;
+  confirmed_time: boolean;
+  proposed_start_time_local: string | null;
+  timezone: string | null;
+  invitee_name: string | null;
+  invitee_email: string | null;
+  alternatives: Array<{ startTime: string; localLabel: string }>;
+  status: string;
+  last_error: string | null;
+  raw_extraction: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type ExtractedCalendlyBookingIntent = {
+  wantsBooking: boolean;
+  confirmedTime: boolean;
+  startTimeLocal: string | null;
+  timezone: string | null;
+  email: string | null;
+  name: string | null;
+};
+
 type GenerateAutomationReplyOptions = {
   apiKey: string;
   model?: string | null;
@@ -178,6 +220,110 @@ function castRow<T>(value: unknown) {
 function normalizeOptionalString(value: string | null | undefined) {
   const trimmed = value?.trim() ?? "";
   return trimmed || null;
+}
+
+function isCalendlyAutoBookingEnabled() {
+  return process.env.CALENDLY_AUTO_BOOKING_ENABLED === "true";
+}
+
+function normalizeEmail(value: string | null | undefined) {
+  const email = normalizeOptionalString(value)?.toLowerCase() ?? null;
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return null;
+  }
+
+  return email;
+}
+
+function isValidTimeZone(timezone: string | null | undefined) {
+  if (!timezone) {
+    return false;
+  }
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getTimeZoneOffsetMs(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const asUtc = Date.UTC(
+    Number(values.get("year")),
+    Number(values.get("month")) - 1,
+    Number(values.get("day")),
+    Number(values.get("hour")),
+    Number(values.get("minute")),
+    Number(values.get("second")),
+  );
+
+  return asUtc - date.getTime();
+}
+
+function parseLocalDateTime(value: string) {
+  const match = value
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second] = match;
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Number(second ?? 0),
+  };
+}
+
+export function zonedLocalDateTimeToUtc(value: string, timezone: string) {
+  const parsed = parseLocalDateTime(value);
+
+  if (!parsed || !isValidTimeZone(timezone)) {
+    return null;
+  }
+
+  const localAsUtc = Date.UTC(
+    parsed.year,
+    parsed.month - 1,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+    parsed.second,
+  );
+  let utcMs = localAsUtc;
+
+  for (let index = 0; index < 3; index += 1) {
+    utcMs = localAsUtc - getTimeZoneOffsetMs(new Date(utcMs), timezone);
+  }
+
+  const date = new Date(utcMs);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatBookingTime(date: Date, timezone: string) {
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone: timezone,
+    dateStyle: "full",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function toMillis(value: string | null | undefined) {
@@ -306,6 +452,126 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
   }
 
   return content;
+}
+
+function parseJsonObjectFromText(value: string) {
+  const trimmed = value.trim();
+  const withoutFence = trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(withoutFence) as unknown;
+  } catch {
+    const start = withoutFence.indexOf("{");
+    const end = withoutFence.lastIndexOf("}");
+
+    if (start === -1 || end <= start) {
+      throw new Error("La IA no devolvio JSON valido.");
+    }
+
+    return JSON.parse(withoutFence.slice(start, end + 1)) as unknown;
+  }
+}
+
+function normalizeExtractedBookingIntent(payload: unknown): ExtractedCalendlyBookingIntent {
+  const value = payload && typeof payload === "object"
+    ? (payload as Record<string, unknown>)
+    : {};
+
+  return {
+    wantsBooking: value.wantsBooking === true,
+    confirmedTime: value.confirmedTime === true,
+    startTimeLocal:
+      typeof value.startTimeLocal === "string" && value.startTimeLocal.trim()
+        ? value.startTimeLocal.trim()
+        : null,
+    timezone:
+      typeof value.timezone === "string" && value.timezone.trim()
+        ? value.timezone.trim()
+        : null,
+    email:
+      typeof value.email === "string" && value.email.trim()
+        ? value.email.trim()
+        : null,
+    name:
+      typeof value.name === "string" && value.name.trim()
+        ? value.name.trim()
+        : null,
+  };
+}
+
+async function extractCalendlyBookingIntent(
+  ownerId: string,
+  conversationMessages: ConversationMessageContextRow[],
+) {
+  const credential = await loadAiCredential(ownerId);
+
+  if (!credential) {
+    return null;
+  }
+
+  const transcript = conversationMessages
+    .map((message) => {
+      const sender = message.direction === "out" ? "Agente" : "Lead";
+      const text =
+        normalizeOptionalString(message.text_content) ??
+        `[${message.message_type || "mensaje sin texto"}]`;
+
+      return `${sender} (${message.created_at ?? "sin fecha"}): ${text}`;
+    })
+    .join("\n");
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${decryptApiKey(credential)}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: normalizeOptionalString(credential.model) ?? AUTOMATION_AI_MODEL,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Extrae intencion de reserva de una conversacion de Instagram.",
+            "Devuelve solo JSON con estas claves exactas: wantsBooking, confirmedTime, startTimeLocal, timezone, email, name.",
+            "startTimeLocal debe ser ISO local sin zona, por ejemplo 2026-05-03T17:00:00.",
+            "Si no hay fecha y hora claras, startTimeLocal debe ser null y confirmedTime false.",
+            "Si falta email, email debe ser null. No inventes emails.",
+            "Si el timezone es ambiguo, timezone debe ser null. Si dice Argentina, usa America/Argentina/Buenos_Aires.",
+            "confirmedTime solo debe ser true cuando el lead eligio o confirmo un horario concreto.",
+            `Fecha actual de referencia: ${new Date().toISOString()}.`,
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: transcript || "Sin mensajes recientes.",
+        },
+      ],
+      temperature: 0,
+    }),
+  });
+  const payload = (await response.json().catch(() => null)) as unknown;
+
+  if (!response.ok) {
+    const errorMessage = (payload as { error?: { message?: string } } | null)?.error?.message;
+    throw new Error(errorMessage ?? `OpenAI respondio con HTTP ${response.status}.`);
+  }
+
+  const content = readChatCompletionContent(payload);
+
+  if (!content) {
+    throw new Error("OpenAI no devolvio contenido para extraer la agenda.");
+  }
+
+  const raw = parseJsonObjectFromText(content);
+
+  return {
+    intent: normalizeExtractedBookingIntent(raw),
+    raw: raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {},
+  };
 }
 
 async function generateAgentAiReply(
@@ -438,6 +704,10 @@ function getJobTypePriority(job: AutomationJobRow) {
     return 1;
   }
 
+  if (job.job_type === "calendly_booking") {
+    return 1;
+  }
+
   return 2;
 }
 
@@ -550,7 +820,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
 async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const stagesResult = await client
     .from("automation_agent_stages")
-    .select("id, agent_id, stage_order, name, auto_schedule_enabled")
+    .select("id, agent_id, stage_order, name, auto_schedule_enabled, auto_schedule_mode")
     .eq("agent_id", agentId)
     .order("stage_order", { ascending: true });
   const stages = castRows<AutomationStageRuntimeRow>(stagesResult.data);
@@ -720,13 +990,108 @@ async function cancelAnsweredPendingResponseJobs(
       last_error: "El cliente respondio antes de que se envie esta respuesta.",
     } as never)
     .eq("run_id", options.runId)
-    .in("job_type", ["followup", "ai_reply", "calendly_schedule"])
+    .in("job_type", ["followup", "ai_reply", "calendly_schedule", "calendly_booking"])
     .eq("status", "pending")
     .lt("created_at", options.inboundAt);
 
   if (result.error) {
     throw new Error(result.error.message);
   }
+}
+
+function isOpenBookingIntentStatus(status: string | null | undefined) {
+  return [
+    "collecting",
+    "awaiting_email",
+    "awaiting_time",
+    "awaiting_timezone",
+    "awaiting_confirmation",
+    "offered_alternatives",
+  ].includes(status ?? "");
+}
+
+async function loadOpenBookingIntent(
+  client: QueryClient,
+  options: {
+    ownerId: string;
+    conversationId: string;
+  },
+) {
+  const result = await client
+    .from("conversation_booking_intents")
+    .select("*")
+    .eq("owner_id", options.ownerId)
+    .eq("conversation_id", options.conversationId)
+    .in("status", [
+      "collecting",
+      "awaiting_email",
+      "awaiting_time",
+      "awaiting_timezone",
+      "awaiting_confirmation",
+      "offered_alternatives",
+    ])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return castRow<ConversationBookingIntentRow>(result.data);
+}
+
+async function scheduleOpenBookingIntentJob(
+  client: QueryClient,
+  intent: ConversationBookingIntentRow,
+  inboundText: string | null | undefined,
+) {
+  if (!intent.agent_id || !intent.stage_id || !intent.run_id) {
+    return null;
+  }
+
+  const scheduledFor = new Date().toISOString();
+  const insertResult = await client
+    .from("automation_jobs")
+    .insert({
+      owner_id: intent.owner_id,
+      agent_id: intent.agent_id,
+      account_id: intent.account_id,
+      conversation_id: intent.conversation_id,
+      run_id: intent.run_id,
+      stage_id: intent.stage_id,
+      stage_message_id: null,
+      job_type: "calendly_booking",
+      status: "pending",
+      scheduled_for: scheduledFor,
+      payload: {
+        messageType: "text",
+        bookingIntentId: intent.id,
+        inboundText: inboundText ?? null,
+      },
+    } as never)
+    .select("id")
+    .maybeSingle();
+
+  if (insertResult.error || !insertResult.data) {
+    throw new Error(insertResult.error?.message ?? "No pudimos agendar la reserva de Calendly.");
+  }
+
+  const jobId = (insertResult.data as { id: string }).id;
+  const updateIntent = await client
+    .from("conversation_booking_intents")
+    .update({
+      job_id: jobId,
+      status: "collecting",
+      last_error: null,
+    } as never)
+    .eq("id", intent.id);
+
+  if (updateIntent.error) {
+    throw new Error(updateIntent.error.message);
+  }
+
+  return { jobId, scheduledFor };
 }
 
 export async function scheduleAutomationForInboundMessage(
@@ -768,6 +1133,32 @@ export async function scheduleAutomationForInboundMessage(
     runId: run.id,
     inboundAt: options.createdAt,
   });
+
+  const openBookingIntent = isCalendlyAutoBookingEnabled()
+    ? await loadOpenBookingIntent(client, {
+        ownerId: options.ownerId,
+        conversationId: options.conversationId,
+      })
+    : null;
+
+  if (openBookingIntent && isOpenBookingIntentStatus(openBookingIntent.status)) {
+    const bookingJob = await scheduleOpenBookingIntentJob(
+      client,
+      openBookingIntent,
+      options.inboundText,
+    );
+
+    if (bookingJob && openBookingIntent.stage_id) {
+      return {
+        scheduled: 1,
+        calendlyBookingJobs: 1,
+        reason: "scheduled" as const,
+        runId: openBookingIntent.run_id ?? run.id,
+        stageId: openBookingIntent.stage_id,
+        stageOrder: run.active_stage_order ?? run.last_completed_stage_order,
+      };
+    }
+  }
 
   if (await hasPendingStageMessages(client, run.id)) {
     return { scheduled: 0, reason: "stage_in_progress" as const };
@@ -878,6 +1269,10 @@ export async function scheduleAutomationForInboundMessage(
 
   if (nextStage.auto_schedule_enabled) {
     const calendlyScheduledFor = new Date(scheduledAtMs).toISOString();
+    const calendlyJobType =
+      isCalendlyAutoBookingEnabled() && nextStage.auto_schedule_mode === "auto_booking"
+        ? "calendly_booking"
+        : "calendly_schedule";
     const insertCalendlySchedule = await client.from("automation_jobs").insert({
       owner_id: options.ownerId,
       agent_id: agent.id,
@@ -886,13 +1281,14 @@ export async function scheduleAutomationForInboundMessage(
       run_id: run.id,
       stage_id: nextStage.id,
       stage_message_id: null,
-      job_type: "calendly_schedule",
+      job_type: calendlyJobType,
       status: "pending",
       scheduled_for: calendlyScheduledFor,
       payload: {
         stageOrder: nextStage.stage_order,
         stageName: nextStage.name,
         messageType: "text",
+        calendlyMode: calendlyJobType === "calendly_booking" ? "auto_booking" : "link",
       },
     } as never);
 
@@ -1378,6 +1774,403 @@ async function sendCalendlyScheduleJob(
   return { sent: true };
 }
 
+async function upsertConversationBookingIntent(
+  client: QueryClient,
+  job: AutomationJobRow,
+  values: Partial<ConversationBookingIntentRow>,
+) {
+  const payload = {
+    owner_id: job.owner_id,
+    account_id: job.account_id,
+    conversation_id: job.conversation_id,
+    run_id: job.run_id,
+    agent_id: job.agent_id,
+    stage_id: job.stage_id,
+    job_id: job.id,
+    ...values,
+  };
+  const result = await client
+    .from("conversation_booking_intents")
+    .upsert(payload as never, { onConflict: "owner_id,conversation_id" })
+    .select("*")
+    .maybeSingle();
+
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message ?? "No pudimos guardar la intencion de agenda.");
+  }
+
+  return castRow<ConversationBookingIntentRow>(result.data)!;
+}
+
+async function sendCalendlyBookingPrompt(
+  client: QueryClient,
+  job: AutomationJobRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+  textContent: string,
+  status: string,
+  lastError: string | null = null,
+) {
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType: "text",
+    textContent,
+    mediaUrl: null,
+  });
+
+  await markJob(client, job.id, {
+    status: "sent",
+    sent_at: result.sentAt,
+    attempt_count: (job.attempt_count ?? 0) + 1,
+    last_error: lastError,
+    payload: {
+      ...(job.payload ?? {}),
+      textContent,
+      calendlyBookingStatus: status,
+    },
+  });
+
+  await upsertConversationBookingIntent(client, job, {
+    status,
+    last_error: lastError,
+  });
+
+  return { sent: true };
+}
+
+function isCalendlyPermissionError(error: unknown) {
+  return error instanceof CalendlyApiError && (error.status === 401 || error.status === 403);
+}
+
+function isCalendlyValidationError(error: unknown) {
+  return error instanceof CalendlyApiError && error.status >= 400 && error.status < 500;
+}
+
+function findExactAvailableTime(
+  availableTimes: Array<{ startTime: string }>,
+  requestedStartTime: string,
+) {
+  const requestedMs = new Date(requestedStartTime).getTime();
+
+  return availableTimes.find((availableTime) => {
+    const availableMs = new Date(availableTime.startTime).getTime();
+    return Number.isFinite(availableMs) && Math.abs(availableMs - requestedMs) < 60_000;
+  }) ?? null;
+}
+
+function buildAvailabilityWindow(requestedStart: Date) {
+  return {
+    startTime: new Date(requestedStart.getTime() - 12 * 60 * 60 * 1000).toISOString(),
+    endTime: new Date(requestedStart.getTime() + 36 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+function buildAlternativeSlots(
+  availableTimes: Array<{ startTime: string }>,
+  requestedStart: Date,
+  timezone: string,
+) {
+  return availableTimes
+    .map((availableTime) => ({
+      startTime: availableTime.startTime,
+      startMs: new Date(availableTime.startTime).getTime(),
+    }))
+    .filter((availableTime) => Number.isFinite(availableTime.startMs))
+    .sort(
+      (left, right) =>
+        Math.abs(left.startMs - requestedStart.getTime()) -
+        Math.abs(right.startMs - requestedStart.getTime()),
+    )
+    .slice(0, 3)
+    .map((availableTime) => ({
+      startTime: availableTime.startTime,
+      localLabel: formatBookingTime(new Date(availableTime.startTime), timezone),
+    }));
+}
+
+function buildAlternativesMessage(alternatives: Array<{ localLabel: string }>) {
+  if (alternatives.length === 0) {
+    return "Ese horario no aparece disponible. Pasame otro horario y lo reviso.";
+  }
+
+  return [
+    "Ese horario no aparece disponible. Tengo estas alternativas:",
+    ...alternatives.map((alternative) => `- ${alternative.localLabel}`),
+    "Decime cual te sirve y lo agendo.",
+  ].join("\n");
+}
+
+async function persistCalendlyBooking(
+  client: QueryClient,
+  job: AutomationJobRow,
+  options: {
+    eventTypeUri: string;
+    booking: Awaited<ReturnType<typeof createCalendlyInviteeBooking>>;
+  },
+) {
+  const insertResult = await client.from("calendly_bookings").insert({
+    owner_id: job.owner_id,
+    account_id: job.account_id,
+    conversation_id: job.conversation_id,
+    run_id: job.run_id,
+    job_id: job.id,
+    event_type_uri: options.eventTypeUri,
+    event_uri: options.booking.eventUri,
+    invitee_uri: options.booking.uri,
+    invitee_name: options.booking.name,
+    invitee_email: options.booking.email,
+    timezone: options.booking.timezone,
+    start_time: options.booking.startTime,
+    cancel_url: options.booking.cancelUrl,
+    reschedule_url: options.booking.rescheduleUrl,
+    status: options.booking.status ?? "created",
+    raw_payload: options.booking.rawPayload,
+  } as never);
+
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message);
+  }
+}
+
+async function sendCalendlyBookingJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+) {
+  if (!isCalendlyAutoBookingEnabled()) {
+    return sendCalendlyScheduleJob(client, job, conversation, account);
+  }
+
+  const [settings, connection, conversationMessages] = await Promise.all([
+    loadCalendlySettings(client, job.owner_id),
+    loadFreshCalendlyConnection(client, job.owner_id),
+    loadRecentConversationMessages(client, conversation.id),
+  ]);
+  const eventTypeUri = normalizeOptionalString(settings?.default_event_type_uri);
+
+  if (!settings?.enabled || !eventTypeUri || !connection) {
+    return sendCalendlyScheduleJob(client, job, conversation, account);
+  }
+
+  const extraction = await extractCalendlyBookingIntent(job.owner_id, conversationMessages);
+
+  if (!extraction) {
+    await upsertConversationBookingIntent(client, job, {
+      event_type_uri: eventTypeUri,
+      status: "fallback_link",
+      last_error: "No hay credenciales de IA para extraer la agenda.",
+    });
+    return sendCalendlyScheduleJob(client, job, conversation, account);
+  }
+
+  const intent = extraction.intent;
+  const email = normalizeEmail(intent.email);
+  const name = normalizeOptionalString(intent.name) ?? "Invitado";
+  const startTimeLocal = normalizeOptionalString(intent.startTimeLocal);
+  const timezone = normalizeOptionalString(intent.timezone);
+
+  await upsertConversationBookingIntent(client, job, {
+    event_type_uri: eventTypeUri,
+    wants_booking: intent.wantsBooking,
+    confirmed_time: intent.confirmedTime,
+    proposed_start_time_local: startTimeLocal,
+    timezone,
+    invitee_name: name,
+    invitee_email: email,
+    status: "collecting",
+    last_error: null,
+    raw_extraction: extraction.raw,
+  });
+
+  if (!intent.wantsBooking) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "Para agendar necesito que me confirmes un horario.",
+      "awaiting_time",
+    );
+  }
+
+  if (!startTimeLocal) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "Pasame dia y hora exactos para agendar.",
+      "awaiting_time",
+    );
+  }
+
+  if (!timezone || !isValidTimeZone(timezone)) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "Confirmame tambien en que zona horaria estas para agendar bien el horario.",
+      "awaiting_timezone",
+    );
+  }
+
+  const requestedStart = zonedLocalDateTimeToUtc(startTimeLocal, timezone);
+
+  if (!requestedStart) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "No pude interpretar bien ese horario. Pasamelo con dia, hora y zona horaria.",
+      "awaiting_time",
+      "Horario invalido.",
+    );
+  }
+
+  if (requestedStart.getTime() <= Date.now()) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "Ese horario ya paso. Pasame otro horario y lo agendo.",
+      "awaiting_time",
+      "Horario en el pasado.",
+    );
+  }
+
+  if (!email) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      "Perfecto. Pasame tu email para dejar la reunion agendada.",
+      "awaiting_email",
+    );
+  }
+
+  if (!intent.confirmedTime) {
+    return sendCalendlyBookingPrompt(
+      client,
+      job,
+      conversation,
+      account,
+      `Confirmame si queres que lo agende para ${formatBookingTime(requestedStart, timezone)}.`,
+      "awaiting_confirmation",
+    );
+  }
+
+  try {
+    const availabilityWindow = buildAvailabilityWindow(requestedStart);
+    const availableTimes = await listCalendlyAvailableTimes({
+      accessToken: connection.access_token,
+      eventTypeUri,
+      startTime: availabilityWindow.startTime,
+      endTime: availabilityWindow.endTime,
+    });
+    const exactSlot = findExactAvailableTime(availableTimes, requestedStart.toISOString());
+
+    if (!exactSlot) {
+      const alternatives = buildAlternativeSlots(availableTimes, requestedStart, timezone);
+      const textContent = buildAlternativesMessage(alternatives);
+      const result = await sendAutomationOutboundMessage(client, conversation, account, {
+        messageType: "text",
+        textContent,
+        mediaUrl: null,
+      });
+
+      await upsertConversationBookingIntent(client, job, {
+        event_type_uri: eventTypeUri,
+        alternatives,
+        status: "offered_alternatives",
+        last_error: "Horario ocupado.",
+      });
+      await markJob(client, job.id, {
+        status: "sent",
+        sent_at: result.sentAt,
+        attempt_count: (job.attempt_count ?? 0) + 1,
+        last_error: "Horario ocupado.",
+        payload: {
+          ...(job.payload ?? {}),
+          textContent,
+          calendlyAlternatives: alternatives,
+        },
+      });
+
+      return { sent: true };
+    }
+
+    const booking = await createCalendlyInviteeBooking({
+      accessToken: connection.access_token,
+      eventTypeUri,
+      startTime: requestedStart.toISOString(),
+      invitee: {
+        name,
+        email,
+        timezone,
+      },
+    });
+    await persistCalendlyBooking(client, job, {
+      eventTypeUri,
+      booking,
+    });
+    const textContent = `Listo, quedo agendado para ${formatBookingTime(requestedStart, timezone)}. Te va a llegar la invitacion al email.`;
+    const result = await sendAutomationOutboundMessage(client, conversation, account, {
+      messageType: "text",
+      textContent,
+      mediaUrl: null,
+    });
+
+    await upsertConversationBookingIntent(client, job, {
+      event_type_uri: eventTypeUri,
+      status: "booked",
+      last_error: null,
+    });
+    await markJob(client, job.id, {
+      status: "sent",
+      sent_at: result.sentAt,
+      attempt_count: (job.attempt_count ?? 0) + 1,
+      last_error: null,
+      payload: {
+        ...(job.payload ?? {}),
+        calendlyEventTypeUri: eventTypeUri,
+        calendlyEventUri: booking.eventUri,
+        calendlyInviteeUri: booking.uri,
+        calendlyStartTime: requestedStart.toISOString(),
+        textContent,
+      },
+    });
+
+    return { sent: true };
+  } catch (error) {
+    if (isCalendlyPermissionError(error)) {
+      await upsertConversationBookingIntent(client, job, {
+        event_type_uri: eventTypeUri,
+        status: "fallback_link",
+        last_error: error instanceof Error ? error.message : "Calendly sin permisos.",
+      });
+      return sendCalendlyScheduleJob(client, job, conversation, account);
+    }
+
+    if (isCalendlyValidationError(error)) {
+      return sendCalendlyBookingPrompt(
+        client,
+        job,
+        conversation,
+        account,
+        "No pude completar la reserva con esos datos. Confirmame email, dia, hora y zona horaria.",
+        "failed",
+        error instanceof Error ? error.message : "Calendly rechazo la reserva.",
+      );
+    }
+
+    throw error;
+  }
+}
+
 async function sendAutomationJob(
   client: QueryClient,
   job: AutomationJobRow,
@@ -1613,7 +2406,9 @@ async function handleJob(
   }
 
   if (
-    (job.job_type === "followup" || job.job_type === "calendly_schedule") &&
+    (job.job_type === "followup" ||
+      job.job_type === "calendly_schedule" ||
+      job.job_type === "calendly_booking") &&
     shouldSkipFollowup(run, job)
   ) {
     await markJob(client, job.id, {
@@ -1637,6 +2432,12 @@ async function handleJob(
       await sendAutomationAiReplyJob(client, job, run, conversation, account, agent);
     } else if (job.job_type === "calendly_schedule") {
       const result = await sendCalendlyScheduleJob(client, job, conversation, account);
+
+      if (!result.sent) {
+        return "skipped_calendly_unconfigured" as const;
+      }
+    } else if (job.job_type === "calendly_booking") {
+      const result = await sendCalendlyBookingJob(client, job, conversation, account);
 
       if (!result.sent) {
         return "skipped_calendly_unconfigured" as const;
@@ -1843,9 +2644,20 @@ export async function runAutomationForInboundMessage(
   });
 
   if (!shouldExecuteLive) {
+    const postScheduleDispatch =
+      "calendlyBookingJobs" in scheduleResult &&
+      scheduleResult.calendlyBookingJobs &&
+      scheduleResult.calendlyBookingJobs > 0
+        ? await processDueAutomationJobs(client, {
+            limit: 5,
+            ownerId: options.ownerId,
+          })
+        : null;
+
     return {
       schedule: scheduleResult,
       stageExecution: null,
+      postScheduleDispatch,
     };
   }
 
@@ -1881,7 +2693,7 @@ export async function processDueAutomationJobs(
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
-    .in("job_type", ["stage_message", "followup", "calendly_schedule"])
+    .in("job_type", ["stage_message", "followup", "calendly_schedule", "calendly_booking"])
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 
