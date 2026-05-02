@@ -950,6 +950,7 @@ async function persistMessagingEvent(
         conversationId,
         createdAt,
         isInbound,
+        inboundMessageId: scopedMetaMessageId,
         inboundText: event.message.text ?? null,
       });
     } catch (error) {

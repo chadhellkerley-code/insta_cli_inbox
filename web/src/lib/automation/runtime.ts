@@ -934,6 +934,44 @@ async function upsertAutomationRun(
   return castRow<AutomationRunRow>(updateResult.data)!;
 }
 
+async function claimInboundForStage(
+  client: QueryClient,
+  options: {
+    ownerId: string;
+    runId: string;
+    agentId: string;
+    conversationId: string;
+    inboundMessageId?: string | null;
+    stageOrder: number | null | undefined;
+  },
+) {
+  const inboundMessageId = normalizeOptionalString(options.inboundMessageId);
+
+  if (!inboundMessageId) {
+    return { claimed: true as const };
+  }
+
+  const stageOrder = options.stageOrder ?? 1;
+  const insertResult = await client.from("automation_inbound_stage_claims").insert({
+    owner_id: options.ownerId,
+    run_id: options.runId,
+    agent_id: options.agentId,
+    conversation_id: options.conversationId,
+    inbound_message_id: inboundMessageId,
+    stage_order: Math.max(1, stageOrder),
+  } as never);
+
+  if (!insertResult.error) {
+    return { claimed: true as const };
+  }
+
+  if (insertResult.error.code === "23505") {
+    return { claimed: false as const };
+  }
+
+  throw new Error(insertResult.error.message);
+}
+
 async function countSentAudioJobs(client: QueryClient, runId: string) {
   const result = await client
     .from("automation_jobs")
@@ -1102,6 +1140,7 @@ export async function scheduleAutomationForInboundMessage(
     conversationId: string;
     createdAt: string;
     isInbound: boolean;
+    inboundMessageId?: string | null;
     inboundText?: string | null;
   },
 ) {
@@ -1141,7 +1180,26 @@ export async function scheduleAutomationForInboundMessage(
       })
     : null;
 
-  if (openBookingIntent && isOpenBookingIntentStatus(openBookingIntent.status)) {
+  if (
+    openBookingIntent &&
+    isOpenBookingIntentStatus(openBookingIntent.status) &&
+    openBookingIntent.agent_id &&
+    openBookingIntent.stage_id &&
+    openBookingIntent.run_id
+  ) {
+    const claim = await claimInboundForStage(client, {
+      ownerId: options.ownerId,
+      runId: openBookingIntent.run_id,
+      agentId: openBookingIntent.agent_id,
+      conversationId: options.conversationId,
+      inboundMessageId: options.inboundMessageId,
+      stageOrder: run.active_stage_order ?? run.last_completed_stage_order,
+    });
+
+    if (!claim.claimed) {
+      return { scheduled: 0, reason: "duplicate_inbound" as const };
+    }
+
     const bookingJob = await scheduleOpenBookingIntentJob(
       client,
       openBookingIntent,
@@ -1174,6 +1232,19 @@ export async function scheduleAutomationForInboundMessage(
       scheduled: 0,
       reason: "flow_completed" as const,
     };
+  }
+
+  const claim = await claimInboundForStage(client, {
+    ownerId: options.ownerId,
+    runId: run.id,
+    agentId: agent.id,
+    conversationId: options.conversationId,
+    inboundMessageId: options.inboundMessageId,
+    stageOrder: nextStage.stage_order,
+  });
+
+  if (!claim.claimed) {
+    return { scheduled: 0, reason: "duplicate_inbound" as const };
   }
 
   const sentAudioJobs = await countSentAudioJobs(client, run.id);
@@ -2626,6 +2697,7 @@ export async function runAutomationForInboundMessage(
     conversationId: string;
     createdAt: string;
     isInbound: boolean;
+    inboundMessageId?: string | null;
     inboundText?: string | null;
   },
 ) {
