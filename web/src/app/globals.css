@@ -1090,6 +1090,21 @@ main {
   border-top: 1px solid var(--line);
 }
 
+.settings-card .list-row:first-child {
+  border-top: 0;
+}
+
+.settings-row {
+  align-items: center;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(100%, 420px);
+}
+
 .account-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -3122,5 +3137,11 @@ html[data-theme="light"] .message-meta {
 
   .automatic-schedule-card {
     flex-direction: column;
+  }
+
+  .settings-row,
+  .settings-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
