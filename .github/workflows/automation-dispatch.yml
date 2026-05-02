@@ -1,0 +1,21 @@
+name: Automation Dispatcher
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      DISPATCH_URL: ${{ vars.AUTOMATION_DISPATCH_URL || 'https://insta-cli-inbox.vercel.app/api/automation/dispatch' }}
+
+    steps:
+      - name: Process due automation jobs
+        run: |
+          curl --fail-with-body --show-error --silent \
+            --request POST \
+            --header "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "$DISPATCH_URL"
