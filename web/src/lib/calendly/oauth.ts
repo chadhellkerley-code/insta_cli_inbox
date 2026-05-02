@@ -9,7 +9,8 @@ export const CALENDLY_OAUTH_CALLBACK_PATH = "/api/calendly/oauth/callback";
 
 const STATE_TTL_SECONDS = 10 * 60;
 const TOKEN_REFRESH_SKEW_SECONDS = 5 * 60;
-const DEFAULT_CALENDLY_OAUTH_SCOPES = "users:read event_types:read";
+const DEFAULT_CALENDLY_OAUTH_SCOPES =
+  "users:read event_types:read scheduling_links:write";
 
 type CalendlyOauthStatePayload = {
   v: 1;
@@ -51,6 +52,14 @@ type RawCalendlyEventTypesResponse = {
     scheduling_url?: string | null;
     duration?: number | null;
   }>;
+};
+
+type RawCalendlySchedulingLinkResponse = {
+  resource?: {
+    booking_url?: string;
+    owner?: string;
+    owner_type?: string;
+  };
 };
 
 function readOptionalEnv(value: string | undefined) {
@@ -353,6 +362,29 @@ async function getCalendlyApi<T>(path: string, accessToken: string) {
   return payload as T;
 }
 
+async function postCalendlyApi<T>(
+  path: string,
+  accessToken: string,
+  body: Record<string, unknown>,
+) {
+  const response = await fetch(new URL(path, CALENDLY_API_BASE_URL), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const payload = await readCalendlyJson(response);
+
+  if (!response.ok) {
+    throw new Error(getCalendlyErrorMessage(payload, "Calendly API request failed."));
+  }
+
+  return payload as T;
+}
+
 export async function getCalendlyCurrentUser(accessToken: string) {
   const payload = await getCalendlyApi<RawCalendlyCurrentUserResponse>(
     "/users/me",
@@ -394,4 +426,30 @@ export async function listCalendlyEventTypes(options: {
       duration: typeof eventType.duration === "number" ? eventType.duration : null,
     }))
     .filter((eventType) => eventType.uri && eventType.name);
+}
+
+export async function createCalendlySchedulingLink(options: {
+  accessToken: string;
+  eventTypeUri: string;
+}) {
+  const payload = await postCalendlyApi<RawCalendlySchedulingLinkResponse>(
+    "/scheduling_links",
+    options.accessToken,
+    {
+      max_event_count: 1,
+      owner: options.eventTypeUri,
+      owner_type: "EventType",
+    },
+  );
+  const bookingUrl = payload.resource?.booking_url?.trim();
+
+  if (!bookingUrl) {
+    throw new Error("Calendly did not return a scheduling link.");
+  }
+
+  return {
+    bookingUrl,
+    owner: payload.resource?.owner ?? options.eventTypeUri,
+    ownerType: payload.resource?.owner_type ?? "EventType",
+  };
 }

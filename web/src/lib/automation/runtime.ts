@@ -5,6 +5,11 @@ import {
   decryptApiKey,
   loadAiCredential,
 } from "@/lib/automation/ai-credentials";
+import {
+  calendlyTokenNeedsRefresh,
+  createCalendlySchedulingLink,
+  refreshCalendlyToken,
+} from "@/lib/calendly/oauth";
 import { sendInstagramMessage } from "@/lib/meta/client";
 import { assertInstagramAudioUrlAccessible } from "@/lib/meta/audio-url";
 import {
@@ -37,6 +42,7 @@ type AutomationStageRuntimeRow = {
   agent_id: string;
   stage_order: number;
   name: string;
+  auto_schedule_enabled: boolean | null;
 };
 
 type AutomationStageFollowupRuntimeRow = {
@@ -82,7 +88,7 @@ type AutomationJobRow = {
   run_id: string;
   stage_id: string;
   stage_message_id: string | null;
-  job_type: "stage_message" | "followup" | "ai_reply";
+  job_type: "stage_message" | "followup" | "ai_reply" | "calendly_schedule";
   status: "pending" | "processing" | "sent" | "skipped" | "failed" | "cancelled";
   scheduled_for: string;
   sent_at: string | null;
@@ -101,6 +107,7 @@ type AutomationJobResult =
   | "skipped_followup_answered"
   | "skipped_missing_dependencies"
   | "skipped_outside_automation_window"
+  | "skipped_calendly_unconfigured"
   | "failed";
 
 type AutomationProcessingSummary = {
@@ -128,6 +135,19 @@ type AccountRuntimeRow = {
   access_token: string;
   token_expires_at: string | null;
   token_lifecycle: string | null;
+};
+
+type CalendlyConnectionRuntimeRow = {
+  calendly_user_uri: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+};
+
+type CalendlySettingsRuntimeRow = {
+  default_event_type_uri: string | null;
+  default_event_type_name: string | null;
+  enabled: boolean;
 };
 
 type ConversationMessageContextRow = {
@@ -368,6 +388,7 @@ function addJobResultToSummary(
     case "skipped_ai_disabled":
     case "skipped_missing_dependencies":
     case "skipped_outside_automation_window":
+    case "skipped_calendly_unconfigured":
       summary.skipped += 1;
       break;
     default:
@@ -410,6 +431,10 @@ function getJobTypePriority(job: AutomationJobRow) {
   }
 
   if (job.job_type === "followup") {
+    return 2;
+  }
+
+  if (job.job_type === "calendly_schedule") {
     return 1;
   }
 
@@ -525,7 +550,7 @@ async function loadActiveAgent(client: QueryClient, ownerId: string) {
 async function loadStagesForAgent(client: QueryClient, agentId: string) {
   const stagesResult = await client
     .from("automation_agent_stages")
-    .select("id, agent_id, stage_order, name")
+    .select("id, agent_id, stage_order, name, auto_schedule_enabled")
     .eq("agent_id", agentId)
     .order("stage_order", { ascending: true });
   const stages = castRows<AutomationStageRuntimeRow>(stagesResult.data);
@@ -695,7 +720,7 @@ async function cancelAnsweredPendingResponseJobs(
       last_error: "El cliente respondio antes de que se envie esta respuesta.",
     } as never)
     .eq("run_id", options.runId)
-    .in("job_type", ["followup", "ai_reply"])
+    .in("job_type", ["followup", "ai_reply", "calendly_schedule"])
     .eq("status", "pending")
     .lt("created_at", options.inboundAt);
 
@@ -776,6 +801,7 @@ export async function scheduleAutomationForInboundMessage(
   let insertedCount = 0;
   let insertedStageMessageCount = 0;
   let insertedFollowupCount = 0;
+  let insertedCalendlyScheduleCount = 0;
   let usedAudio = sentAudioJobs;
   let lastScheduledIso = new Date(startAtMs).toISOString();
   let lastInsertedDelaySeconds = 0;
@@ -850,6 +876,34 @@ export async function scheduleAutomationForInboundMessage(
     return { scheduled: 0, reason: "no_deliverable_messages" as const };
   }
 
+  if (nextStage.auto_schedule_enabled) {
+    const calendlyScheduledFor = new Date(scheduledAtMs).toISOString();
+    const insertCalendlySchedule = await client.from("automation_jobs").insert({
+      owner_id: options.ownerId,
+      agent_id: agent.id,
+      account_id: options.accountId,
+      conversation_id: options.conversationId,
+      run_id: run.id,
+      stage_id: nextStage.id,
+      stage_message_id: null,
+      job_type: "calendly_schedule",
+      status: "pending",
+      scheduled_for: calendlyScheduledFor,
+      payload: {
+        stageOrder: nextStage.stage_order,
+        stageName: nextStage.name,
+        messageType: "text",
+      },
+    } as never);
+
+    if (insertCalendlySchedule.error) {
+      throw new Error(insertCalendlySchedule.error.message);
+    }
+
+    insertedCount += 1;
+    insertedCalendlyScheduleCount += 1;
+  }
+
   const followups = (followupsByStage.get(nextStage.id) ?? [])
     .filter((followup) => followup.is_active && normalizeOptionalString(followup.message))
     .sort((left, right) => left.followup_order - right.followup_order);
@@ -899,6 +953,7 @@ export async function scheduleAutomationForInboundMessage(
     scheduled: insertedCount,
     stageMessageJobs: insertedStageMessageCount,
     followupJobs: insertedFollowupCount,
+    calendlyScheduleJobs: insertedCalendlyScheduleCount,
     reason: "scheduled" as const,
     runId: run.id,
     stageId: nextStage.id,
@@ -1012,6 +1067,63 @@ async function loadAgent(client: QueryClient, agentId: string) {
   }
 
   return castRow<AutomationAgentRuntimeRow>(result.data);
+}
+
+async function loadCalendlySettings(client: QueryClient, ownerId: string) {
+  const result = await client
+    .from("calendly_settings")
+    .select("default_event_type_uri, default_event_type_name, enabled")
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return castRow<CalendlySettingsRuntimeRow>(result.data);
+}
+
+async function loadFreshCalendlyConnection(client: QueryClient, ownerId: string) {
+  const result = await client
+    .from("calendly_connections")
+    .select("calendly_user_uri, access_token, refresh_token, expires_at")
+    .eq("owner_id", ownerId)
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const connection = castRow<CalendlyConnectionRuntimeRow>(result.data);
+
+  if (!connection) {
+    return null;
+  }
+
+  if (!calendlyTokenNeedsRefresh(connection.expires_at)) {
+    return connection;
+  }
+
+  const refreshedTokens = await refreshCalendlyToken(connection.refresh_token);
+  const updateResult = await client
+    .from("calendly_connections")
+    .update({
+      access_token: refreshedTokens.accessToken,
+      refresh_token: refreshedTokens.refreshToken,
+      expires_at: refreshedTokens.expiresAt,
+    } as never)
+    .eq("owner_id", ownerId);
+
+  if (updateResult.error) {
+    throw new Error(updateResult.error.message);
+  }
+
+  return {
+    ...connection,
+    access_token: refreshedTokens.accessToken,
+    refresh_token: refreshedTokens.refreshToken,
+    expires_at: refreshedTokens.expiresAt,
+  };
 }
 
 async function countRemainingStageMessageJobs(
@@ -1201,6 +1313,69 @@ async function sendAutomationOutboundMessage(
   return {
     sentAt: nowIso,
   };
+}
+
+function buildCalendlyScheduleMessage(options: {
+  bookingUrl: string;
+  eventTypeName: string | null;
+}) {
+  const eventTypeName = normalizeOptionalString(options.eventTypeName);
+
+  return eventTypeName
+    ? `Ya esta todo listo para agendar ${eventTypeName}. Elegi tu horario aca: ${options.bookingUrl}`
+    : `Ya esta todo listo para agendar. Elegi tu horario aca: ${options.bookingUrl}`;
+}
+
+async function sendCalendlyScheduleJob(
+  client: QueryClient,
+  job: AutomationJobRow,
+  conversation: ConversationRuntimeRow,
+  account: AccountRuntimeRow,
+) {
+  const [settings, connection] = await Promise.all([
+    loadCalendlySettings(client, job.owner_id),
+    loadFreshCalendlyConnection(client, job.owner_id),
+  ]);
+  const eventTypeUri = normalizeOptionalString(settings?.default_event_type_uri);
+
+  if (!settings?.enabled || !eventTypeUri || !connection) {
+    await markJob(client, job.id, {
+      status: "skipped",
+      last_error:
+        "Agenda automatica activa, pero Calendly no esta conectado o no tiene reunion por defecto.",
+    });
+    return { sent: false, skipped: "calendly_unconfigured" as const };
+  }
+
+  const schedulingLink = await createCalendlySchedulingLink({
+    accessToken: connection.access_token,
+    eventTypeUri,
+  });
+  const textContent = buildCalendlyScheduleMessage({
+    bookingUrl: schedulingLink.bookingUrl,
+    eventTypeName: settings.default_event_type_name,
+  });
+  const result = await sendAutomationOutboundMessage(client, conversation, account, {
+    messageType: "text",
+    textContent,
+    mediaUrl: null,
+  });
+
+  await markJob(client, job.id, {
+    status: "sent",
+    sent_at: result.sentAt,
+    attempt_count: (job.attempt_count ?? 0) + 1,
+    last_error: null,
+    payload: {
+      ...(job.payload ?? {}),
+      calendlyEventTypeUri: eventTypeUri,
+      calendlyEventTypeName: settings.default_event_type_name,
+      calendlyBookingUrl: schedulingLink.bookingUrl,
+      textContent,
+    },
+  });
+
+  return { sent: true };
 }
 
 async function sendAutomationJob(
@@ -1437,10 +1612,13 @@ async function handleJob(
     return "skipped_ai_disabled" as const;
   }
 
-  if (job.job_type === "followup" && shouldSkipFollowup(run, job)) {
+  if (
+    (job.job_type === "followup" || job.job_type === "calendly_schedule") &&
+    shouldSkipFollowup(run, job)
+  ) {
     await markJob(client, job.id, {
       status: "skipped",
-      last_error: "El cliente respondio antes del followup.",
+      last_error: "El cliente respondio antes de que se envie esta respuesta.",
     });
     return "skipped_followup_answered" as const;
   }
@@ -1457,6 +1635,12 @@ async function handleJob(
   try {
     if (job.job_type === "ai_reply") {
       await sendAutomationAiReplyJob(client, job, run, conversation, account, agent);
+    } else if (job.job_type === "calendly_schedule") {
+      const result = await sendCalendlyScheduleJob(client, job, conversation, account);
+
+      if (!result.sent) {
+        return "skipped_calendly_unconfigured" as const;
+      }
     } else {
       await sendAutomationJob(client, job, run, conversation, account, agent);
     }
@@ -1669,10 +1853,15 @@ export async function runAutomationForInboundMessage(
     runId: scheduleResult.runId,
     stageId: scheduleResult.stageId,
   });
+  const postStageDispatch = await processDueAutomationJobs(client, {
+    limit: 5,
+    ownerId: options.ownerId,
+  });
 
   return {
     schedule: scheduleResult,
     stageExecution,
+    postStageDispatch,
   };
 }
 
@@ -1692,7 +1881,7 @@ export async function processDueAutomationJobs(
   let jobsQuery = client
     .from("automation_jobs")
     .select("*")
-    .in("job_type", ["stage_message", "followup"])
+    .in("job_type", ["stage_message", "followup", "calendly_schedule"])
     .eq("status", "pending")
     .lte("scheduled_for", nowIso);
 

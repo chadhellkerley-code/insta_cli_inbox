@@ -181,6 +181,7 @@ export function sanitizeAutomationAgentInput(input: AutomationAgentInput): Autom
       return {
         id: normalizeString(stage.id) || undefined,
         name: ensureStageName(stage.name, stageIndex),
+        autoScheduleEnabled: Boolean(stage.autoScheduleEnabled),
         followups,
         messages: messages.map((message) => {
           const messageType =
@@ -268,6 +269,7 @@ function mapAutomationAgents(
         id: stage.id,
         name: stage.name,
         order: stage.stage_order,
+        autoScheduleEnabled: Boolean(stage.auto_schedule_enabled),
         followups: (followupsByStage.get(stage.id) ?? [])
           .sort((left, right) => left.followup_order - right.followup_order)
           .map((followup) => ({
@@ -496,6 +498,7 @@ export async function saveAutomationAgent(
         agent_id: agentId,
         stage_order: stageIndex + 1,
         name: stage.name,
+        auto_schedule_enabled: stage.autoScheduleEnabled,
       } as never)
       .select("id")
       .maybeSingle();

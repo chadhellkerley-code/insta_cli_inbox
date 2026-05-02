@@ -49,6 +49,7 @@ function toAgentInput(agent: AutomationAgent): AutomationAgentInput {
     stages: agent.stages.map((stage) => ({
       id: stage.id,
       name: stage.name,
+      autoScheduleEnabled: stage.autoScheduleEnabled,
       followups: stage.followups.map((followup) => ({
         id: followup.id,
         isActive: followup.isActive,
@@ -455,6 +456,7 @@ export function AutomationAgentsManager({
         ...current.stages,
         {
           name: `Etapa ${current.stages.length + 1}`,
+          autoScheduleEnabled: false,
           followups: [],
           messages: [
             {
@@ -1234,7 +1236,22 @@ export function AutomationAgentsManager({
                               automatico al lead totalmente listo
                             </p>
                           </div>
-                          <span className="pill">Proximamente</span>
+                          <button
+                            type="button"
+                            className={
+                              stage.autoScheduleEnabled
+                                ? "agent-toggle active"
+                                : "agent-toggle inactive"
+                            }
+                            onClick={() =>
+                              updateStage(stageIndex, (currentStage) => ({
+                                ...currentStage,
+                                autoScheduleEnabled: !currentStage.autoScheduleEnabled,
+                              }))
+                            }
+                          >
+                            {stage.autoScheduleEnabled ? "Activo" : "Inactivo"}
+                          </button>
                         </div>
                       </article>
                     ))}
