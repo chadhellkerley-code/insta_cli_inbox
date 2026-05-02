@@ -311,6 +311,9 @@ create index if not exists instagram_accounts_owner_idx
 create index if not exists instagram_accounts_webhook_idx
   on public.instagram_accounts (last_webhook_at desc nulls last);
 
+create unique index if not exists instagram_accounts_id_owner_id_unique_idx
+  on public.instagram_accounts (id, owner_id);
+
 create index if not exists instagram_account_identifiers_account_idx
   on public.instagram_account_identifiers (account_id);
 
@@ -323,6 +326,9 @@ create index if not exists instagram_conversations_owner_last_message_idx
 create index if not exists instagram_conversations_account_contact_idx
   on public.instagram_conversations (account_id, contact_igsid);
 
+create unique index if not exists instagram_conversations_id_account_owner_unique_idx
+  on public.instagram_conversations (id, account_id, owner_id);
+
 create index if not exists instagram_contacts_owner_contact_idx
   on public.instagram_contacts (owner_id, contact_igsid);
 
@@ -334,6 +340,57 @@ create index if not exists instagram_messages_owner_created_idx
 
 create index if not exists instagram_webhook_events_debug_reason_idx
   on public.instagram_webhook_events_debug (reason, created_at desc);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'instagram_conversations_account_owner_fk'
+      and conrelid = 'public.instagram_conversations'::regclass
+  ) then
+    alter table public.instagram_conversations
+      add constraint instagram_conversations_account_owner_fk
+      foreign key (account_id, owner_id)
+      references public.instagram_accounts (id, owner_id)
+      on delete cascade;
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'instagram_messages_account_owner_fk'
+      and conrelid = 'public.instagram_messages'::regclass
+  ) then
+    alter table public.instagram_messages
+      add constraint instagram_messages_account_owner_fk
+      foreign key (account_id, owner_id)
+      references public.instagram_accounts (id, owner_id)
+      on delete cascade;
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'instagram_messages_conversation_account_owner_fk'
+      and conrelid = 'public.instagram_messages'::regclass
+  ) then
+    alter table public.instagram_messages
+      add constraint instagram_messages_conversation_account_owner_fk
+      foreign key (conversation_id, account_id, owner_id)
+      references public.instagram_conversations (id, account_id, owner_id)
+      on delete cascade;
+  end if;
+end;
+$$;
 
 drop trigger if exists set_instagram_accounts_updated_at on public.instagram_accounts;
 create trigger set_instagram_accounts_updated_at

@@ -88,7 +88,6 @@ type ClassifiedMessagingEvent = {
   direction: "in" | "out";
   contactIgsid: string;
   ownedCandidateIds: string[];
-  ownedUsername: string | null;
   ownedIdentifierCandidates: Array<{
     identifier: string | null | undefined;
     identifierType: string;
@@ -240,9 +239,6 @@ function classifyMessagingEvent(
     direction,
     contactIgsid,
     ownedCandidateIds,
-    ownedUsername: normalizeInstagramUsername(
-      isEcho ? event.sender?.username : event.recipient?.username,
-    ),
     ownedIdentifierCandidates: [
       {
         identifier: ownedActorId,
@@ -334,15 +330,11 @@ async function findAccountForEvent(
   admin: ReturnType<typeof createAdminClient>,
   options: {
     candidateIds: string[];
-    candidateUsername: string | null;
   },
 ) {
   const candidateIds = Array.from(
     new Set(options.candidateIds.map(normalizeInstagramIdentifier).filter(Boolean) as string[]),
   );
-  const candidateUsernames = [
-    normalizeInstagramUsername(options.candidateUsername),
-  ].filter(Boolean) as string[];
 
   if (candidateIds.length > 0) {
     const aliasResult = await admin
@@ -430,102 +422,7 @@ async function findAccountForEvent(
     }
   }
 
-  if (candidateUsernames.length > 0) {
-    const usernameResult = await admin
-      .from("instagram_accounts")
-      .select(
-        "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
-      )
-      .in("username", candidateUsernames)
-      .limit(candidateUsernames.length);
-    const accounts = (usernameResult.data as AccountLookup[] | null) ?? [];
-
-    if (usernameResult.error) {
-      throw new Error(usernameResult.error.message);
-    }
-
-    for (const candidateUsername of candidateUsernames) {
-      const account = accounts.find(
-        (item) => normalizeInstagramUsername(item.username) === candidateUsername,
-      );
-
-      if (account) {
-        const matchedActor =
-          normalizeInstagramUsername(options.candidateUsername) === candidateUsername
-            ? "owned_username"
-            : "username";
-
-        return {
-          account,
-          matchedBy: matchedActor,
-          matchedValue: candidateUsername,
-        } satisfies AccountMatchResult;
-      }
-    }
-  }
-
   return null;
-}
-
-async function findBootstrapAccountForEvent(
-  admin: ReturnType<typeof createAdminClient>,
-  options: {
-    senderId: string | null;
-    recipientId: string | null;
-  },
-) {
-  const recipientId = normalizeInstagramIdentifier(options.recipientId);
-
-  if (!recipientId) {
-    return null;
-  }
-
-  const result = await admin
-    .from("instagram_accounts")
-    .select(
-      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
-    );
-  const accounts = (result.data as AccountLookup[] | null) ?? [];
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  const senderId = normalizeInstagramIdentifier(options.senderId);
-  const candidates = accounts.filter((account) => {
-    const storedIds = new Set(
-      collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-    );
-    const currentAppUserId = normalizeInstagramIdentifier(account.instagram_app_user_id);
-    const canBootstrapAppUserId =
-      !currentAppUserId ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_user_id) ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_account_id);
-
-    if (!canBootstrapAppUserId) {
-      return false;
-    }
-
-    if (storedIds.has(recipientId)) {
-      return false;
-    }
-
-    if (senderId && storedIds.has(senderId)) {
-      return false;
-    }
-
-    return true;
-  });
-
-  if (candidates.length !== 1) {
-    return null;
-  }
-
-  return {
-    account: candidates[0],
-    matchedBy: "bootstrap:recipient_id",
-    matchedValue: recipientId,
-  } satisfies AccountMatchResult;
 }
 
 async function findAccountByRemoteIdentityForEvent(
@@ -626,11 +523,51 @@ async function findAccountByRemoteIdentityForEvent(
     ],
   });
 
-  for (const candidateId of candidateIds) {
-    writeCachedAccountMatch(candidateId, match.account.id);
-  }
+  writeCachedAccountMatch(match.matchedValue, match.account.id);
 
   return match;
+}
+
+async function isAccountMatchConfirmedForPersistence(
+  admin: ReturnType<typeof createAdminClient>,
+  match: AccountMatchResult,
+) {
+  if (match.matchedBy === "remote_identity" || match.matchedBy === "remote_identity_cache") {
+    return true;
+  }
+
+  const matchedValue = normalizeInstagramIdentifier(match.matchedValue);
+
+  if (!matchedValue) {
+    return false;
+  }
+
+  const confirmedIdentifiers = new Set(
+    collectInstagramAccountIdentifiers(match.account).map((identifier) => identifier.identifier),
+  );
+  const pageId = normalizeInstagramIdentifier(match.account.page_id);
+
+  if (pageId) {
+    confirmedIdentifiers.add(pageId);
+  }
+
+  if (confirmedIdentifiers.has(matchedValue)) {
+    return true;
+  }
+
+  const identifierResult = await admin
+    .from("instagram_account_identifiers")
+    .select("account_id")
+    .eq("account_id", match.account.id)
+    .eq("identifier", matchedValue)
+    .neq("identifier_type", "webhook_entry_id")
+    .maybeSingle();
+
+  if (identifierResult.error) {
+    throw new Error(identifierResult.error.message);
+  }
+
+  return Boolean(identifierResult.data);
 }
 
 function resolveOwnedIdentifierCandidates(
@@ -1252,20 +1189,9 @@ export async function POST(request: Request) {
           continue;
         }
 
-        let match = await findAccountForEvent(
-          admin,
-          {
-            candidateIds: classification.ownedCandidateIds,
-            candidateUsername: classification.ownedUsername,
-          },
-        );
-
-        if (!match) {
-          match = await findBootstrapAccountForEvent(admin, {
-            senderId,
-            recipientId,
-          });
-        }
+        let match = await findAccountForEvent(admin, {
+          candidateIds: classification.ownedCandidateIds,
+        });
 
         if (!match) {
           match = await findAccountByRemoteIdentityForEvent(admin, {
@@ -1297,6 +1223,42 @@ export async function POST(request: Request) {
                 id: entryId,
               },
               event,
+            },
+          });
+          continue;
+        }
+
+        const matchConfirmed = await isAccountMatchConfirmedForPersistence(admin, match);
+
+        if (!matchConfirmed) {
+          logWebhook("warn", "account match rejected", {
+            bodyObject,
+            entryIndex,
+            eventIndex,
+            entryId,
+            senderId,
+            recipientId,
+            messageId,
+            matchedAccountId: match.account.id,
+            matchedBy: match.matchedBy,
+            matchedValue: match.matchedValue,
+          });
+          await persistWebhookDebugEvent(admin, {
+            reason: "account_match_unconfirmed",
+            bodyObject,
+            entryId,
+            senderId,
+            recipientId,
+            messageId,
+            matchedAccountId: match.account.id,
+            payload: {
+              object: bodyObject,
+              entry: { id: entryId, entryIndex },
+              event,
+              match: {
+                matchedBy: match.matchedBy,
+                matchedValue: match.matchedValue,
+              },
             },
           });
           continue;

@@ -70,6 +70,10 @@ function buildIdentifierPersistenceErrorMessage(errorMessage: string) {
   return `No pudimos persistir los identificadores requeridos de la cuenta de Instagram. ${errorMessage}`;
 }
 
+function buildConflictingIdentifierErrorMessage(identifier: string) {
+  return `El identificador de Instagram ${identifier} ya esta asociado a otra cuenta. Revisa las conexiones antes de continuar.`;
+}
+
 export async function persistInstagramAccountIdentifiers(options: {
   admin: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>;
   accountId: string;
@@ -85,20 +89,71 @@ export async function persistInstagramAccountIdentifiers(options: {
     return;
   }
 
-  const result = await options.admin.from("instagram_account_identifiers").upsert(rows as never, {
-    onConflict: "identifier",
-  });
+  for (const row of rows) {
+    const existingResult = await options.admin
+      .from("instagram_account_identifiers")
+      .select("id, account_id")
+      .eq("identifier", row.identifier)
+      .maybeSingle();
+    const existing = existingResult.data as { id: string; account_id: string } | null;
 
-  if (result.error) {
-    console.error("[instagram-account-identifiers] persistence failed", {
-      accountId: options.accountId,
-      identifiers: rows.map((row) => ({
+    if (existingResult.error) {
+      console.error("[instagram-account-identifiers] lookup failed", {
+        accountId: options.accountId,
         identifier: row.identifier,
         identifierType: row.identifier_type,
-      })),
-      error: result.error.message,
-    });
+        error: existingResult.error.message,
+      });
 
-    throw new Error(buildIdentifierPersistenceErrorMessage(result.error.message));
+      throw new Error(buildIdentifierPersistenceErrorMessage(existingResult.error.message));
+    }
+
+    if (existing && existing.account_id !== options.accountId) {
+      const message = buildConflictingIdentifierErrorMessage(row.identifier);
+
+      console.error("[instagram-account-identifiers] conflicting identifier skipped", {
+        accountId: options.accountId,
+        existingAccountId: existing.account_id,
+        identifier: row.identifier,
+        identifierType: row.identifier_type,
+      });
+
+      throw new Error(message);
+    }
+
+    if (existing) {
+      const updateResult = await options.admin
+        .from("instagram_account_identifiers")
+        .update({ identifier_type: row.identifier_type } as never)
+        .eq("id", existing.id);
+
+      if (updateResult.error) {
+        console.error("[instagram-account-identifiers] update failed", {
+          accountId: options.accountId,
+          identifier: row.identifier,
+          identifierType: row.identifier_type,
+          error: updateResult.error.message,
+        });
+
+        throw new Error(buildIdentifierPersistenceErrorMessage(updateResult.error.message));
+      }
+
+      continue;
+    }
+
+    const insertResult = await options.admin
+      .from("instagram_account_identifiers")
+      .insert(row as never);
+
+    if (insertResult.error) {
+      console.error("[instagram-account-identifiers] insert failed", {
+        accountId: options.accountId,
+        identifier: row.identifier,
+        identifierType: row.identifier_type,
+        error: insertResult.error.message,
+      });
+
+      throw new Error(buildIdentifierPersistenceErrorMessage(insertResult.error.message));
+    }
   }
 }
