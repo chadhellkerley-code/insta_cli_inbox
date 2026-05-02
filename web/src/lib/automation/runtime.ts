@@ -223,6 +223,8 @@ function readChatCompletionContent(payload: unknown) {
 }
 
 export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
+  const hasSmartTextPrompt = Boolean(normalizeOptionalString(options.generationPrompt));
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -238,7 +240,7 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
         },
         ...buildHumanReplyMessages(options),
       ],
-      temperature: 0.7,
+      temperature: hasSmartTextPrompt ? 0.35 : 0.55,
     }),
   });
   const payload = (await response.json().catch(() => null)) as unknown;
