@@ -10,6 +10,10 @@ export type UserProfile = {
   role: string | null;
   expires_at: string | null;
   last_login_at: string | null;
+  instagram_inbox_cleanup_started_at?: string | null;
+  instagram_inbox_cleanup_last_run_at?: string | null;
+  instagram_inbox_cleanup_last_repair_at?: string | null;
+  instagram_inbox_cleanup_last_error?: string | null;
 };
 
 export type InstagramAccountRecord = {

@@ -1,5 +1,4 @@
 import { DeleteInstagramAccountButton } from "@/components/delete-instagram-account-button";
-import { InboxCleanupButton } from "@/components/inbox-cleanup-button";
 import Link from "next/link";
 
 import { MetaConnectButton } from "@/components/meta-connect-button";
@@ -63,7 +62,6 @@ export default async function CuentasPage({
             startPath="/api/meta/oauth/start"
             redirectingLabel="Redirigiendo"
           />
-          <InboxCleanupButton />
         </div>
       </section>
 
