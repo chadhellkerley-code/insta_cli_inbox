@@ -491,6 +491,18 @@ async function findBootstrapAccountForEvent(
     throw new Error(result.error.message);
   }
 
+  // A blind bootstrap is only acceptable in a single-account workspace.
+  // In any multi-account setup it can silently poison another inbox by
+  // attaching a new Meta identifier to the wrong account.
+  if (accounts.length !== 1) {
+    logWebhook("warn", "unsafe bootstrap skipped", {
+      reason: "multi_account_workspace",
+      accountCount: accounts.length,
+      recipientId,
+    });
+    return null;
+  }
+
   const senderId = normalizeInstagramIdentifier(options.senderId);
   const candidates = accounts.filter((account) => {
     const storedIds = new Set(
@@ -1261,15 +1273,15 @@ export async function POST(request: Request) {
         );
 
         if (!match) {
-          match = await findBootstrapAccountForEvent(admin, {
-            senderId,
-            recipientId,
+          match = await findAccountByRemoteIdentityForEvent(admin, {
+            candidateIds: classification.ownedCandidateIds,
           });
         }
 
         if (!match) {
-          match = await findAccountByRemoteIdentityForEvent(admin, {
-            candidateIds: classification.ownedCandidateIds,
+          match = await findBootstrapAccountForEvent(admin, {
+            senderId,
+            recipientId,
           });
         }
 
