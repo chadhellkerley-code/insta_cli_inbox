@@ -18,7 +18,10 @@ import {
   compareExactValues,
   createOpaqueFingerprint,
 } from "@/lib/meta/oauth-observability";
-import { persistInstagramAccountIdentifiers } from "@/lib/meta/account-identifiers";
+import {
+  assertInstagramIdentifierOwnership,
+  syncInstagramAccountIdentifiers,
+} from "@/lib/meta/account-identifiers";
 import { verifyMetaOauthState } from "@/lib/meta/oauth-state";
 import {
   buildFallbackInstagramUsername,
@@ -334,6 +337,16 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       connected_at: managedToken.obtainedAt,
     };
 
+    await assertInstagramIdentifierOwnership({
+      admin,
+      accountId: existing?.id ?? null,
+      identifiers: [
+        instagramUserId,
+        resolvedInstagramAccountId,
+        resolvedInstagramAppUserId,
+      ].filter(Boolean) as string[],
+    });
+
     const upsertResult = existing
       ? await admin
           .from("instagram_accounts")
@@ -395,7 +408,7 @@ export async function handleCanonicalMetaOauthCallback(request: NextRequest) {
       });
     }
 
-    await persistInstagramAccountIdentifiers({
+    await syncInstagramAccountIdentifiers({
       admin,
       accountId: upsertedAccount.id,
       identifiers: [

@@ -36,6 +36,18 @@ alter table public.profiles
 alter table public.profiles
   add column if not exists updated_at timestamptz not null default timezone('utc'::text, now());
 
+alter table public.profiles
+  add column if not exists instagram_inbox_cleanup_started_at timestamptz;
+
+alter table public.profiles
+  add column if not exists instagram_inbox_cleanup_last_run_at timestamptz;
+
+alter table public.profiles
+  add column if not exists instagram_inbox_cleanup_last_repair_at timestamptz;
+
+alter table public.profiles
+  add column if not exists instagram_inbox_cleanup_last_error text;
+
 create or replace function public.set_profile_updated_at()
 returns trigger
 language plpgsql

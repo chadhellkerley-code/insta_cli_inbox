@@ -6,6 +6,11 @@ import {
   loadAiCredential,
 } from "@/lib/automation/ai-credentials";
 import {
+  buildHumanReplyMessages,
+  buildHumanReplySystemPrompt,
+  sanitizeGeneratedHumanReply,
+} from "@/lib/automation/human-reply";
+import {
   calendlyTokenNeedsRefresh,
   createCalendlySchedulingLink,
   refreshCalendlyToken,
@@ -205,62 +210,6 @@ function clampLiveReplyDelaySeconds(value: number) {
   return Math.min(MAX_LIVE_REPLY_DELAY_SECONDS, Math.max(0, Math.round(value)));
 }
 
-function buildAutomationAiSystemPrompt(options: Pick<
-  GenerateAutomationReplyOptions,
-  "aiPrompt" | "personality" | "generationPrompt"
->) {
-  const parts = [
-    "Responde como agente de atencion de Instagram.",
-    "Devuelve solo el texto final para enviar al cliente.",
-    normalizeOptionalString(options.personality)
-      ? `Personalidad: ${normalizeOptionalString(options.personality)}`
-      : null,
-    normalizeOptionalString(options.aiPrompt)
-      ? `Instrucciones: ${normalizeOptionalString(options.aiPrompt)}`
-      : null,
-    normalizeOptionalString(options.generationPrompt)
-      ? [
-          "Instruccion especifica de este mensaje:",
-          normalizeOptionalString(options.generationPrompt),
-        ].join(" ")
-      : null,
-  ].filter(Boolean);
-
-  return parts.join("\n");
-}
-
-function buildAutomationAiMessages(options: GenerateAutomationReplyOptions) {
-  const conversationMessages = options.conversationMessages ?? [];
-  const messages = conversationMessages
-    .map((message) => {
-      const textContent = normalizeOptionalString(message.text_content);
-      const sender = message.direction === "out" ? "El agente" : "El cliente";
-      const content =
-        textContent ??
-        (message.message_type === "audio"
-          ? `${sender} envio un audio.`
-          : `${sender} envio un mensaje de tipo ${message.message_type || "desconocido"}.`);
-
-      return {
-        role: message.direction === "out" ? ("assistant" as const) : ("user" as const),
-        content,
-      };
-    })
-    .filter((message) => normalizeOptionalString(message.content));
-
-  if (messages.length > 0) {
-    return messages;
-  }
-
-  return [
-    {
-      role: "user" as const,
-      content:
-        normalizeOptionalString(options.inboundText) ?? "El cliente envio un mensaje sin texto.",
-    },
-  ];
-}
-
 function readChatCompletionContent(payload: unknown) {
   const content = (payload as {
     choices?: Array<{
@@ -274,6 +223,8 @@ function readChatCompletionContent(payload: unknown) {
 }
 
 export async function generateAutomationReply(options: GenerateAutomationReplyOptions) {
+  const hasSmartTextPrompt = Boolean(normalizeOptionalString(options.generationPrompt));
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -285,11 +236,11 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
       messages: [
         {
           role: "system",
-          content: buildAutomationAiSystemPrompt(options),
+          content: buildHumanReplySystemPrompt(options),
         },
-        ...buildAutomationAiMessages(options),
+        ...buildHumanReplyMessages(options),
       ],
-      temperature: 0.7,
+      temperature: hasSmartTextPrompt ? 0.35 : 0.55,
     }),
   });
   const payload = (await response.json().catch(() => null)) as unknown;
@@ -299,7 +250,7 @@ export async function generateAutomationReply(options: GenerateAutomationReplyOp
     throw new Error(errorMessage ?? `OpenAI respondio con HTTP ${response.status}.`);
   }
 
-  const content = readChatCompletionContent(payload);
+  const content = sanitizeGeneratedHumanReply(readChatCompletionContent(payload) ?? "");
 
   if (!content) {
     throw new Error("OpenAI no devolvio contenido.");

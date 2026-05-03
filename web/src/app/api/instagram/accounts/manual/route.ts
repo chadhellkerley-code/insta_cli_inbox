@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { persistInstagramAccountIdentifiers } from "@/lib/meta/account-identifiers";
+import {
+  assertInstagramIdentifierOwnership,
+  syncInstagramAccountIdentifiers,
+} from "@/lib/meta/account-identifiers";
 import {
   exchangeInstagramTokenForLongLivedToken,
   fetchInstagramLoginAccountIdentity,
@@ -213,6 +216,16 @@ export async function POST(request: Request) {
       connected_at: nowIso,
     };
 
+    await assertInstagramIdentifierOwnership({
+      admin,
+      accountId: existing?.id ?? null,
+      identifiers: [
+        instagramUserId,
+        resolvedInstagramAccountId,
+        remoteIdentity.appScopedUserId ?? existing?.instagram_app_user_id ?? null,
+      ].filter(Boolean) as string[],
+    });
+
     const upsertResult = existing
       ? await admin
           .from("instagram_accounts")
@@ -237,7 +250,7 @@ export async function POST(request: Request) {
       throw new Error(upsertResult.error?.message ?? "No pudimos guardar la cuenta de Instagram.");
     }
 
-    await persistInstagramAccountIdentifiers({
+    await syncInstagramAccountIdentifiers({
       admin,
       accountId: upsertedAccount.id,
       identifiers: [

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { InstagramInboxCleanupCard } from "@/components/instagram-inbox-cleanup-card";
+
 type ConnectionState = {
   connected: boolean;
   calendly_user_uri: string | null;
@@ -187,6 +189,8 @@ export default function SettingsPage() {
       {feedback ? (
         <div className={`feedback ${feedbackTone}`}>{feedback}</div>
       ) : null}
+
+      <InstagramInboxCleanupCard />
 
       <section className="list-card settings-card">
         <span className="eyebrow">Calendario</span>
