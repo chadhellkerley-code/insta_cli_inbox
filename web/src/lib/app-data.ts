@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { ensureAutomaticInstagramInboxCleanup } from "@/lib/meta/inbox-cleanup";
 import { syncInstagramUsernamesFromStoredRuntimeMetadata } from "@/lib/meta/instagram-username";
 import { syncInstagramAccountProfile } from "@/lib/meta/profile-enrichment";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -305,8 +304,6 @@ export async function requireUserContext() {
   if (profile?.expires_at && Date.now() > new Date(profile.expires_at).getTime()) {
     redirect("/login?error=Tu acceso expir%C3%B3. Contact%C3%A1 al administrador.");
   }
-
-  await ensureAutomaticInstagramInboxCleanup(user.id);
 
   return { supabase, user, profile };
 }

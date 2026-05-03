@@ -1,7 +1,7 @@
 import {
   collectInstagramAccountIdentifiers,
   normalizeInstagramIdentifier,
-  persistInstagramAccountIdentifiers,
+  syncInstagramAccountIdentifiers,
 } from "@/lib/meta/account-identifiers";
 import { fetchInstagramLoginAccountIdentity } from "@/lib/meta/client";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
@@ -648,23 +648,8 @@ async function resetCanonicalIdentifiers(
   admin: ReturnType<typeof createAdminClient>,
   accounts: CleanupAccount[],
 ) {
-  const accountIds = accounts.map((account) => account.id);
-
-  if (accountIds.length === 0) {
-    return;
-  }
-
-  const deletion = await admin
-    .from("instagram_account_identifiers")
-    .delete()
-    .in("account_id", accountIds);
-
-  if (deletion.error) {
-    throw new Error(deletion.error.message);
-  }
-
   for (const account of accounts) {
-    await persistInstagramAccountIdentifiers({
+    await syncInstagramAccountIdentifiers({
       admin,
       accountId: account.id,
       identifiers: collectInstagramAccountIdentifiers(account).map((identifier) => ({

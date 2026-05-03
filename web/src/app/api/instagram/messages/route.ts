@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { persistInstagramAccountIdentifiers } from "@/lib/meta/account-identifiers";
+import {
+  assertInstagramIdentifierOwnership,
+  syncInstagramAccountIdentifiers,
+} from "@/lib/meta/account-identifiers";
 import {
   fetchInstagramLoginAccountIdentity,
   sendInstagramMessage,
@@ -266,6 +269,16 @@ export async function POST(request: Request) {
       resolvedUsername !== account.username ||
       resolvedAccountType !== account.account_type
     ) {
+      await assertInstagramIdentifierOwnership({
+        admin,
+        accountId: account.id,
+        identifiers: [
+          account.instagram_user_id,
+          resolvedInstagramAccountId,
+          resolvedInstagramAppUserId,
+        ].filter(Boolean) as string[],
+      });
+
       const accountUpdate = await admin
         .from("instagram_accounts")
         .update({
@@ -281,7 +294,7 @@ export async function POST(request: Request) {
         throw new Error(accountUpdate.error.message);
       }
 
-      await persistInstagramAccountIdentifiers({
+      await syncInstagramAccountIdentifiers({
         admin,
         accountId: account.id,
         identifiers: [

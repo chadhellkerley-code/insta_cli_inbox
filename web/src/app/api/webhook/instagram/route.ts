@@ -1,13 +1,8 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
-import {
-  collectInstagramAccountIdentifiers,
-  normalizeInstagramIdentifier,
-  persistInstagramAccountIdentifiers,
-} from "@/lib/meta/account-identifiers";
+import { normalizeInstagramIdentifier } from "@/lib/meta/account-identifiers";
 import { getMetaServerEnv } from "@/lib/meta/config";
-import { fetchInstagramLoginAccountIdentity } from "@/lib/meta/client";
 import {
   resolveInstagramUsernameCandidateFromMessagingEvent,
   syncInstagramUsername,
@@ -88,11 +83,6 @@ type ClassifiedMessagingEvent = {
   direction: "in" | "out";
   contactIgsid: string;
   ownedCandidateIds: string[];
-  ownedUsername: string | null;
-  ownedIdentifierCandidates: Array<{
-    identifier: string | null | undefined;
-    identifierType: string;
-  }>;
 };
 
 type MessagingEventSkipReason =
@@ -101,11 +91,6 @@ type MessagingEventSkipReason =
   | "deleted_message"
   | "missing_owned_account_identifier"
   | "missing_contact_igsid";
-
-type CachedAccountMatch = {
-  accountId: string;
-  expiresAtMs: number;
-};
 
 type PersistMessagingEventResult =
   | {
@@ -120,9 +105,6 @@ type PersistMessagingEventResult =
       status: "skipped";
       reason: MessagingEventSkipReason;
     };
-
-const REMOTE_MATCH_CACHE_TTL_MS = 10 * 60 * 1000;
-const remoteAccountMatchCache = new Map<string, CachedAccountMatch>();
 
 function logWebhook(
   level: "info" | "warn" | "error",
@@ -240,15 +222,6 @@ function classifyMessagingEvent(
     direction,
     contactIgsid,
     ownedCandidateIds,
-    ownedUsername: normalizeInstagramUsername(
-      isEcho ? event.sender?.username : event.recipient?.username,
-    ),
-    ownedIdentifierCandidates: [
-      {
-        identifier: ownedActorId,
-        identifierType: isEcho ? "webhook_sender_id" : "webhook_recipient_id",
-      },
-    ],
   };
 }
 
@@ -304,28 +277,6 @@ async function loadAccountById(
   return account;
 }
 
-function readCachedAccountMatch(candidateId: string) {
-  const cached = remoteAccountMatchCache.get(candidateId);
-
-  if (!cached) {
-    return null;
-  }
-
-  if (cached.expiresAtMs <= Date.now()) {
-    remoteAccountMatchCache.delete(candidateId);
-    return null;
-  }
-
-  return cached;
-}
-
-function writeCachedAccountMatch(candidateId: string, accountId: string) {
-  remoteAccountMatchCache.set(candidateId, {
-    accountId,
-    expiresAtMs: Date.now() + REMOTE_MATCH_CACHE_TTL_MS,
-  });
-}
-
 function dedupeByAccountId<T extends { account_id: string }>(rows: T[]) {
   return Array.from(new Map(rows.map((row) => [row.account_id, row])).values());
 }
@@ -334,15 +285,11 @@ async function findAccountForEvent(
   admin: ReturnType<typeof createAdminClient>,
   options: {
     candidateIds: string[];
-    candidateUsername: string | null;
   },
 ) {
   const candidateIds = Array.from(
     new Set(options.candidateIds.map(normalizeInstagramIdentifier).filter(Boolean) as string[]),
   );
-  const candidateUsernames = [
-    normalizeInstagramUsername(options.candidateUsername),
-  ].filter(Boolean) as string[];
 
   if (candidateIds.length > 0) {
     const aliasResult = await admin
@@ -390,12 +337,7 @@ async function findAccountForEvent(
   }
 
   for (const candidateId of candidateIds) {
-    for (const column of [
-      "instagram_account_id",
-      "instagram_app_user_id",
-      "instagram_user_id",
-      "page_id",
-    ] as const) {
+    for (const column of ["instagram_account_id", "page_id"] as const) {
       const result = await admin
         .from("instagram_accounts")
         .select(
@@ -430,292 +372,7 @@ async function findAccountForEvent(
     }
   }
 
-  if (candidateUsernames.length > 0) {
-    const usernameResult = await admin
-      .from("instagram_accounts")
-      .select(
-        "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
-      )
-      .in("username", candidateUsernames)
-      .limit(candidateUsernames.length);
-    const accounts = (usernameResult.data as AccountLookup[] | null) ?? [];
-
-    if (usernameResult.error) {
-      throw new Error(usernameResult.error.message);
-    }
-
-    for (const candidateUsername of candidateUsernames) {
-      const account = accounts.find(
-        (item) => normalizeInstagramUsername(item.username) === candidateUsername,
-      );
-
-      if (account) {
-        const matchedActor =
-          normalizeInstagramUsername(options.candidateUsername) === candidateUsername
-            ? "owned_username"
-            : "username";
-
-        return {
-          account,
-          matchedBy: matchedActor,
-          matchedValue: candidateUsername,
-        } satisfies AccountMatchResult;
-      }
-    }
-  }
-
   return null;
-}
-
-async function findBootstrapAccountForEvent(
-  admin: ReturnType<typeof createAdminClient>,
-  options: {
-    senderId: string | null;
-    recipientId: string | null;
-  },
-) {
-  const recipientId = normalizeInstagramIdentifier(options.recipientId);
-
-  if (!recipientId) {
-    return null;
-  }
-
-  const result = await admin
-    .from("instagram_accounts")
-    .select(
-      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url, status",
-    );
-  const accounts = (result.data as AccountLookup[] | null) ?? [];
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  // A blind bootstrap is only acceptable in a single-account workspace.
-  // In any multi-account setup it can silently poison another inbox by
-  // attaching a new Meta identifier to the wrong account.
-  if (accounts.length !== 1) {
-    logWebhook("warn", "unsafe bootstrap skipped", {
-      reason: "multi_account_workspace",
-      accountCount: accounts.length,
-      recipientId,
-    });
-    return null;
-  }
-
-  const senderId = normalizeInstagramIdentifier(options.senderId);
-  const candidates = accounts.filter((account) => {
-    const storedIds = new Set(
-      collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-    );
-    const currentAppUserId = normalizeInstagramIdentifier(account.instagram_app_user_id);
-    const canBootstrapAppUserId =
-      !currentAppUserId ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_user_id) ||
-      currentAppUserId === normalizeInstagramIdentifier(account.instagram_account_id);
-
-    if (!canBootstrapAppUserId) {
-      return false;
-    }
-
-    if (storedIds.has(recipientId)) {
-      return false;
-    }
-
-    if (senderId && storedIds.has(senderId)) {
-      return false;
-    }
-
-    return true;
-  });
-
-  if (candidates.length !== 1) {
-    return null;
-  }
-
-  return {
-    account: candidates[0],
-    matchedBy: "bootstrap:recipient_id",
-    matchedValue: recipientId,
-  } satisfies AccountMatchResult;
-}
-
-async function findAccountByRemoteIdentityForEvent(
-  admin: ReturnType<typeof createAdminClient>,
-  options: {
-    candidateIds: string[];
-  },
-) {
-  const candidateIds = new Set(
-    options.candidateIds
-      .map((value) => normalizeInstagramIdentifier(value))
-      .filter(Boolean) as string[],
-  );
-
-  if (candidateIds.size === 0) {
-    return null;
-  }
-
-  for (const candidateId of candidateIds) {
-    const cached = readCachedAccountMatch(candidateId);
-
-    if (!cached) {
-      continue;
-    }
-
-    const account = await loadAccountById(admin, cached.accountId);
-
-    if (!account) {
-      remoteAccountMatchCache.delete(candidateId);
-      continue;
-    }
-
-    return {
-      account,
-      matchedBy: "remote_identity_cache",
-      matchedValue: candidateId,
-    } satisfies AccountMatchResult;
-  }
-
-  const accountsResult = await admin
-    .from("instagram_accounts")
-    .select(
-      "id, owner_id, page_id, instagram_user_id, instagram_account_id, instagram_app_user_id, username, access_token, token_expires_at, last_oauth_at, name, profile_picture_url",
-    );
-  const accounts = (accountsResult.data as AccountLookup[] | null) ?? [];
-
-  if (accountsResult.error) {
-    throw new Error(accountsResult.error.message);
-  }
-
-  const matches: AccountMatchResult[] = [];
-
-  for (const account of accounts) {
-    if (!account.access_token?.trim()) {
-      continue;
-    }
-
-    try {
-      const remoteIdentity = await fetchInstagramLoginAccountIdentity({
-        accessToken: account.access_token,
-      });
-      const remoteCandidates = [
-        normalizeInstagramIdentifier(remoteIdentity.instagramAccountId),
-        normalizeInstagramIdentifier(remoteIdentity.appScopedUserId),
-      ].filter(Boolean) as string[];
-      const matchedValue = remoteCandidates.find((value) => candidateIds.has(value));
-
-      if (!matchedValue) {
-        continue;
-      }
-
-      matches.push({
-        account,
-        matchedBy: "remote_identity",
-        matchedValue,
-      });
-    } catch (error) {
-      logWebhook("warn", "remote identity lookup skipped", {
-        accountId: account.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (matches.length !== 1) {
-    return null;
-  }
-
-  const match = matches[0];
-  await persistInstagramAccountIdentifiers({
-    admin,
-    accountId: match.account.id,
-    identifiers: [
-      {
-        identifier: match.matchedValue,
-        identifierType: "remote_identity",
-      },
-    ],
-  });
-
-  for (const candidateId of candidateIds) {
-    writeCachedAccountMatch(candidateId, match.account.id);
-  }
-
-  return match;
-}
-
-function resolveOwnedIdentifierCandidates(
-  account: AccountLookup,
-  classification: ClassifiedMessagingEvent,
-) {
-  const storedIds = new Set(
-    collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-  );
-
-  return classification.ownedIdentifierCandidates.map((candidate) => {
-    const identifier = normalizeInstagramIdentifier(candidate.identifier);
-
-    return {
-      identifier:
-        identifier &&
-        (storedIds.has(identifier) || classification.ownedCandidateIds.includes(identifier))
-          ? identifier
-          : null,
-      identifierType: candidate.identifierType,
-    };
-  });
-}
-
-async function backfillInstagramAppUserId(
-  admin: ReturnType<typeof createAdminClient>,
-  account: AccountLookup,
-  identifierCandidates: Array<{ identifier: string | null | undefined; identifierType: string }>,
-) {
-  const currentIds = new Set(
-    collectInstagramAccountIdentifiers(account).map((identifier) => identifier.identifier),
-  );
-  const nextAppUserId = identifierCandidates
-    .filter((candidate) => candidate.identifierType !== "webhook_entry_id")
-    .map((candidate) => normalizeInstagramIdentifier(candidate.identifier))
-    .find((candidate) => candidate && !currentIds.has(candidate));
-
-  if (
-    !nextAppUserId ||
-    (account.instagram_app_user_id &&
-      normalizeInstagramIdentifier(account.instagram_app_user_id) === nextAppUserId)
-  ) {
-    return;
-  }
-
-  const currentAppUserId = normalizeInstagramIdentifier(account.instagram_app_user_id);
-  const canOverwriteExistingAppUserId =
-    !currentAppUserId ||
-    currentAppUserId === normalizeInstagramIdentifier(account.instagram_user_id) ||
-    currentAppUserId === normalizeInstagramIdentifier(account.instagram_account_id);
-
-  if (!canOverwriteExistingAppUserId) {
-    return;
-  }
-
-  const update = await admin
-    .from("instagram_accounts")
-    .update({
-      instagram_app_user_id: nextAppUserId,
-      updated_at: new Date().toISOString(),
-    } as never)
-    .eq("id", account.id);
-
-  if (update.error) {
-    console.warn("[instagram-webhook] instagram_app_user_id backfill skipped", {
-      accountId: account.id,
-      instagramAppUserId: nextAppUserId,
-      error: update.error.message,
-    });
-    return;
-  }
-
-  account.instagram_app_user_id = nextAppUserId;
 }
 
 async function persistWebhookDebugEvent(
@@ -932,23 +589,6 @@ async function persistMessagingEvent(
     account.instagram_account_id;
   const isInbound = classification.direction === "in";
   const contactIgsid = classification.contactIgsid;
-
-  const ownedIdentifierCandidates = resolveOwnedIdentifierCandidates(
-    account,
-    classification,
-  );
-  await persistInstagramAccountIdentifiers({
-    admin,
-    accountId: account.id,
-    identifiers: [
-      ...collectInstagramAccountIdentifiers(account).map((identifier) => ({
-        identifier: identifier.identifier,
-        identifierType: identifier.identifierType,
-      })),
-      ...ownedIdentifierCandidates,
-    ],
-  });
-  await backfillInstagramAppUserId(admin, account, ownedIdentifierCandidates);
 
   const attachment = event.message.attachments?.[0];
   const scopedMetaMessageId = `${account.id}:${event.message.mid}`;
@@ -1268,22 +908,8 @@ export async function POST(request: Request) {
           admin,
           {
             candidateIds: classification.ownedCandidateIds,
-            candidateUsername: classification.ownedUsername,
           },
         );
-
-        if (!match) {
-          match = await findAccountByRemoteIdentityForEvent(admin, {
-            candidateIds: classification.ownedCandidateIds,
-          });
-        }
-
-        if (!match) {
-          match = await findBootstrapAccountForEvent(admin, {
-            senderId,
-            recipientId,
-          });
-        }
 
         if (!match) {
           logWebhook("warn", "account match failed", {
