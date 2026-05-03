@@ -7,9 +7,22 @@ import { fetchInstagramLoginAccountIdentity } from "@/lib/meta/client";
 import { ensureInstagramAccessToken } from "@/lib/meta/token-lifecycle";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-const AUTO_INBOX_CLEANUP_COOLDOWN_MS = 15 * 60 * 1000;
-const AUTO_INBOX_CLEANUP_STALE_LOCK_MS = 10 * 60 * 1000;
-const automaticCleanupByUserId = new Map<string, Promise<void>>();
+const INBOX_CLEANUP_STALE_LOCK_MS = 10 * 60 * 1000;
+
+export type InstagramInboxCleanupRunMode = "preview" | "apply";
+
+export type InstagramInboxCleanupAction = {
+  conversationId: string;
+  currentAccountId: string;
+  currentAccountUsername: string | null;
+  targetAccountId: string | null;
+  targetAccountUsername: string | null;
+  contactIgsid: string;
+  messageCount: number;
+  duplicateMessageCount: number;
+  action: "reassign" | "merge" | "skip_ambiguous";
+  reason: string;
+};
 
 type CleanupAccount = {
   id: string;
@@ -72,11 +85,12 @@ type AutomationJobRecord = {
   conversation_id: string;
 };
 
-type CleanupStats = {
+export type InstagramInboxCleanupStats = {
   accountsReviewed: number;
   accountsRevalidated: number;
   identifiersReset: boolean;
   conversationsScanned: number;
+  actionableConversations: number;
   conversationsReassigned: number;
   conversationsMerged: number;
   conversationsDeleted: number;
@@ -86,12 +100,19 @@ type CleanupStats = {
   warnings: string[];
 };
 
-type InboxCleanupProfileState = {
+export type InstagramInboxCleanupStatus = {
   id: string;
   instagram_inbox_cleanup_started_at: string | null;
   instagram_inbox_cleanup_last_run_at: string | null;
   instagram_inbox_cleanup_last_repair_at: string | null;
   instagram_inbox_cleanup_last_error: string | null;
+};
+
+export type InstagramInboxCleanupReport = {
+  mode: InstagramInboxCleanupRunMode;
+  generatedAt: string;
+  stats: InstagramInboxCleanupStats;
+  actions: InstagramInboxCleanupAction[];
 };
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -215,10 +236,10 @@ function buildAutoCleanupErrorMessage(error: unknown) {
     return error.message;
   }
 
-  return "Automatic inbox cleanup failed.";
+  return "Instagram inbox cleanup failed.";
 }
 
-function didCleanupMutateInbox(stats: CleanupStats) {
+function didCleanupMutateInbox(stats: InstagramInboxCleanupStats) {
   return (
     stats.conversationsReassigned > 0 ||
     stats.conversationsMerged > 0 ||
@@ -239,7 +260,7 @@ async function ensureCleanupProfileRow(
     )
     .eq("id", userId)
     .maybeSingle();
-  const profile = existing.data as InboxCleanupProfileState | null;
+  const profile = existing.data as InstagramInboxCleanupStatus | null;
 
   if (existing.error) {
     throw new Error(existing.error.message);
@@ -254,7 +275,6 @@ async function ensureCleanupProfileRow(
     .upsert(
       {
         id: userId,
-        role: "user",
       } as never,
       { onConflict: "id" },
     )
@@ -262,7 +282,7 @@ async function ensureCleanupProfileRow(
       "id, instagram_inbox_cleanup_started_at, instagram_inbox_cleanup_last_run_at, instagram_inbox_cleanup_last_repair_at, instagram_inbox_cleanup_last_error",
     )
     .maybeSingle();
-  const insertedProfile = inserted.data as InboxCleanupProfileState | null;
+  const insertedProfile = inserted.data as InstagramInboxCleanupStatus | null;
 
   if (inserted.error || !insertedProfile) {
     throw new Error(inserted.error?.message ?? "No pudimos preparar el perfil para autocorreccion.");
@@ -271,35 +291,24 @@ async function ensureCleanupProfileRow(
   return insertedProfile;
 }
 
-async function tryAcquireAutomaticCleanup(
+async function tryAcquireCleanupRun(
   admin: ReturnType<typeof createAdminClient>,
   userId: string,
 ) {
   const profile = await ensureCleanupProfileRow(admin, userId);
   const now = Date.now();
-  const lastRunAtMs = profile.instagram_inbox_cleanup_last_run_at
-    ? new Date(profile.instagram_inbox_cleanup_last_run_at).getTime()
-    : 0;
-
-  if (lastRunAtMs && now - lastRunAtMs < AUTO_INBOX_CLEANUP_COOLDOWN_MS) {
-    return {
-      status: "cooldown" as const,
-      profile,
-    };
-  }
-
   const startedAtMs = profile.instagram_inbox_cleanup_started_at
     ? new Date(profile.instagram_inbox_cleanup_started_at).getTime()
     : 0;
 
-  if (startedAtMs && now - startedAtMs < AUTO_INBOX_CLEANUP_STALE_LOCK_MS) {
+  if (startedAtMs && now - startedAtMs < INBOX_CLEANUP_STALE_LOCK_MS) {
     return {
       status: "locked" as const,
       profile,
     };
   }
 
-  const staleLockIso = new Date(now - AUTO_INBOX_CLEANUP_STALE_LOCK_MS).toISOString();
+  const staleLockIso = new Date(now - INBOX_CLEANUP_STALE_LOCK_MS).toISOString();
   const lock = await admin
     .from("profiles")
     .update({
@@ -314,7 +323,7 @@ async function tryAcquireAutomaticCleanup(
       "id, instagram_inbox_cleanup_started_at, instagram_inbox_cleanup_last_run_at, instagram_inbox_cleanup_last_repair_at, instagram_inbox_cleanup_last_error",
     )
     .maybeSingle();
-  const lockedProfile = lock.data as InboxCleanupProfileState | null;
+  const lockedProfile = lock.data as InstagramInboxCleanupStatus | null;
 
   if (lock.error) {
     throw new Error(lock.error.message);
@@ -333,12 +342,12 @@ async function tryAcquireAutomaticCleanup(
   };
 }
 
-async function finalizeAutomaticCleanup(
+async function finalizeCleanupRun(
   admin: ReturnType<typeof createAdminClient>,
   options: {
     userId: string;
-    previousProfile: InboxCleanupProfileState;
-    stats?: CleanupStats;
+    previousProfile: InstagramInboxCleanupStatus;
+    stats?: InstagramInboxCleanupStats;
     error?: unknown;
   },
 ) {
@@ -363,17 +372,17 @@ async function finalizeAutomaticCleanup(
   }
 }
 
-async function safeFinalizeAutomaticCleanup(
+async function safeFinalizeCleanupRun(
   admin: ReturnType<typeof createAdminClient>,
   options: {
     userId: string;
-    previousProfile: InboxCleanupProfileState;
-    stats?: CleanupStats;
+    previousProfile: InstagramInboxCleanupStatus;
+    stats?: InstagramInboxCleanupStats;
     error?: unknown;
   },
 ) {
   try {
-    await finalizeAutomaticCleanup(admin, options);
+    await finalizeCleanupRun(admin, options);
   } catch (finalizeError) {
     console.error("[instagram-inbox-cleanup] state update failed", {
       userId: options.userId,
@@ -662,9 +671,14 @@ async function resetCanonicalIdentifiers(
 
 export async function cleanupMisroutedInstagramInboxData(options: {
   userId: string;
-}) {
+  mode?: InstagramInboxCleanupRunMode;
+  revalidateBeforeRepair?: boolean;
+}): Promise<InstagramInboxCleanupReport> {
   const admin = createAdminClient();
   const warnings: string[] = [];
+  const mode = options.mode ?? "preview";
+  const shouldApply = mode === "apply";
+  const shouldRevalidateBeforeRepair = shouldApply && options.revalidateBeforeRepair !== false;
   const accountsResult = await admin
     .from("instagram_accounts")
     .select(
@@ -677,11 +691,13 @@ export async function cleanupMisroutedInstagramInboxData(options: {
     throw new Error(accountsResult.error.message);
   }
 
-  const stats: CleanupStats = {
+  const actions: InstagramInboxCleanupAction[] = [];
+  const stats: InstagramInboxCleanupStats = {
     accountsReviewed: accounts.length,
     accountsRevalidated: 0,
     identifiersReset: false,
     conversationsScanned: 0,
+    actionableConversations: 0,
     conversationsReassigned: 0,
     conversationsMerged: 0,
     conversationsDeleted: 0,
@@ -692,12 +708,23 @@ export async function cleanupMisroutedInstagramInboxData(options: {
   };
 
   if (accounts.length === 0) {
-    return stats;
+    return {
+      mode,
+      generatedAt: new Date().toISOString(),
+      stats,
+      actions,
+    };
   }
 
-  stats.accountsRevalidated = await revalidateAccounts(admin, accounts, warnings);
-  await resetCanonicalIdentifiers(admin, accounts);
-  stats.identifiersReset = true;
+  if (shouldRevalidateBeforeRepair) {
+    stats.accountsRevalidated = await revalidateAccounts(admin, accounts, warnings);
+    await resetCanonicalIdentifiers(admin, accounts);
+    stats.identifiersReset = true;
+  }
+
+  const accountUsernameById = new Map(
+    accounts.map((account) => [account.id, normalizeOptionalString(account.username)]),
+  );
 
   const ownedIdentifierToAccountId = new Map<string, string>();
   const ambiguousOwnedIdentifiers = new Set<string>();
@@ -792,9 +819,22 @@ export async function cleanupMisroutedInstagramInboxData(options: {
 
     if (resolvedTargetAccountIds.length > 1) {
       stats.skippedAmbiguousConversations += 1;
-      warnings.push(
-        `Se omitio la conversacion ${currentConversation.id} porque sus mensajes apuntan a mas de una cuenta candidata.`,
-      );
+      const reason =
+        "Se omitio porque los mensajes apuntan a mas de una cuenta candidata.";
+      warnings.push(`Conversacion ${currentConversation.id}: ${reason}`);
+      actions.push({
+        conversationId: currentConversation.id,
+        currentAccountId: currentConversation.account_id,
+        currentAccountUsername:
+          accountUsernameById.get(currentConversation.account_id) ?? null,
+        targetAccountId: null,
+        targetAccountUsername: null,
+        contactIgsid: currentConversation.contact_igsid,
+        messageCount: conversationMessages.length,
+        duplicateMessageCount: 0,
+        action: "skip_ambiguous",
+        reason,
+      });
       continue;
     }
 
@@ -808,6 +848,29 @@ export async function cleanupMisroutedInstagramInboxData(options: {
     const existingTargetConversation = conversationsByKey.get(targetConversationKey);
 
     if (!existingTargetConversation || existingTargetConversation.id === currentConversation.id) {
+      actions.push({
+        conversationId: currentConversation.id,
+        currentAccountId: currentConversation.account_id,
+        currentAccountUsername:
+          accountUsernameById.get(currentConversation.account_id) ?? null,
+        targetAccountId,
+        targetAccountUsername: accountUsernameById.get(targetAccountId) ?? null,
+        contactIgsid: currentConversation.contact_igsid,
+        messageCount: conversationMessages.length,
+        duplicateMessageCount: 0,
+        action: "reassign",
+        reason: "La conversacion completa debe pasar a otra cuenta canonica.",
+      });
+      stats.actionableConversations += 1;
+      stats.conversationsReassigned += 1;
+      stats.messagesMoved += conversationMessages.length;
+    }
+
+    if (!existingTargetConversation || existingTargetConversation.id === currentConversation.id) {
+      if (!shouldApply) {
+        continue;
+      }
+
       const nowIso = new Date().toISOString();
 
       for (const message of conversationMessages) {
@@ -826,7 +889,6 @@ export async function cleanupMisroutedInstagramInboxData(options: {
 
         message.account_id = targetAccountId;
         message.meta_message_id = nextScopedMetaMessageId;
-        stats.messagesMoved += 1;
       }
 
       const conversationUpdate = await admin
@@ -878,7 +940,6 @@ export async function cleanupMisroutedInstagramInboxData(options: {
         conversationsByKey.set(targetConversationKey, refreshed.conversation);
       }
 
-      stats.conversationsReassigned += 1;
       continue;
     }
 
@@ -887,7 +948,45 @@ export async function cleanupMisroutedInstagramInboxData(options: {
     const targetFingerprints = new Set(
       targetMessages.map((message) => buildMessageFingerprint(message)),
     );
+    const projectedTargetFingerprints = new Set(targetFingerprints);
     const targetConversationMessages = [...targetMessages];
+    let duplicateMessageCount = 0;
+    let movableMessageCount = 0;
+
+    for (const message of conversationMessages) {
+      const fingerprint = buildMessageFingerprint(message);
+
+      if (projectedTargetFingerprints.has(fingerprint)) {
+        duplicateMessageCount += 1;
+        continue;
+      }
+
+      projectedTargetFingerprints.add(fingerprint);
+      movableMessageCount += 1;
+    }
+
+    actions.push({
+      conversationId: currentConversation.id,
+      currentAccountId: currentConversation.account_id,
+      currentAccountUsername:
+        accountUsernameById.get(currentConversation.account_id) ?? null,
+      targetAccountId,
+      targetAccountUsername: accountUsernameById.get(targetAccountId) ?? null,
+      contactIgsid: currentConversation.contact_igsid,
+      messageCount: conversationMessages.length,
+      duplicateMessageCount,
+      action: "merge",
+      reason: "La conversacion debe fusionarse con un hilo ya existente de la cuenta canonica.",
+    });
+    stats.actionableConversations += 1;
+    stats.conversationsMerged += 1;
+    stats.conversationsDeleted += 1;
+    stats.messagesMoved += movableMessageCount;
+    stats.messagesDeduplicated += duplicateMessageCount;
+
+    if (!shouldApply) {
+      continue;
+    }
 
     await migrateAutomationReferences(admin, {
       sourceConversationId: currentConversation.id,
@@ -907,8 +1006,6 @@ export async function cleanupMisroutedInstagramInboxData(options: {
         if (deletion.error) {
           throw new Error(deletion.error.message);
         }
-
-        stats.messagesDeduplicated += 1;
         continue;
       }
 
@@ -935,7 +1032,6 @@ export async function cleanupMisroutedInstagramInboxData(options: {
 
       targetFingerprints.add(fingerprint);
       targetConversationMessages.push(movedMessage);
-      stats.messagesMoved += 1;
     }
 
     const mergedConversationUpdate = await admin
@@ -971,8 +1067,6 @@ export async function cleanupMisroutedInstagramInboxData(options: {
     conversationsByKey.delete(
       `${currentConversation.account_id}:${currentConversation.contact_igsid}`,
     );
-    stats.conversationsDeleted += 1;
-
     const refreshedTargetConversation = await refreshConversationSummary(admin, {
       id: targetConversation.id,
       account_id: targetAccountId,
@@ -985,71 +1079,69 @@ export async function cleanupMisroutedInstagramInboxData(options: {
         refreshedTargetConversation.conversation,
       );
     }
-
-    stats.conversationsMerged += 1;
   }
 
-  return stats;
+  return {
+    mode,
+    generatedAt: new Date().toISOString(),
+    stats,
+    actions,
+  };
 }
 
-export async function ensureAutomaticInstagramInboxCleanup(userId: string) {
-  const existing = automaticCleanupByUserId.get(userId);
+export async function getInstagramInboxCleanupStatus(
+  userId: string,
+): Promise<InstagramInboxCleanupStatus> {
+  const admin = createAdminClient();
+  return ensureCleanupProfileRow(admin, userId);
+}
 
-  if (existing) {
-    return existing;
+export async function runInstagramInboxCleanup(options: {
+  userId: string;
+  mode: InstagramInboxCleanupRunMode;
+}) {
+  if (options.mode === "preview") {
+    return cleanupMisroutedInstagramInboxData({
+      userId: options.userId,
+      mode: "preview",
+      revalidateBeforeRepair: false,
+    });
   }
 
-  const cleanupPromise = (async () => {
-    let admin: ReturnType<typeof createAdminClient> | null = null;
-    let acquiredProfile: InboxCleanupProfileState | null = null;
+  const admin = createAdminClient();
+  const acquisition = await tryAcquireCleanupRun(admin, options.userId);
 
-    try {
-      admin = createAdminClient();
-      const acquisition = await tryAcquireAutomaticCleanup(admin, userId);
+  if (acquisition.status !== "acquired") {
+    throw new Error(
+      acquisition.status === "locked"
+        ? "Ya hay una limpieza de inbox en progreso para este usuario."
+        : "No pudimos adquirir el lock de limpieza del inbox.",
+    );
+  }
 
-      if (acquisition.status !== "acquired") {
-        return;
-      }
+  let report: InstagramInboxCleanupReport | null = null;
 
-      acquiredProfile = acquisition.profile;
+  try {
+    report = await cleanupMisroutedInstagramInboxData({
+      userId: options.userId,
+      mode: "apply",
+      revalidateBeforeRepair: true,
+    });
 
-      const stats = await cleanupMisroutedInstagramInboxData({ userId });
+    await safeFinalizeCleanupRun(admin, {
+      userId: options.userId,
+      previousProfile: acquisition.profile,
+      stats: report.stats,
+    });
 
-      if (stats.warnings.length > 0) {
-        console.warn("[instagram-inbox-cleanup] completed with warnings", {
-          userId,
-          warnings: stats.warnings,
-        });
-      }
-
-      await safeFinalizeAutomaticCleanup(admin, {
-        userId,
-        previousProfile: acquisition.profile,
-        stats,
-      });
-
-      console.info("[instagram-inbox-cleanup] automatic repair completed", {
-        userId,
-        stats,
-      });
-    } catch (error) {
-      if (admin && acquiredProfile) {
-        await safeFinalizeAutomaticCleanup(admin, {
-          userId,
-          previousProfile: acquiredProfile,
-          error,
-        });
-      }
-
-      console.error("[instagram-inbox-cleanup] automatic repair failed", {
-        userId,
-        error: buildAutoCleanupErrorMessage(error),
-      });
-    }
-  })().finally(() => {
-    automaticCleanupByUserId.delete(userId);
-  });
-
-  automaticCleanupByUserId.set(userId, cleanupPromise);
-  return cleanupPromise;
+    return report;
+  } catch (error) {
+    await safeFinalizeCleanupRun(admin, {
+      userId: options.userId,
+      previousProfile: acquisition.profile,
+      stats: report?.stats,
+      error,
+    });
+    throw error;
+  }
 }
